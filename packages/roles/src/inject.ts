@@ -12,6 +12,7 @@ import { startOpenCodeHost } from "./inject-opencode.js";
 import { mcpRecord, skillRecord } from "./resources.js";
 import { RoleStore, renderInstructions, type RoleSnapshot } from "./store.js";
 import { processBirth } from "./launch-state.js";
+import { selectRoleCapabilities } from "./capabilities.js";
 
 type Mcp = { type: "http"; url: string; headers: Record<string, string> } |
   { type: "stdio"; command: string; args: string[]; env: Record<string, string> };
@@ -135,7 +136,7 @@ async function launch(args: string[], signal: AbortSignal): Promise<Exit> {
   assertInstallationOpen(process.env);
   const { role, harness, native, command, commandIndex, context } = injectArguments(args);
   const binary = await executable(harness);
-  const snapshot = await snapshotFor(role);
+  const snapshot = selectRoleCapabilities(await snapshotFor(role), harness);
   const servers = await connections(snapshot);
   const instructions = renderInstructions(snapshot, context);
   assertInstallationOpen(process.env);

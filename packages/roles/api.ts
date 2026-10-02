@@ -5,7 +5,8 @@ import { z } from "zod";
 import { withStateInventory, requireStateOperator, stateApplyInput, statePlan, stateReceipt, statePageInput } from "@stack/api";
 import { roleStateCategories } from "./src/state-categories.js";
 import { fragmentConditions, renderContext } from "./src/conditions.js";
-import { configuredMcpServers, mcpPort, operation, stateDir, workspaceRoot, type PackageApi, type StandaloneContext } from "@stack/api";
+import { capabilityHarness, capabilityHarnesses, capabilitySelection, capabilitySelectionReason, internalMcpHarnesses, internalMcpSelection, selectRoleCapabilities } from "./src/capabilities.js";
+import { canonicalMcpName, configuredMcpServers, mcpPort, operation, stateDir, workspaceRoot, type PackageApi, type StandaloneContext } from "@stack/api";
 import { matchingProjects, serverMcpOrigins, roleMcpConfig, roleMcpConflict } from "./src/bundle.js";
 import { RoleStore, instructionLimitBytes, renderSegments, renderBotInstructions, snapshotLimitChars, roleName, roleDescription } from "./src/store.js";
 import { botMarkdown } from "./src/bot-markdown.js";
@@ -29,7 +30,8 @@ const index = z.number().int().nonnegative().describe("Zero-based position withi
 const role = z.strictObject({ id: roleId, name: roleName, description: roleDescription, revision, ...stamps });
 const catalog = z.strictObject({ revision: catalogRevision, defaultRoleId: roleId.nullable(), workerDefaultRoleId: roleId.nullable(), roles: z.array(role) });
 const launchSnapshot = role.extend({ botMarkdown: botMarkdown.optional().describe("Role-owned bot.md personality. Current reads always include it; absent on older snapshots means empty. Captured verbatim in each Bot launch; empty disables the personality. Never included in Worker or injected CLI instructions."), categories: z.array(category), skills: z.array(skillRecord), mcpServers: z.array(mcpRecord), trustedProjects: z.array(trustedProjectRecord),
-  disabledInternalMcpServers: z.array(z.string()).describe("Internal MCP server names disabled for this Role. Other configured internal MCP servers are enabled, including newly added ones.") });
+  disabledInternalMcpServers: z.array(z.string()).describe("Internal MCP server names disabled for this Role. Other configured internal MCP servers are enabled, including newly added ones."),
+  internalMcpHarnesses: internalMcpHarnesses.optional().describe("Explicit harness allowlists for internal connections. Missing names are unrestricted; older snapshots without this map are unrestricted.") });
 const snapshot = launchSnapshot.extend({ mcpServers: z.array(mcpRecord.omit({ definition: true }).extend({ transport: z.enum(["http", "stdio"]) })) });
 const receipt = z.strictObject({ roleId, revision }).describe("Applied Role revision. Reread the selected Role to refresh content.");
 const segment = z.strictObject({ categoryId: id, fragmentId: id,
@@ -40,14 +42,18 @@ const preview = z.strictObject({ roleId, revision, rendered: z.string(), segment
 const write = selection.extend({ expectedRevision: revision });
 const count = z.number().int().nonnegative();
 const internalServer = z.strictObject({ name: z.string().describe("Stable connection key."), title: z.string().describe("Display name; the key for Package APIs."),
-  description: z.string(), kind: z.enum(["package", "codex"]).describe("A Package API, or a Codex tool bridge whose availability serve_codex_tools reports."), transport: z.literal("stdio").describe("Native transport for internal Bot, Worker and injected Role connections."), enabled: z.boolean() });
+  description: z.string(), kind: z.enum(["package", "codex"]).describe("A Package API, or a Codex tool bridge whose availability serve_codex_tools reports."), transport: z.literal("stdio").describe("Native transport for internal Bot, Worker and injected Role connections."),
+  enabled: z.boolean().describe("The Role's stored switch, independent of harness selection."), harnesses: capabilityHarnesses,
+  included: z.boolean().describe("Whether this connection enters a launch for the requested harness."), selectionReason: capabilitySelectionReason });
 const launchPreview = z.strictObject({
-  roleId, revision,
+  roleId, revision, harness: capabilityHarness.nullable().describe("Capability-selection harness; null means unspecified, not inferred from instruction context."),
   instructions: z.strictObject({ bytes: count.describe("UTF-8 size of instruction fragments."), botBytes: count.describe("UTF-8 size of Bot SYSTEM_APPEND.md, including bot.md."), limitBytes: count, fragments: count.describe("Fragments that render.") }),
   skills: z.array(z.strictObject({ id, name: resourceName, description: resourceDescription, files: count.describe("Supporting files beside SKILL.md."),
-    bytes: count.describe("Decoded size of the body and supporting files.") })).describe("Enabled role skills in order; each becomes skills/<name>/SKILL.md."),
-  internalMcpServers: z.array(internalServer).describe("The default MCP fleet and its enablement for this Role. Only enabled servers enter new Bot and Worker launches."),
-  mcpServers: z.array(z.strictObject({ id, name: resourceName, type: z.enum(["http", "stdio"]) })).describe("Enabled role MCP servers in order."),
+    bytes: count.describe("Decoded size of the body and supporting files.") })).describe("Skills selected for the requested harness, in order; each becomes skills/<name>/SKILL.md."),
+  internalMcpServers: z.array(internalServer).describe("The default MCP fleet, stored enablement and effective harness selection. Only included connections enter a launch."),
+  mcpServers: z.array(z.strictObject({ id, name: resourceName, type: z.enum(["http", "stdio"]) })).describe("Role MCP servers selected for the requested harness, in order."),
+  excludedCapabilities: z.array(z.strictObject({ kind: z.enum(["skill", "mcp", "internal-mcp"]), id: z.string(), name: z.string(), reason: capabilitySelectionReason.exclude(["included"]) }))
+    .describe("Capabilities not selected, with stable resource ID (connection name for internal MCP) and the reason. Contains no MCP definitions."),
   config: z.string().describe("The config.toml tables the Role contributes for its enabled MCP servers, exactly as launches write them."),
   trustedProjects: z.array(z.strictObject({ id, path: projectPath })).describe("Enabled trusted project roots in order."),
   cwds: z.array(z.strictObject({
@@ -74,12 +80,16 @@ function summarize(result: z.infer<typeof launchSnapshot>): z.infer<typeof snaps
 function changed(ctx: RolesContext, result: z.infer<typeof launchSnapshot>) { ctx.changed?.(); return { roleId: result.id, revision: result.revision }; }
 const internalMcpServers = () => configuredMcpServers(workspaceRoot(import.meta.dirname));
 const internalMcpNames = async () => (await internalMcpServers()).map((pkg) => pkg.name);
-const internalRows = (servers: Awaited<ReturnType<typeof internalMcpServers>>, disabled: string[]) =>
-  servers.map(({ name, title, description, kind }) => ({ name, title, description, kind, transport: "stdio" as const, enabled: !disabled.includes(name) }));
+const internalRows = (servers: Awaited<ReturnType<typeof internalMcpServers>>, snapshot: z.infer<typeof launchSnapshot>, harness?: z.infer<typeof capabilityHarness>) =>
+  servers.map(({ name, title, description, kind }) => {
+    const selectionReason = internalMcpSelection(snapshot, name, harness);
+    return { name, title, description, kind, transport: "stdio" as const, enabled: !snapshot.disabledInternalMcpServers.includes(name),
+      harnesses: snapshot.internalMcpHarnesses?.[name] ?? null, included: selectionReason === "included", selectionReason };
+  });
 /** Refuse a role MCP server a launch would refuse, whether or not it is enabled now. */
 async function ensureRoleMcp(ctx: RolesContext, name?: string, definition?: z.infer<typeof mcpDefinition>): Promise<void> {
   const origins = new Set(ctx.mcpOrigins ?? []);
-  if (name && (await internalMcpNames()).some((internal) => internal.toLowerCase() === name.toLowerCase())) throw new Error(`role MCP server ${name} collides with an internal MCP server`);
+  if (name && (await internalMcpNames()).some((internal) => internal.toLowerCase() === canonicalMcpName(name.toLowerCase()))) throw new Error(`role MCP server ${name} collides with an internal MCP server`);
   if (definition?.type === "http" && origins.has(new URL(definition.url).origin)) throw new Error("role MCP server URL cannot alias the internal MCP listener");
 }
 
@@ -117,23 +127,24 @@ export const roleDelete = operation({
   async call(ctx: RolesContext, { roleId, expectedRevision }) { const result = ctx.store.deleteRole(expectedRevision, roleId); ctx.changed?.(); return result; },
 });
 export const roleInternalMcpList = operation({
-  name: "role_internal_mcp_list", description: "List Stack's default MCP fleet (Package APIs and Codex tool bridges) and whether each is enabled in this Role. All are on unless explicitly disabled; new servers are on by default. These switches control launch connections, not tool availability or running sessions.",
-  input: selection, output: z.strictObject({ roleId, revision, servers: z.array(internalServer) }),
+  name: "role_internal_mcp_list", description: "List Stack's default MCP fleet, stored switches and harness allowlists, and effective inclusion for an optional actual launch harness. Omitted harness selects only unrestricted enabled connections. New servers are enabled and unrestricted. Selection controls later launch connections, not tool availability, authority or running sessions.",
+  input: selection.extend({ harness: capabilityHarness.optional() }), output: z.strictObject({ roleId, revision, servers: z.array(internalServer) }),
   annotations: { title: "List internal role MCP servers", readOnlyHint: true },
   standalone: standaloneReads,
-  async call(ctx: RolesContext, { roleId }) {
+  async call(ctx: RolesContext, { roleId, harness }) {
     const servers = await internalMcpServers();
     const value = ctx.store.role(roleId).snapshot();
-    return { roleId, revision: value.revision, servers: internalRows(servers, value.disabledInternalMcpServers) };
+    return { roleId, revision: value.revision, servers: internalRows(servers, value, harness) };
   },
 });
 export const roleInternalMcpUpdate = operation({
-  name: "role_internal_mcp_update", description: "Enable or disable one configured internal Stack MCP server for this Role's later Bot and Worker launches. Pass this Role's revision. Does not stop the package or change its transport operations. Any internal server, including roles, can be disabled; the operator can still edit through the socket or UI.",
-  input: write.extend({ name: z.string().min(1), enabled: z.boolean() }), output: receipt,
+  name: "role_internal_mcp_update", description: "Edit a configured internal connection's switch or harness allowlist for later launches. Omission preserves fields; harnesses null clears restrictions and [] selects none. Bots use codex; Workers use opencode, claude or devin. Pass the Role revision. Does not change running sessions, tool authority or transport exposure.",
+  input: write.extend({ name: z.string().min(1), enabled: z.boolean().optional(), harnesses: capabilityHarnesses.optional() })
+    .refine((value) => value.enabled !== undefined || value.harnesses !== undefined, "supply enabled or harnesses"), output: receipt,
   annotations: { title: "Set internal role MCP enablement" },
-  async call(ctx: RolesContext, { roleId, expectedRevision, name, enabled }) {
+  async call(ctx: RolesContext, { roleId, expectedRevision, name, enabled, harnesses }) {
     if (!(await internalMcpNames()).includes(name)) throw new Error(`unknown internal MCP server: ${name}`);
-    return changed(ctx, ctx.store.role(roleId).setInternalMcp(expectedRevision, name, enabled));
+    return changed(ctx, ctx.store.role(roleId).setInternalMcp(expectedRevision, name, enabled, harnesses));
   },
 });
 export const roleSnapshot = operation({
@@ -166,31 +177,41 @@ export const rolePreview = operation({
   },
 });
 export const roleLaunchPreview = operation({
-  name: "role_launch_preview", description: "Preview the selected Role's enabled skills, MCP servers and config.toml, trusted project roots, and launch issues. Instruction counts use explicit rendering context; omitted context includes only unconditional fragments.",
-  input: selection.extend({ context: renderContext.optional(), cwds: z.array(z.string().max(4_096).refine(isAbsolute, "working directory must be an absolute path")).max(64).optional()
+  name: "role_launch_preview", description: "Preview launch capabilities selected for an explicit actual harness, exclusions and reasons, MCP config.toml, trusted projects and selected-MCP issues. Omitted harness includes only unrestricted enabled capabilities. Instruction counts independently use rendering context; context.harness never selects capabilities. No setting changes and no runtime starts.",
+  input: selection.extend({ harness: capabilityHarness.optional(), context: renderContext.optional(), cwds: z.array(z.string().max(4_096).refine(isAbsolute, "working directory must be an absolute path")).max(64).optional()
     .describe("Working directories to match against trusted project roots, such as each Bot's cwd.") }),
   output: launchPreview, annotations: { title: "Preview role launch", readOnlyHint: true },
   standalone: standaloneReads,
-  async call(ctx: RolesContext, { roleId, cwds = [], context }) {
+  async call(ctx: RolesContext, { roleId, cwds = [], context, harness }) {
     const value = ctx.store.role(roleId).snapshot();
+    const selected = selectRoleCapabilities(value, harness);
     const { rendered, segments } = renderSegments(value, context);
     const internal = await internalMcpServers();
     const serverNames = new Set(internal.map(({ name }) => name.toLowerCase()));
     const origins = new Set(ctx.mcpOrigins ?? []);
-    const issues = value.mcpServers.flatMap((server) => {
+    const issues = selected.mcpServers.flatMap((server) => {
       const message = roleMcpConflict(server, serverNames, origins);
       return message ? [{ id: server.id, name: server.name, message }] : [];
     });
     const enabledProjects = value.trustedProjects.filter((project) => project.enabled);
+    const rows = internalRows(internal, value, harness);
+    const excludedCapabilities: z.infer<typeof launchPreview>["excludedCapabilities"] = [];
+    for (const [kind, resources] of [["skill", value.skills], ["mcp", value.mcpServers]] as const) for (const resource of resources) {
+      const reason = capabilitySelection(resource, harness);
+      if (reason !== "included") excludedCapabilities.push({ kind, id: resource.id, name: resource.name, reason });
+    }
+    for (const row of rows) if (row.selectionReason !== "included") excludedCapabilities.push({ kind: "internal-mcp", id: row.name, name: row.name, reason: row.selectionReason });
     return {
       roleId,
       revision: value.revision,
+      harness: harness ?? null,
       instructions: { bytes: Buffer.byteLength(rendered), botBytes: Buffer.byteLength(renderBotInstructions(value, context)), limitBytes: instructionLimitBytes, fragments: segments.length },
-      skills: value.skills.filter((skill) => skill.enabled).map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, files: skill.files.length,
+      skills: selected.skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, files: skill.files.length,
         bytes: Buffer.byteLength(skill.body) + skill.files.reduce((sum, file) => sum + Buffer.from(file.contentBase64, "base64").length, 0) })),
-      internalMcpServers: internalRows(internal, value.disabledInternalMcpServers),
-      mcpServers: value.mcpServers.filter((server) => server.enabled).map((server) => ({ id: server.id, name: server.name, type: server.definition.type })),
-      config: roleMcpConfig(value),
+      internalMcpServers: rows,
+      mcpServers: selected.mcpServers.map((server) => ({ id: server.id, name: server.name, type: server.definition.type })),
+      excludedCapabilities,
+      config: roleMcpConfig(selected),
       trustedProjects: enabledProjects.map((project) => ({ id: project.id, path: project.path })),
       cwds: await Promise.all([...new Set(cwds)].map(async (cwd) => {
         const path = await realpath(cwd).catch(() => null);
@@ -280,14 +301,14 @@ export const fragmentMove = operation({
 });
 
 export const skillCreate = operation({
-  name: "skill_create", description: "Add a role-owned skill. Stack generates SKILL.md frontmatter from the name and description; supporting files are private base64-encoded bytes. Only enabled skills enter later bot launches.",
-  input: write.extend({ name: resourceName, description: resourceDescription.min(1), body: skillBody, files: skillFiles.optional(), enabled: z.boolean().optional() }),
+  name: "skill_create", description: "Add a Role-owned skill with an optional actual-harness allowlist. Null/omission allows every harness; [] allows none. Only enabled, harness-selected skills enter later Bot, Worker and injected CLI launches. Stack generates SKILL.md frontmatter; supporting files are private base64 bytes.",
+  input: write.extend({ name: resourceName, description: resourceDescription.min(1), body: skillBody, files: skillFiles.optional(), enabled: z.boolean().optional(), harnesses: capabilityHarnesses.optional() }),
   output: receipt, annotations: { title: "Create role skill" },
-  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.role(input.roleId).createSkill(input.expectedRevision, input.name, input.description, input.body, input.files, input.enabled)); },
+  async call(ctx: RolesContext, input) { return changed(ctx, ctx.store.role(input.roleId).createSkill(input.expectedRevision, input.name, input.description, input.body, input.files, input.enabled, input.harnesses)); },
 });
 export const skillUpdate = operation({
-  name: "skill_update", description: "Edit skill name, description, Markdown body, supporting files, or enabled state. Supplying files replaces the complete supporting-file set.",
-  input: write.extend({ id, name: resourceName.optional(), description: resourceDescription.min(1).optional(), body: skillBody.optional(), files: skillFiles.optional(), enabled: z.boolean().optional() }),
+  name: "skill_update", description: "Edit skill content, enabled state or harness allowlist. Supplying files replaces the full supporting-file set. Harnesses replace the allowlist; omission preserves it, null clears restrictions and [] selects no harness. Running sessions keep their captured resources.",
+  input: write.extend({ id, name: resourceName.optional(), description: resourceDescription.min(1).optional(), body: skillBody.optional(), files: skillFiles.optional(), enabled: z.boolean().optional(), harnesses: capabilityHarnesses.optional() }),
   output: receipt, annotations: { title: "Update role skill" },
   async call(ctx: RolesContext, { roleId, id, expectedRevision, ...fields }) { return changed(ctx, ctx.store.role(roleId).updateSkill(expectedRevision, id, fields)); },
 });
@@ -303,17 +324,17 @@ export const skillReorder = operation({
 });
 
 export const mcpServerCreate = operation({
-  name: "mcp_server_create", description: "Add an HTTP or stdio MCP server to the role. It joins the server-provided internal MCP servers only on later bot launches.",
-  input: write.extend({ name: resourceName, description: resourceDescription, definition: mcpDefinition, enabled: z.boolean().optional() }),
+  name: "mcp_server_create", description: "Add an HTTP or stdio MCP connection to the Role with an optional actual-harness allowlist. Null/omission allows all; [] allows none. Only enabled, selected connections join the internal fleet on later Bot, Worker and injected CLI launches.",
+  input: write.extend({ name: resourceName, description: resourceDescription, definition: mcpDefinition, enabled: z.boolean().optional(), harnesses: capabilityHarnesses.optional() }),
   output: receipt, annotations: { title: "Create role MCP server" },
   async call(ctx: RolesContext, input) {
     await ensureRoleMcp(ctx, input.name, input.definition);
-    return changed(ctx, ctx.store.role(input.roleId).createMcpServer(input.expectedRevision, input.name, input.description, input.definition, input.enabled));
+    return changed(ctx, ctx.store.role(input.roleId).createMcpServer(input.expectedRevision, input.name, input.description, input.definition, input.enabled, input.harnesses));
   },
 });
 export const mcpServerUpdate = operation({
-  name: "mcp_server_update", description: "Edit a role MCP server's name, description, full transport definition, or enabled state. Existing bot connections are unchanged until restart.",
-  input: write.extend({ id, name: resourceName.optional(), description: resourceDescription.optional(), definition: mcpDefinition.optional(), enabled: z.boolean().optional() }),
+  name: "mcp_server_update", description: "Edit a Role MCP connection's metadata, full definition, enabled state or harness allowlist. Omitted harnesses preserve selection; null clears restrictions and [] selects no harness. Existing sessions retain their captured connections.",
+  input: write.extend({ id, name: resourceName.optional(), description: resourceDescription.optional(), definition: mcpDefinition.optional(), enabled: z.boolean().optional(), harnesses: capabilityHarnesses.optional() }),
   output: receipt, annotations: { title: "Update role MCP server" },
   async call(ctx: RolesContext, { roleId, id, expectedRevision, ...fields }) {
     await ensureRoleMcp(ctx, fields.name, fields.definition);

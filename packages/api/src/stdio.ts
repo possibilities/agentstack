@@ -3,7 +3,7 @@ import { LocalAuth } from "./local-auth.js";
 import { configuredMcpServers } from "./mcp.js";
 import { parseMcpBinding, verifyMcpIdentity, type McpIdentity } from "./mcp-authority.js";
 import { packageMcpServer } from "./mcp-package.js";
-import { codexMcpDefinition } from "./codex-mcp/catalog.js";
+import { canonicalMcpName, codexMcpDefinition } from "./codex-mcp/catalog.js";
 import { codexMcpServer } from "./codex-mcp/server.js";
 import { installedMcpCatalog } from "./exposure.js";
 import { mcpPrerequisite } from "./mcp-prerequisite.js";
@@ -13,6 +13,7 @@ import { mcpEventCatalog, type McpEventCall } from "./mcp-events.js";
 
 /** One protocol-only child. No listener, package context or subscription database is created. */
 export async function runMcpStdio(name: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  name = canonicalMcpName(name);
   const root = env.STACK_MCP_ROOT ?? workspaceRoot(import.meta.dirname);
   const definition = (await configuredMcpServers(root)).find(item => item.name === name);
   if (!definition) throw new Error("unknown Stack MCP server");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -131,6 +131,40 @@ test("an older Role catalog fails closed without changing its schema or records"
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("pre-filter stores read without mutation and upgrade without re-enabling the renamed computer bridge", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-role-capability-upgrade-"));
+  const path = join(root, "roles.sqlite");
+  let store = new RoleStore(root);
+  try {
+    const roleId = store.catalog().defaultRoleId!;
+    let state = store.role(roleId).createSkill(0, "existing", "Existing skill", "Keep my bytes");
+    state = store.role(roleId).createMcpServer(state.revision, "existing", "Existing connection", { type: "stdio", command: "node", args: [] });
+    const catalog = store.catalog();
+    store.close();
+    const old = new DatabaseSync(path);
+    try {
+      old.exec("ALTER TABLE skills DROP COLUMN harnesses_json; ALTER TABLE role_mcp_servers DROP COLUMN harnesses_json; DROP TABLE internal_mcp_harnesses");
+      old.prepare("INSERT INTO disabled_internal_mcp VALUES (?, 'computer-use')").run(roleId);
+    } finally { old.close(); }
+    const bytes = await readFile(path);
+    store = new RoleStore(root, { readOnly: true });
+    const read = store.role(roleId).snapshot();
+    assert.deepEqual(read.disabledInternalMcpServers, ["codex-computer-use"]);
+    assert.deepEqual(read.internalMcpHarnesses, {});
+    assert.deepEqual(read.skills, state.skills);
+    assert.deepEqual(read.mcpServers, state.mcpServers);
+    store.close();
+    assert.deepEqual(await readFile(path), bytes, "read-only injection must not migrate the store");
+    store = new RoleStore(root);
+    assert.deepEqual(store.catalog(), catalog, "additive upgrades preserve revisions and defaults");
+    assert.deepEqual(store.role(roleId).snapshot(), read);
+    const enabled = store.role(roleId).setInternalMcp(read.revision, "codex-computer-use", true);
+    assert.deepEqual(enabled.disabledInternalMcpServers, []);
+    store.close(); store = new RoleStore(root);
+    assert.deepEqual(store.role(roleId).snapshot().disabledInternalMcpServers, []);
+  } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("catalog revisions fence creation, default changes and deletion without invalidating unrelated role edits", async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-multi-role-"));
   const store = new RoleStore(root);
@@ -238,7 +272,7 @@ test("socket clients select Roles explicitly and configure internal MCP enableme
     assert.ok(listing.servers.length > 1);
     assert.ok(listing.servers.every(({ enabled }) => enabled));
     assert.ok(listing.servers.some(({ name }) => name === "roles"));
-    const bridges = ["computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"];
+    const bridges = ["codex-computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"];
     for (const name of bridges) assert.ok(listing.servers.some(server => server.name === name && server.enabled));
     await assert.rejects(call("category_create", { expectedRevision: 0, title: "Unscoped" }), /roleId/);
     await assert.rejects(call("role_snapshot"), /roleId/);

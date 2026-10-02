@@ -298,7 +298,15 @@ test("the api package serves structured documents for every workspace package", 
       "project_create", "project_delete", "project_reorder", "project_update",
     ].sort());
     const roleView = roles.operations.find((operation) => operation.name === "role_snapshot") as OperationDoc;
-    assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["id", "name", "description", "botMarkdown", "createdAt", "updatedAt", "categories", "mcpServers", "revision", "skills", "trustedProjects", "disabledInternalMcpServers"].sort());
+    assert.deepEqual(Object.keys(roleView.outputSchema.properties as object).sort(), ["id", "name", "description", "botMarkdown", "createdAt", "updatedAt", "categories", "mcpServers", "revision", "skills", "trustedProjects", "disabledInternalMcpServers", "internalMcpHarnesses"].sort());
+    for (const name of ["skill_create", "skill_update", "mcp_server_create", "mcp_server_update", "role_internal_mcp_update"]) {
+      const input = roles.operations.find(operation => operation.name === name)!.inputSchema;
+      assert.ok(Object.hasOwn(input.properties ?? {}, "harnesses"));
+      assert.equal((input.required as string[]).includes("harnesses"), false);
+    }
+    const launchPreview = roles.operations.find(operation => operation.name === "role_launch_preview")!;
+    assert.ok(Object.hasOwn(launchPreview.inputSchema.properties ?? {}, "harness"));
+    assert.ok(Object.hasOwn(launchPreview.outputSchema.properties ?? {}, "excludedCapabilities"));
     assert.ok((roles.operations.find((operation) => operation.name === "roles_snapshot")?.outputSchema.properties as Record<string, unknown>).workerDefaultRoleId);
     assert.equal(roles.transports.find((transport) => transport.type === "websocket")?.subscriptions, true);
     assert.deepEqual(Object.keys(auth.events).sort(), ["accounts_changed", "login_changed", "worker_accounts_changed", "worker_login_changed"]);

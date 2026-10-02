@@ -354,6 +354,8 @@ test("Role names mirror the API's limits and its ASCII-case uniqueness", () => {
 });
 
 test("an external MCP server may not take an internal name, on or off", () => {
+  assert.equal(roles.internalCollision("computer-use", ["codex-computer-use"]), true);
+  assert.equal(roles.internalCollision("codex-computer-use", ["computer-use"]), true);
   const internal = { roleId: "A", revision: 3, servers: [{ name: "roles", enabled: false }, { name: "bots", enabled: true }] };
   // The launch preview lists the same servers; a name only one of them knows still counts.
   const launch = { internalMcpServers: [{ name: "bots", enabled: true }, { name: "notify", enabled: false }] };

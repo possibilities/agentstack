@@ -126,7 +126,11 @@ _Avoid_: stream, feed, pubsub
 
 The Role-selectable MCP connections supplied by Stack: Package APIs and the
 five Codex tool bridges described in [ADR 0129](docs/adr/0129-codex-tools-in-default-mcp-fleet.md).
-Internal launches use stdio; external consumers retain HTTP. All are enabled unless a Role excludes them. The bridges are not Package APIs;
+Internal launches use stdio; external consumers retain HTTP. Connections are enabled
+and unrestricted unless a Role disables them or supplies a capability harness
+allowlist ([ADR 0162](docs/adr/0162-role-capability-harness-selection.md)). The computer
+bridge's current key is `codex-computer-use`; it is not Claude Code's native
+`computer-use` integration. The bridges are not Package APIs;
 they have no socket operations or generated event subscriptions.
 
 ## MCP event subscription

@@ -163,9 +163,12 @@ test("enabled role resources materialize privately and disabled items stay out o
     const draft = state.skills[1]!.id;
     state = store.reorderSkills(state.revision, [draft, review]);
     assert.deepEqual(state.skills.map((skill) => skill.name), ["draft", "review"]);
+    state = store.createSkill(state.revision, "claude-only", "Not for Bots", "Excluded by harness", [], true, ["claude"]);
     state = store.createMcpServer(state.revision, "remote", "Remote tools", { type: "http", url: "https://mcp.example.test/tools", bearerTokenEnvVar: "ROLE_TOKEN", httpHeaders: { "X-Role": "managed" } });
     state = store.createMcpServer(state.revision, "local", "Local tools", { type: "stdio", command: "/usr/bin/env", args: ["true"], env: { MODE: "role" } }, false);
     const local = state.mcpServers[1]!.id;
+    state = store.createMcpServer(state.revision, "claude-tools", "Not for Bots", { type: "stdio", command: "/missing/not-launched", args: [] }, true, ["claude"]);
+    state = store.setInternalMcp(state.revision, "auth", true, ["claude"]);
     store.close();
     store = openRole(root);
     assert.deepEqual(store.snapshot(), state);
@@ -174,12 +177,11 @@ test("enabled role resources materialize privately and disabled items stay out o
     assert.match(await readFile(join(first, "skills", "review", "SKILL.md"), "utf8"), /name: "review"\ndescription: "Review changes"/);
     assert.equal(await readFile(join(first, "skills", "review", "scripts", "check.sh"), "utf8"), "exit 0\n");
     const config = await readFile(join(first, "config.toml"), "utf8");
-    assert.match(config, /\[mcp_servers.auth\]/);
-    assert.match(config, /tool_timeout_sec = 305/);
+    assert.doesNotMatch(config, /\[mcp_servers.auth\]/, "Bots use codex capability selection");
     assert.match(config, /\[mcp_servers.remote\]/);
     assert.match(config, /bearer_token_env_var = "ROLE_TOKEN"/);
     assert.match(config, /http_headers = \{ "X-Role" = "managed" \}/);
-    assert.doesNotMatch(config, /mcp_servers.local/);
+    assert.doesNotMatch(config, /mcp_servers.local|claude-tools/);
     await removeRole(root, "bot-1", first);
     state = store.updateMcpServer(state.revision, local, { enabled: true });
     const withLocal = await materializeRole(root, "bot-1", state, {});

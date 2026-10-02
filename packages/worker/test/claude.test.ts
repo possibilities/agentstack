@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -102,9 +102,12 @@ function sdkFixture() {
 
 const role: RoleSnapshot = { id: randomUUID(), name: "Fixture", description: "", createdAt: null, updatedAt: null, disabledInternalMcpServers: [], revision: 3, categories: [{ id: randomUUID(), title: "Role", description: "", enabled: true, createdAt: null, updatedAt: null,
   fragments: [{ id: randomUUID(), categoryId: randomUUID(), title: "Instruction", description: "", body: "Check your work.", enabled: true, createdAt: null, updatedAt: null }] }],
-skills: [{ id: randomUUID(), name: "fixture", description: "Fixture skill", body: "Review carefully", enabled: true, files: [] }],
+skills: [{ id: randomUUID(), name: "fixture", description: "Fixture skill", body: "Review carefully", enabled: true, files: [], harnesses: ["claude"] },
+  { id: randomUUID(), name: "excluded", description: "Not for Claude", body: "Do not load", enabled: true, files: [], harnesses: ["codex"] }],
 mcpServers: [{ id: randomUUID(), name: "external", description: "", enabled: true,
-  definition: { type: "http", url: "https://fixture.invalid/mcp", httpHeaders: { Authorization: "Bearer fixture-bearer-token" } } }], trustedProjects: [] };
+  definition: { type: "http", url: "https://fixture.invalid/mcp", httpHeaders: { Authorization: "Bearer fixture-bearer-token" } }, harnesses: ["claude"] },
+  { id: randomUUID(), name: "excluded", description: "Not for Claude", enabled: true, harnesses: ["codex"],
+    definition: { type: "stdio", command: "/missing/unused", args: [] } }], trustedProjects: [], internalMcpHarnesses: { "codex-computer-use": ["codex", "opencode"] } };
 
 function git(cwd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => execFile("git", ["-C", cwd, ...args], (error) => error ? reject(error) : resolve()));
@@ -166,6 +169,9 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     assert.deepEqual(native.options.systemPrompt, { type: "preset", preset: "claude_code", append: "Check your work." });
     const plugin = native.options.plugins![0]!;
     assert.match(await readFile(join(plugin.path, "skills", "fixture", "SKILL.md"), "utf8"), /Review carefully/);
+    await assert.rejects(stat(join(plugin.path, "skills", "excluded")), { code: "ENOENT" });
+    assert.equal(native.options.mcpServers!["codex-computer-use"], undefined);
+    assert.equal(native.options.mcpServers!.excluded, undefined);
     const internal = native.options.mcpServers!.roles!;
     assert.ok("command" in internal);
     assert.equal(internal.command, process.execPath);
@@ -243,6 +249,8 @@ test("Claude SDK workers preserve account/session continuity, exact permission a
     assert.equal(resumed.sessionId, first.worker.sessionId); assert.notEqual(resumed.runtimeInstance, first.worker.runtimeInstance);
     const resumedNative = sdk.calls.at(-1)!;
     assert.equal(resumedNative.options.resume, first.worker.sessionId);
+    assert.equal(resumedNative.options.mcpServers!["codex-computer-use"], undefined);
+    assert.equal(resumedNative.options.mcpServers!.excluded, undefined);
     assert.deepEqual(resumedNative.options.systemPrompt, { type: "preset", preset: "claude_code", append: "Check your work." });
     assert.equal(resumedNative.options.sessionId, undefined); assert.equal(resumedNative.inputs.length, 0);
     assert.equal(native.inputs.length, beforeLoss + 1); assert.equal(manager.ledger.turn(lost.turn!.id)?.phase, "unknown");

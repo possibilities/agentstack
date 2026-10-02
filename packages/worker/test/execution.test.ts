@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, writeFile, mkdir, stat } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -235,8 +235,11 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
   const contents = roleStore.role(roleId);
   let applied = contents.createCategory(0, "Guidance");
   applied = contents.createFragment(applied.revision, applied.categories[0]!.id, "Brief", "Check your work.");
-  applied = contents.createSkill(applied.revision, "review", "Review changes", "Review the diff.");
-  applied = contents.createMcpServer(applied.revision, "fixture-mcp", "", role.mcpServers[0]!.definition);
+  applied = contents.createSkill(applied.revision, "review", "Review changes", "Review the diff.", [], true, ["opencode"]);
+  applied = contents.createSkill(applied.revision, "codex-only", "Native Codex only", "Not for OpenCode", [], true, ["codex"]);
+  applied = contents.createMcpServer(applied.revision, "fixture-mcp", "", role.mcpServers[0]!.definition, true, ["opencode"]);
+  applied = contents.createMcpServer(applied.revision, "codex-only", "Excluded before executable lookup", { type: "stdio", command: "/missing/unused", args: [] }, true, ["codex"]);
+  applied = contents.setInternalMcp(applied.revision, "codex-computer-use", true, ["claude"]);
   applied = contents.setInternalMcp(applied.revision, "notify", false);
   const roles = await serveApi({ name: "roles", transport: "socket", env });
   const server = await serveSocket({ info: { name: "serve", description: "Server", transportDescription: "Socket", path: socketPath("serve", env) },
@@ -361,7 +364,10 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     assert.equal(chunk.data.includes("Check your work"), true);
     assert.ok(scopedChanges.includes(id));
     const fleet = (await configuredMcpServers(workspaceRoot(import.meta.dirname))).map(item => item.name);
-    assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "mcp-names.json"), "utf8")), [...fleet.filter(name => name !== "notify"), "fixture-mcp"]);
+    const selectedNames = [...fleet.filter(name => !["notify", "codex-computer-use"].includes(name)), "fixture-mcp"];
+    assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "mcp-names.json"), "utf8")), selectedNames);
+    assert.deepEqual(await readdir(join(started.worker.cwd!, ".opencode", "skills")), ["review"]);
+    assert.deepEqual((await loadWorkerRole(root, id)).skills.map(skill => skill.name), ["review", "codex-only"], "private capture retains unselected resources");
     const wiring = JSON.parse(await readFile(join(started.worker.cwd!, "mcp-launches.json"), "utf8")) as Array<{ name: string; command: string; env: Array<{ name: string; value: string }> }>;
     const internal = wiring.find(item => item.name === "roles")!;
     assert.equal(internal.command, process.execPath);
@@ -444,7 +450,8 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     await manager.close(); manager = undefined;
 
     // Recovery must retain the captured Role and its MCP selection, even after default/content edits.
-    contents.setInternalMcp(applied.revision, "roles", false);
+    const editedRole = contents.setInternalMcp(applied.revision, "roles", false);
+    contents.setInternalMcp(editedRole.revision, "codex-computer-use", true, ["opencode"]);
     const roleCatalog = roleStore.createRole(roleStore.catalog().revision, "Next worker");
     const nextRoleId = roleCatalog.roles.at(-1)!.id;
     roleStore.setWorkerDefault(roleCatalog.revision, nextRoleId);
@@ -457,7 +464,7 @@ test("durable ACP workers dispatch, follow up, answer permissions, and load afte
     await reopenedSupervisor.reconcile();
     assert.equal((await manager.resume(id, false)).phase, "idle");
     assert.equal((await manager.status(id)).worker.roleId, roleId);
-    assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "loaded-mcp-names.json"), "utf8")), [...fleet.filter(name => name !== "notify"), "fixture-mcp"]);
+    assert.deepEqual(JSON.parse(await readFile(join(started.worker.cwd!, "loaded-mcp-names.json"), "utf8")), selectedNames);
     assert.equal((await manager.closeWorker(id)).phase, "closed");
     const removed = await manager.remove(id, true);
     assert.equal(removed.retainedBranch, started.worker.branch);

@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join, dirname, basename, isAbsolute, relative, sep } from "node:path";
 import { renderBotInstructions, type RoleSnapshot } from "./store.js";
 import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type TrustedProject } from "./resources.js";
-import { mcpToolTimeoutSeconds, parseMcpBinding, mcpPort, type McpStdioLaunch } from "@stack/api";
+import { canonicalMcpName, mcpToolTimeoutSeconds, parseMcpBinding, mcpPort, type McpStdioLaunch } from "@stack/api";
+import { selectRoleCapabilities } from "./capabilities.js";
 
 const namePattern = /^[a-z][a-z0-9-]{0,31}$/;
 const toml = (value: string) => JSON.stringify(value);
@@ -35,14 +36,14 @@ export function serverMcpOrigins(port: number): string[] {
  */
 export function roleMcpConflict(server: RoleMcpServer, ownerNames: ReadonlySet<string>, ownerOrigins: ReadonlySet<string>): string | null {
   if (!server.enabled) return null;
-  if (ownerNames.has(server.name.toLowerCase())) return `role MCP server ${server.name} collides with an internal MCP server`;
+  if (ownerNames.has(canonicalMcpName(server.name.toLowerCase()))) return `role MCP server ${server.name} collides with an internal MCP server`;
   if (server.definition.type === "http") {
     const url = new URL(server.definition.url);
     // The configured origins fence the whole listener. Reserve its exact
     // loopback package paths too: an ephemeral or differently configured live
     // port must not let a Role reintroduce a disabled internal MCP via HTTP.
     const internalPath = url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
-      && ownerNames.has(/^\/mcp\/([^/]+)$/.exec(url.pathname)?.[1]?.toLowerCase() ?? "");
+      && ownerNames.has(canonicalMcpName(/^\/mcp\/([^/]+)$/.exec(url.pathname)?.[1]?.toLowerCase() ?? ""));
     if (ownerOrigins.has(url.origin) || internalPath) return `role MCP server ${server.name} cannot alias the internal MCP listener`;
   }
   return null;
@@ -64,6 +65,7 @@ export function roleMcpConfig(snapshot: Pick<RoleSnapshot, "mcpServers">): strin
 
 /** Codexnk reads SYSTEM_APPEND.md, config.toml and skills/ from --capabilities. */
 export async function materializeRole(stateDir: string, botId: string, snapshot: RoleSnapshot, mcpServers: Readonly<Record<string, McpStdioLaunch>>, cwd?: string): Promise<string> {
+  snapshot = selectRoleCapabilities(snapshot, "codex");
   const rendered = renderBotInstructions(snapshot);
   const parent = join(stateDir, "roles", botId);
   await mkdir(parent, { recursive: true, mode: 0o700 });

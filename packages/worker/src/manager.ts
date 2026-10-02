@@ -1,5 +1,5 @@
 import { OperationRejected, requireCompletionCoordination, socketCall, socketPath, wantsCompletion, type InvocationContext } from "@stack/api";
-import { renderInstructions } from "@stack/roles";
+import { renderInstructions, selectRoleCapabilities } from "@stack/roles";
 import { record, type AcpRequest } from "./acp.js";
 import { currentOption, effortOption, modelOption, optionsOf } from "./catalog.js";
 import { WorkerLedger, summarizeTurn, type WorkerRecord, type TurnSummary, type PendingRequest } from "./ledger.js";
@@ -487,8 +487,9 @@ export class WorkerManager {
     let stage = "Role snapshot";
     try {
       const snapshot = await roleSnapshot(this.env, input.roleId);
+      const capabilities = selectRoleCapabilities(snapshot, account.provider === "codex" ? "opencode" : account.provider);
       stage = "worktree";
-      const claim = await claimWorktree(this.stateDir, id, input.repo, input.baseRef, snapshot);
+      const claim = await claimWorktree(this.stateDir, id, input.repo, input.baseRef, capabilities);
       stage = "Role snapshot";
       await saveWorkerRole(this.stateDir, id, snapshot);
       this.ledger.setWorktree(id, claim);
@@ -496,12 +497,12 @@ export class WorkerManager {
       const runtime = this.supervisor.runtime(input.accountId);
       if (!runtime) throw new Error("account runtime is unavailable");
       this.bindRuntime(id, runtime);
-      const mcpServers = await sessionMcpServers(snapshot, this.env, runtime.supportsHttp, claim.cwd, { id, instance: runtime.instance });
+      const mcpServers = await sessionMcpServers(capabilities, this.env, runtime.supportsHttp, claim.cwd, { id, instance: runtime.instance });
       const creating = this.creating.get(runtime.instance) ?? { count: 0, chars: 0, dropped: 0, updates: [] };
       this.creating.set(runtime.instance, creating); creating.count++;
       let result: Record<string, unknown>;
       try {
-        const resources = account.provider === "claude" ? await claudeRole(this.stateDir, id, snapshot) : {};
+        const resources = account.provider === "claude" ? await claudeRole(this.stateDir, id, capabilities) : {};
         const value = await runtime.process.request("session/new", { cwd: claim.cwd, mcpServers, ...resources });
         if (!record(value) || typeof value.sessionId !== "string") throw new Error("ACP returned no session ID");
         result = value;
@@ -660,7 +661,7 @@ export class WorkerManager {
     this.ledger.settings.clearLoaded(`worker:${id}`);
     this.loading.add(id);
     try {
-      const snapshot = await loadWorkerRole(this.stateDir, id);
+      const snapshot = selectRoleCapabilities(await loadWorkerRole(this.stateDir, id), worker.provider === "codex" ? "opencode" : worker.provider);
       const mcpServers = await sessionMcpServers(snapshot, this.env, runtime.supportsHttp, worker.cwd, { id, instance: runtime.instance });
       const resources = worker.provider === "claude" ? await claudeRole(this.stateDir, id, snapshot) : {};
       const result = await runtime.process.request("session/load", { sessionId: worker.sessionId, cwd: worker.cwd, mcpServers, ...resources }, 60_000);

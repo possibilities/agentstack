@@ -11,6 +11,69 @@ async function createRole(socket: string): Promise<string> {
   return result.defaultRoleId;
 }
 
+test("capability harness allowlists persist, preserve omitted updates, and preview selection independently of instruction context", async () => {
+  const root = await mkdtemp(join(tmpdir(), "role-cap-"));
+  const env = { ...process.env, STACK_STATE_DIR: root };
+  let served = await serveApi({ name: "roles", transport: "socket", env });
+  const roleId = await createRole(served.socketPath!);
+  const call = (name: string, args: Record<string, unknown> = {}) => socketCall(served.socketPath!, "tools/call", { name, arguments: { roleId, ...args } }) as Promise<any>;
+  let revision = 0;
+  const write = async (name: string, fields: Record<string, unknown>) => {
+    assert.deepEqual(await call(name, { expectedRevision: revision, ...fields }), { roleId, revision: ++revision });
+  };
+  try {
+    await write("skill_create", { name: "everywhere", description: "Universal", body: "Universal skill" });
+    await write("skill_create", { name: "codex-only", description: "Restricted", body: "Restricted skill", harnesses: ["codex"] });
+    await write("skill_create", { name: "nowhere", description: "No harness", body: "Not loaded", harnesses: [] });
+    await write("mcp_server_create", { name: "claude-only", description: "Restricted", harnesses: ["claude"], definition: { type: "stdio", command: "/missing/unused", args: [] } });
+    await write("role_internal_mcp_update", { name: "codex-computer-use", harnesses: ["codex", "opencode"] });
+    await write("role_internal_mcp_update", { name: "notify", enabled: false, harnesses: ["claude"] });
+    for (const name of ["computer-use", "codex-computer-use"]) await assert.rejects(call("mcp_server_create", {
+      expectedRevision: revision, name, description: "Reserved even while excluded", enabled: false, harnesses: [],
+      definition: { type: "stdio", command: "/missing/unused", args: [] },
+    }), /collides/);
+    const original = await call("role_editor_snapshot");
+    const skillId = original.skills[1].id, mcpId = original.mcpServers[0].id;
+    await write("skill_update", { id: skillId, body: "Edited without changing selection" });
+    await write("mcp_server_update", { id: mcpId, description: "Edited without changing selection" });
+    await write("role_internal_mcp_update", { name: "codex-computer-use", enabled: true });
+    for (const harnesses of [["unknown"], ["Claude"], ["codex", "codex"], "claude"]) {
+      await assert.rejects(call("skill_update", { expectedRevision: revision, id: skillId, harnesses }));
+      await assert.rejects(call("mcp_server_update", { expectedRevision: revision, id: mcpId, harnesses }));
+      await assert.rejects(call("role_internal_mcp_update", { expectedRevision: revision, name: "roles", harnesses }));
+    }
+    await assert.rejects(call("role_internal_mcp_update", { expectedRevision: revision - 1, name: "roles", harnesses: [] }), /stale/);
+    await served.close();
+    served = await serveApi({ name: "roles", transport: "socket", env });
+    const snapshot = await call("role_editor_snapshot");
+    assert.deepEqual(snapshot.skills.map((skill: any) => skill.harnesses), [null, ["codex"], []]);
+    assert.deepEqual(snapshot.mcpServers[0].harnesses, ["claude"]);
+    assert.deepEqual(snapshot.internalMcpHarnesses, { "codex-computer-use": ["codex", "opencode"], notify: ["claude"] });
+    for (const [harness, skills, mcps, computer] of [[undefined, ["everywhere"], [], false], ["codex", ["everywhere", "codex-only"], [], true],
+      ["opencode", ["everywhere"], [], true], ["claude", ["everywhere"], ["claude-only"], false], ["devin", ["everywhere"], [], false]] as const) {
+      const preview = await call("role_launch_preview", { harness, context: { harness: "codex" } });
+      assert.equal(preview.harness, harness ?? null);
+      assert.deepEqual(preview.skills.map((skill: any) => skill.name), skills);
+      assert.deepEqual(preview.mcpServers.map((mcp: any) => mcp.name), mcps);
+      assert.equal(preview.config.includes("claude-only"), mcps.length > 0);
+      const row = preview.internalMcpServers.find((server: any) => server.name === "codex-computer-use");
+      assert.equal(row.enabled, true);
+      assert.equal(row.included, computer);
+      assert.equal(row.selectionReason, computer ? "included" : harness === undefined ? "harness_required" : "harness_mismatch");
+      assert.equal(preview.internalMcpServers.find((server: any) => server.name === "notify").included, false, "harness matching never enables a disabled connection");
+      assert.ok(preview.excludedCapabilities.some((item: any) => item.name === "nowhere" && item.reason === "harness_mismatch"));
+    }
+    await write("skill_update", { id: skillId, harnesses: null });
+    await write("mcp_server_update", { id: mcpId, harnesses: null });
+    await write("role_internal_mcp_update", { name: "codex-computer-use", harnesses: null });
+    const cleared = await call("role_launch_preview");
+    assert.deepEqual(cleared.skills.map((skill: any) => skill.name), ["everywhere", "codex-only"]);
+    assert.deepEqual(cleared.mcpServers.map((server: any) => server.name), ["claude-only"]);
+    assert.equal(cleared.internalMcpServers.find((server: any) => server.name === "codex-computer-use").included, true);
+    assert.deepEqual((await call("role_snapshot")).internalMcpHarnesses, { notify: ["claude"] });
+  } finally { await served.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("fragment conditions persist and select exact context in both previews, with revisioned replacement and clearing", async () => {
   const root = await mkdtemp(join(tmpdir(), "role-cond-"));
   const env = { ...process.env, STACK_STATE_DIR: root };
@@ -154,7 +217,7 @@ test("role skill and MCP operations support complete create, update, disable, re
     const http = await call("mcp_server_create", { expectedRevision: edited.revision, name: "remote", description: "Remote tools", definition });
     assert.equal(JSON.stringify(http).includes("private-"), false, "write responses omit connection definitions too");
     const summary = await call("role_snapshot", {});
-    assert.deepEqual(summary.mcpServers, [{ id: http.mcpServers[0]!.id, name: "remote", description: "Remote tools", enabled: true, transport: "http" }]);
+    assert.deepEqual(summary.mcpServers, [{ id: http.mcpServers[0]!.id, name: "remote", description: "Remote tools", enabled: true, harnesses: null, transport: "http" }]);
     const launch = await socketCall(path, "tools/call", { name: "role_launch_snapshot", arguments: {} }) as { mcpServers: Array<{ definition: unknown }> };
     assert.deepEqual(launch.mcpServers[0]?.definition, definition, "launch state retains the real connection definition");
     const editor = await socketCall(path, "tools/call", { name: "role_editor_snapshot", arguments: { roleId } });

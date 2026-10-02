@@ -18,7 +18,7 @@ test("bot stdio MCP connections follow the owner catalog and bind each connectio
     const env = { STACK_STATE_DIR: join(root, "state") };
     const endpoint = "unix:///tmp/stack-app/first.sock";
     const first = await serverMcpLaunches(root, 43123, "bot-1", endpoint, env);
-    const bridges = ["computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"];
+    const bridges = ["codex-computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"];
     assert.deepEqual(Object.keys(first), ["alpha", ...bridges]);
     for (const launch of Object.values(first)) {
       assert.equal(launch.type, "stdio");

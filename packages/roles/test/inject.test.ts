@@ -213,6 +213,15 @@ test("inject launches each native boundary with the selected bytes, private cred
       conditions: { model: "render-only-model", harness: "render-only-harness" } });
     await f.call("fragment_create", { roleId, expectedRevision: snapshot.revision + 1, categoryId: snapshot.categories[0].id,
       title: "Nonmatching", body: "DO NOT INJECT", conditions: { model: "other" } });
+    let revision = snapshot.revision + 2;
+    for (const harness of ["claude", "codex", "opencode"]) {
+      await f.call("skill_create", { roleId, expectedRevision: revision++, name: `only-${harness}`, description: "Harness specific", body: `Skill for ${harness}`, harnesses: [harness] });
+      await f.call("mcp_server_create", { roleId, expectedRevision: revision++, name: `only-${harness}`, description: "Harness specific",
+        definition: { type: "stdio", command: process.execPath, args: ["--version"] }, harnesses: [harness] });
+    }
+    await f.call("mcp_server_create", { roleId, expectedRevision: revision++, name: "never-resolve", description: "Excluded before executable lookup",
+      definition: { type: "stdio", command: "/missing/not-a-command", args: [], envVars: ["MISSING_CAPABILITY_ENV"] }, harnesses: [] });
+    await f.call("role_internal_mcp_update", { roleId, expectedRevision: revision++, name: "codex-computer-use", harnesses: ["codex", "opencode"] });
     const catalog = await f.call("roles_snapshot");
     await f.call("role_set_default", { expectedRevision: catalog.revision, roleId });
     await f.stop();
@@ -229,7 +238,8 @@ test("inject launches each native boundary with the selected bytes, private cred
       assert.ok(!report.argv.some((arg: string) => /with-model|with-harness|render-only/.test(arg)));
       assert.deepEqual(harness === "opencode" ? [report.argv[0], ...report.argv.slice(3)] : report.argv.slice(-native.length), native);
       assert.equal(report.input, "piped input\n");
-      assert.deepEqual(Object.keys(report.skills).sort(), ["role-skill/SKILL.md", "role-skill/assets/bytes.txt"]);
+      assert.deepEqual(Object.keys(report.skills).sort(), [`only-${harness}/SKILL.md`, "role-skill/SKILL.md", "role-skill/assets/bytes.txt"]);
+      const selectedNames = [...names.filter(name => harness !== "claude" || name !== "codex-computer-use"), `only-${harness}`].sort();
       assert.equal(report.skills["role-skill/assets/bytes.txt"], "support\0bytes");
       assert.match(report.skills["role-skill/SKILL.md"], /Role skill body/);
       if (harness === "claude") {
@@ -243,7 +253,8 @@ test("inject launches each native boundary with the selected bytes, private cred
         assert.equal(report.config.mcpServers.roles.env.HOME, f.home);
         assert.equal(report.config.mcpServers.external.headers.Authorization, "Bearer private-fixture-token");
         assert.equal(report.config.mcpServers.stdio.env.ROLE_TEST_ENV, "private-fixture-env");
-        assert.deepEqual(Object.keys(report.config.mcpServers).sort(), names);
+        assert.deepEqual(Object.keys(report.config.mcpServers).sort(), selectedNames);
+        assert.equal(report.config.mcpServers["computer-use"], undefined, "Claude's reserved native name is never emitted");
         await assert.rejects(stat(report.root), { code: "ENOENT" });
       } else {
         if (harness === "codex") {
@@ -255,6 +266,7 @@ test("inject launches each native boundary with the selected bytes, private cred
           assert.match(report.config, /private-fixture-env/);
           assert.ok(report.config.includes(withLocalAuth(f.env, auth => `Bearer ${auth.credential("stdio")}`)));
           assert.doesNotMatch(report.config, /disabled-mcp|notify|ambient/);
+          assert.deepEqual([...report.config.matchAll(/\[mcp_servers\."([^"]+)"\]/g)].map(match => match[1]).sort(), selectedNames);
           assert.equal(await readFile(join(report.root, "home", ".codex", "session-fixture"), "utf8"), "history");
           const lock = JSON.parse(await readFile(join(report.root, "launch-lock.json"), "utf8"));
           assert.equal(lock.state, "exited"); assert.ok(lock.pid > 0); assert.ok(lock.birth.trim());
@@ -270,7 +282,7 @@ test("inject launches each native boundary with the selected bytes, private cred
           withLocalAuth(f.env, auth => auth.operator(report.config.mcp.servers.roles.environment.STACK_MCP_OPERATOR, "stdio"));
           assert.equal(report.config.mcp.servers.roles.environment.STACK_STATE_DIR, f.state);
           assert.deepEqual(report.config.mcp.servers.stdio.command, [process.execPath, "--version", "one argument"]);
-          assert.deepEqual(Object.keys(report.config.mcp.servers).sort(), names);
+          assert.deepEqual(Object.keys(report.config.mcp.servers).sort(), selectedNames);
           assert.ok(report.config.plugins.includes("-opencode.config.compatibility"));
           assert.ok(report.config.plugins.includes("-opencode.config.instruction"));
           assert.equal(report.instructions, instructions);

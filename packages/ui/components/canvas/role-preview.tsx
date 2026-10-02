@@ -6,7 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { approxTokens, conditionDimensions, conditionValueLimit, contextIssues, contextKey, contextSummary, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, injectCommand, injectionGuidance, internalCounts, launchHint, normalizeContext, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState, type WorkerRoleState } from "@/lib/stack/roles";
+import { approxTokens, conditionDimensions, conditionValueLimit, contextIssues, contextKey, contextSummary, fallbackLimitBytes, fallbackSnapshotLimit, formatBytes, formatCount, injectCommand, injectionGuidance, launchHint, normalizeContext, launchLabel, previewBytes, previewPieces, projectBots, roleLaunches, type LaunchState, type WorkerRoleState } from "@/lib/stack/roles";
 import type { RoleLaunchPreview, RoleRenderContext } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { BotTile, CopyButton, Empty, Meter, NodeLink } from "./primitives";
@@ -162,11 +162,13 @@ const chip = "rounded-md px-1.5 py-0.5 font-mono text-[0.7rem]";
 /** Everything but the instruction text that the next launch receives, as `role_launch_preview` reports it. */
 function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating: boolean }) {
   const { bots, roleContext } = useStack();
-  // The rendering context changes only the instruction count and size; skills, servers and trust never depend on it.
+  // Instruction context is independent of capability selection. Until a selector is added,
+  // the store requests the unspecified-harness preview: unrestricted capabilities only.
   const roleContextSummary = contextSummary(roleContext);
   const actions = useRoleActions();
   const used = Math.min(100, (launch.snapshotChars / (launch.snapshotLimitChars || fallbackSnapshotLimit)) * 100);
-  const { on, total } = internalCounts(launch.internalMcpServers);
+  const total = launch.internalMcpServers.length;
+  const on = launch.internalMcpServers.filter((server) => server.included).length;
   const open = (kind: "skill" | "mcp-server" | "trusted-project", id: string) => actions.open({ kind, id });
   return (
     <>
@@ -180,7 +182,7 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
       {launch.issues.length ? (
         <Alert variant="destructive">
           <TriangleAlertIcon />
-          <AlertTitle>New Bot launches fail</AlertTitle>
+          <AlertTitle>Selected launch capabilities conflict</AlertTitle>
           <AlertDescription>
             <ul className="flex flex-col gap-1">
               {launch.issues.map((issue) => (
@@ -205,10 +207,10 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
               </li>
             ))}
           </ul>
-        ) : <p className="px-1.5 text-[0.7rem] text-muted-foreground">No Role skills are enabled.</p>}
-        <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">Bots and Workers that use this Role receive these skills, alongside any project and bundled skills they discover.</p>
+        ) : <p className="px-1.5 text-[0.7rem] text-muted-foreground">No Role skills are selected for this preview.</p>}
+        <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">{launch.harness ? `Capabilities for ${launch.harness}.` : "No capability harness selected: only unrestricted enabled capabilities are shown."} Instruction-rendering context does not select skills or connections. Launches may also discover project and bundled skills.</p>
       </Section>
-      <Section title="MCP servers" aside={<span className="text-[0.65rem] text-muted-foreground tabular-nums">{on} of {total} Stack server{total === 1 ? "" : "s"} on · {launch.mcpServers.length} from the Role</span>}>
+      <Section title="MCP servers" aside={<span className="text-[0.65rem] text-muted-foreground tabular-nums">{on} of {total} Stack connection{total === 1 ? "" : "s"} included · {launch.mcpServers.length} from the Role</span>}>
         <div className="flex flex-wrap gap-1 px-1.5">
           {launch.mcpServers.map((server) => (
             <button key={server.id} type="button" onClick={() => open("mcp-server", server.id)}
@@ -216,12 +218,12 @@ function LaunchView({ launch, updating }: { launch: RoleLaunchPreview; updating:
               {server.name}
             </button>
           ))}
-          {launch.internalMcpServers.map((server) => server.enabled
+          {launch.internalMcpServers.map((server) => server.included
             ? <span key={server.name} className={cn(chip, "bg-muted text-muted-foreground")} title={`${server.name} · ${server.transport} · Stack server, bound to each launch. ${server.description}`}>{server.title}</span>
-            : <span key={server.name} className={cn(chip, "bg-muted/40 text-muted-foreground/70 line-through")} title={`${server.name} · Off for this Role`}>{server.title}<span className="sr-only"> (off for this Role)</span></span>)}
+            : <span key={server.name} className={cn(chip, "bg-muted/40 text-muted-foreground/70 line-through")} title={`${server.name} · ${server.enabled ? "Excluded by harness selection" : "Off for this Role"}`}>{server.title}<span className="sr-only"> ({server.enabled ? "excluded by harness selection" : "off for this Role"})</span></span>)}
         </div>
         <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
-          Stack servers use stdio for future Bot, Worker and <code>stack roles inject</code> launches. This preview does not describe running connections. Additional Role servers keep their configured transport.
+          Stack connections use stdio on future launches when enabled and selected for the actual harness. This preview does not describe running connections. Additional Role connections keep their configured transport.
         </p>
         <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">{injectionGuidance}</p>
         {launch.config ? (

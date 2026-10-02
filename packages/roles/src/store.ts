@@ -7,6 +7,8 @@ import { initializeRoles } from "./schema.js";
 import { botMarkdown, starterBotMarkdown } from "./bot-markdown.js";
 import { fragmentConditions, matchesConditions, renderContext, type FragmentConditions, type RenderContext } from "./conditions.js";
 import { mcpRecord, skillRecord, trustedProjectRecord, type RoleMcpServer, type Skill, type TrustedProject } from "./resources.js";
+import { canonicalMcpName } from "@stack/api";
+import { capabilityHarnesses, normalizedInternalMcpHarnesses, type CapabilityHarness, type CapabilityHarnesses } from "./capabilities.js";
 
 /** Unix milliseconds; null on records written before the store kept timestamps. */
 type Stamps = { createdAt: number | null; updatedAt: number | null };
@@ -16,7 +18,8 @@ export const roleName = z.string().trim().min(1).max(200).describe("Human-readab
 export const roleDescription = z.string().max(4_000);
 export type Role = { id: string; name: string; description: string; revision: number } & Stamps;
 export type RoleCatalog = { revision: number; defaultRoleId: string | null; workerDefaultRoleId: string | null; roles: Role[] };
-export type RoleSnapshot = Role & { botMarkdown?: string; categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[]; trustedProjects: TrustedProject[]; disabledInternalMcpServers: string[] };
+export type RoleSnapshot = Role & { botMarkdown?: string; categories: Category[]; skills: Skill[]; mcpServers: RoleMcpServer[]; trustedProjects: TrustedProject[]; disabledInternalMcpServers: string[];
+  internalMcpHarnesses?: Record<string, CapabilityHarness[]> };
 
 function canonicalProjectRoot(path: string): string {
   if (!statSync(path).isDirectory()) throw new Error(`project root is not a directory: ${path}`);
@@ -189,7 +192,7 @@ export class RoleStore {
       const catalog = this.readCatalog();
       if (catalog.defaultRoleId === roleId) throw new Error("cannot delete the default role; mark another role as default first");
       if (catalog.workerDefaultRoleId === roleId) throw new Error("cannot delete the Worker default role; select another Worker default first");
-      for (const table of ["fragments", "categories", "skills", "role_mcp_servers", "trusted_projects", "disabled_internal_mcp", "role_bot_markdown"]) {
+      for (const table of ["fragments", "categories", "skills", "role_mcp_servers", "trusted_projects", "disabled_internal_mcp", "internal_mcp_harnesses", "role_bot_markdown"]) {
         this.db.prepare(`DELETE FROM ${table} WHERE role_id = ?`).run(roleId);
       }
       this.db.prepare("DELETE FROM roles WHERE id = ?").run(roleId);
@@ -245,10 +248,19 @@ export class RoleContents {
     });
   }
 
-  setInternalMcp(expectedRevision: number, name: string, enabled: boolean): RoleSnapshot {
+  setInternalMcp(expectedRevision: number, name: string, enabled?: boolean, harnesses?: CapabilityHarnesses): RoleSnapshot {
     return this.change(expectedRevision, () => {
-      if (enabled) this.db.prepare("DELETE FROM disabled_internal_mcp WHERE role_id = ? AND name = ?").run(this.roleId, name);
-      else this.db.prepare("INSERT OR IGNORE INTO disabled_internal_mcp VALUES (?, ?)").run(this.roleId, name);
+      name = canonicalMcpName(name);
+      if (enabled !== undefined) {
+        if (enabled) this.db.prepare("DELETE FROM disabled_internal_mcp WHERE role_id = ? AND name = ?").run(this.roleId, name);
+        else this.db.prepare("INSERT OR IGNORE INTO disabled_internal_mcp VALUES (?, ?)").run(this.roleId, name);
+      }
+      if (harnesses !== undefined) {
+        const allowed = capabilityHarnesses.parse(harnesses);
+        if (allowed === null) this.db.prepare("DELETE FROM internal_mcp_harnesses WHERE role_id=? AND name=?").run(this.roleId, name);
+        else this.db.prepare("INSERT INTO internal_mcp_harnesses VALUES (?, ?, ?) ON CONFLICT(role_id,name) DO UPDATE SET harnesses_json=excluded.harnesses_json")
+          .run(this.roleId, name, JSON.stringify(allowed));
+      }
     });
   }
 
@@ -276,18 +288,26 @@ export class RoleContents {
     for (const { category_id, enabled, conditions_json, created_at, updated_at, ...fragment } of fragments) {
       byId.get(category_id)?.fragments.push({ ...fragment, conditions: fragmentConditions.parse(JSON.parse(conditions_json)), categoryId: category_id, enabled: Boolean(enabled), createdAt: created_at, updatedAt: updated_at });
     }
-    const skills = (this.db.prepare("SELECT id, name, description, body, files_json, enabled FROM skills WHERE role_id = ? ORDER BY position, id").all(this.roleId) as Array<{
-      id: string; name: string; description: string; body: string; files_json: string; enabled: number;
-    }>).map(({ files_json, enabled, ...row }) => skillRecord.parse({ ...row, files: JSON.parse(files_json), enabled: Boolean(enabled) }));
-    const mcpServers = (this.db.prepare("SELECT id, name, description, definition_json, enabled FROM role_mcp_servers WHERE role_id = ? ORDER BY position, id").all(this.roleId) as Array<{
-      id: string; name: string; description: string; definition_json: string; enabled: number;
-    }>).map(({ definition_json, enabled, ...row }) => mcpRecord.parse({ ...row, definition: JSON.parse(definition_json), enabled: Boolean(enabled) }));
+    // Injection is structurally read-only. Existing pre-filter stores are readable
+    // as unrestricted until the Roles owner applies the additive schema upgrade.
+    const harnessColumn = (table: string) => this.db.prepare(`PRAGMA table_info(${table})`).all().some((column) => column.name === "harnesses_json")
+      ? "harnesses_json" : "NULL AS harnesses_json";
+    const skills = (this.db.prepare(`SELECT id, name, description, body, files_json, enabled, ${harnessColumn("skills")} FROM skills WHERE role_id = ? ORDER BY position, id`).all(this.roleId) as Array<{
+      id: string; name: string; description: string; body: string; files_json: string; enabled: number; harnesses_json: string | null;
+    }>).map(({ files_json, harnesses_json, enabled, ...row }) => skillRecord.parse({ ...row, files: JSON.parse(files_json), enabled: Boolean(enabled), harnesses: harnesses_json === null ? null : JSON.parse(harnesses_json) }));
+    const mcpServers = (this.db.prepare(`SELECT id, name, description, definition_json, enabled, ${harnessColumn("role_mcp_servers")} FROM role_mcp_servers WHERE role_id = ? ORDER BY position, id`).all(this.roleId) as Array<{
+      id: string; name: string; description: string; definition_json: string; enabled: number; harnesses_json: string | null;
+    }>).map(({ definition_json, harnesses_json, enabled, ...row }) => mcpRecord.parse({ ...row, definition: JSON.parse(definition_json), enabled: Boolean(enabled), harnesses: harnesses_json === null ? null : JSON.parse(harnesses_json) }));
     const trustedProjects = (this.db.prepare("SELECT id, path, description, enabled FROM trusted_projects WHERE role_id = ? ORDER BY position, id").all(this.roleId) as Array<{
       id: string; path: string; description: string; enabled: number;
     }>).map(({ enabled, ...row }) => trustedProjectRecord.parse({ ...row, enabled: Boolean(enabled) }));
-    const disabledInternalMcpServers = (this.db.prepare("SELECT name FROM disabled_internal_mcp WHERE role_id = ? ORDER BY name").all(this.roleId) as Array<{ name: string }>).map(({ name }) => name);
+    const disabledInternalMcpServers = [...new Set((this.db.prepare("SELECT name FROM disabled_internal_mcp WHERE role_id = ? ORDER BY name").all(this.roleId) as Array<{ name: string }>).map(({ name }) => canonicalMcpName(name)))].sort();
+    const internalRows = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='internal_mcp_harnesses'").get()
+      ? this.db.prepare("SELECT name, harnesses_json FROM internal_mcp_harnesses WHERE role_id=? ORDER BY name").all(this.roleId) as Array<{ name: string; harnesses_json: string }>
+      : [];
+    const internalMcpHarnesses = normalizedInternalMcpHarnesses(Object.fromEntries(internalRows.map(({ name, harnesses_json }) => [name, JSON.parse(harnesses_json)])));
     const personality = this.db.prepare("SELECT body FROM role_bot_markdown WHERE role_id=?").get(this.roleId) as { body: string };
-    return { ...role, botMarkdown: personality.body, categories, skills, mcpServers, trustedProjects, disabledInternalMcpServers };
+    return { ...role, botMarkdown: personality.body, categories, skills, mcpServers, trustedProjects, disabledInternalMcpServers, internalMcpHarnesses };
   }
 
   createCategory(expectedRevision: number, title: string, description = "", enabled = true): RoleSnapshot {
@@ -376,20 +396,20 @@ export class RoleContents {
     });
   }
 
-  createSkill(expectedRevision: number, name: string, description: string, body: string, files: Skill["files"] = [], enabled = true): RoleSnapshot {
+  createSkill(expectedRevision: number, name: string, description: string, body: string, files: Skill["files"] = [], enabled = true, harnesses: CapabilityHarnesses = null): RoleSnapshot {
     return this.change(expectedRevision, () => {
-      const skill = skillRecord.parse({ id: randomUUID(), name, description, body, files, enabled });
-      this.db.prepare("INSERT INTO skills VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(skill.id, skill.name, skill.description, skill.body, JSON.stringify(skill.files), Number(skill.enabled), this.count("skills"), this.roleId);
+      const skill = skillRecord.parse({ id: randomUUID(), name, description, body, files, enabled, harnesses });
+      this.db.prepare("INSERT INTO skills (id,name,description,body,files_json,enabled,position,role_id,harnesses_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(skill.id, skill.name, skill.description, skill.body, JSON.stringify(skill.files), Number(skill.enabled), this.count("skills"), this.roleId, skill.harnesses === null ? null : JSON.stringify(skill.harnesses));
     });
   }
 
   updateSkill(expectedRevision: number, id: string, fields: Partial<Omit<Skill, "id">>): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const current = this.skill(id);
-      const skill = skillRecord.parse({ ...current, ...fields });
-      this.db.prepare("UPDATE skills SET name = ?, description = ?, body = ?, files_json = ?, enabled = ? WHERE id = ?")
-        .run(skill.name, skill.description, skill.body, JSON.stringify(skill.files), Number(skill.enabled), id);
+      const skill = skillRecord.parse({ ...current, ...fields, harnesses: fields.harnesses === undefined ? current.harnesses : fields.harnesses });
+      this.db.prepare("UPDATE skills SET name = ?, description = ?, body = ?, files_json = ?, enabled = ?, harnesses_json = ? WHERE id = ?")
+        .run(skill.name, skill.description, skill.body, JSON.stringify(skill.files), Number(skill.enabled), skill.harnesses == null ? null : JSON.stringify(skill.harnesses), id);
     });
   }
 
@@ -401,20 +421,20 @@ export class RoleContents {
     return this.change(expectedRevision, () => this.reorder("skills", ids));
   }
 
-  createMcpServer(expectedRevision: number, name: string, description: string, definition: RoleMcpServer["definition"], enabled = true): RoleSnapshot {
+  createMcpServer(expectedRevision: number, name: string, description: string, definition: RoleMcpServer["definition"], enabled = true, harnesses: CapabilityHarnesses = null): RoleSnapshot {
     return this.change(expectedRevision, () => {
-      const server = mcpRecord.parse({ id: randomUUID(), name, description, definition, enabled });
-      this.db.prepare("INSERT INTO role_mcp_servers VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(server.id, server.name, server.description, JSON.stringify(server.definition), Number(server.enabled), this.count("role_mcp_servers"), this.roleId);
+      const server = mcpRecord.parse({ id: randomUUID(), name, description, definition, enabled, harnesses });
+      this.db.prepare("INSERT INTO role_mcp_servers (id,name,description,definition_json,enabled,position,role_id,harnesses_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(server.id, server.name, server.description, JSON.stringify(server.definition), Number(server.enabled), this.count("role_mcp_servers"), this.roleId, server.harnesses === null ? null : JSON.stringify(server.harnesses));
     });
   }
 
   updateMcpServer(expectedRevision: number, id: string, fields: Partial<Omit<RoleMcpServer, "id">>): RoleSnapshot {
     return this.change(expectedRevision, () => {
       const current = this.mcpServer(id);
-      const server = mcpRecord.parse({ ...current, ...fields });
-      this.db.prepare("UPDATE role_mcp_servers SET name = ?, description = ?, definition_json = ?, enabled = ? WHERE id = ?")
-        .run(server.name, server.description, JSON.stringify(server.definition), Number(server.enabled), id);
+      const server = mcpRecord.parse({ ...current, ...fields, harnesses: fields.harnesses === undefined ? current.harnesses : fields.harnesses });
+      this.db.prepare("UPDATE role_mcp_servers SET name = ?, description = ?, definition_json = ?, enabled = ?, harnesses_json = ? WHERE id = ?")
+        .run(server.name, server.description, JSON.stringify(server.definition), Number(server.enabled), server.harnesses == null ? null : JSON.stringify(server.harnesses), id);
     });
   }
 
@@ -483,20 +503,20 @@ export class RoleContents {
     return { id, categoryId: row.category_id, title: row.title, description: row.description, body: row.body, enabled: Boolean(row.enabled), position: row.position };
   }
   private skill(id: string): Skill {
-    const row = this.db.prepare("SELECT id, name, description, body, files_json, enabled FROM skills WHERE id = ? AND role_id = ?").get(id, this.roleId) as {
-      id: string; name: string; description: string; body: string; files_json: string; enabled: number;
+    const row = this.db.prepare("SELECT id, name, description, body, files_json, enabled, harnesses_json FROM skills WHERE id = ? AND role_id = ?").get(id, this.roleId) as {
+      id: string; name: string; description: string; body: string; files_json: string; enabled: number; harnesses_json: string | null;
     } | undefined;
     if (!row) throw new Error(`unknown skill: ${id}`);
-    const { files_json, enabled, ...fields } = row;
-    return skillRecord.parse({ ...fields, files: JSON.parse(files_json), enabled: Boolean(enabled) });
+    const { files_json, harnesses_json, enabled, ...fields } = row;
+    return skillRecord.parse({ ...fields, files: JSON.parse(files_json), enabled: Boolean(enabled), harnesses: harnesses_json === null ? null : JSON.parse(harnesses_json) });
   }
   private mcpServer(id: string): RoleMcpServer {
-    const row = this.db.prepare("SELECT id, name, description, definition_json, enabled FROM role_mcp_servers WHERE id = ? AND role_id = ?").get(id, this.roleId) as {
-      id: string; name: string; description: string; definition_json: string; enabled: number;
+    const row = this.db.prepare("SELECT id, name, description, definition_json, enabled, harnesses_json FROM role_mcp_servers WHERE id = ? AND role_id = ?").get(id, this.roleId) as {
+      id: string; name: string; description: string; definition_json: string; enabled: number; harnesses_json: string | null;
     } | undefined;
     if (!row) throw new Error(`unknown MCP server: ${id}`);
-    const { definition_json, enabled, ...fields } = row;
-    return mcpRecord.parse({ ...fields, definition: JSON.parse(definition_json), enabled: Boolean(enabled) });
+    const { definition_json, harnesses_json, enabled, ...fields } = row;
+    return mcpRecord.parse({ ...fields, definition: JSON.parse(definition_json), enabled: Boolean(enabled), harnesses: harnesses_json === null ? null : JSON.parse(harnesses_json) });
   }
   private trustedProject(id: string): TrustedProject {
     const row = this.db.prepare("SELECT id, path, description, enabled FROM trusted_projects WHERE id = ? AND role_id = ?").get(id, this.roleId) as {

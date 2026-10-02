@@ -84,7 +84,11 @@ test("Codex stdio MCP retains a private session, forwards media/elicitation, and
     assert.equal((await readFile(join(root, "starts"), "utf8")).trim().split("\n").length, 3, "interrupted calls never restart or replay a backend");
     const module = join(root, "plugins", "cache", "openai-bundled", "chrome", "latest", "scripts");
     await mkdir(module, { recursive: true }); await writeFile(join(module, "browser-client.mjs"), "export const fixture = true;");
-    for (const [name, launch] of Object.entries(await internalMcpLaunches(root, { kind: "operator" }, env)).filter(([name]) => codexMcpDefinition(name))) {
+    const bridges = Object.entries(await internalMcpLaunches(root, { kind: "operator" }, env)).filter(([name]) => codexMcpDefinition(name));
+    const computer = bridges.find(([name]) => name === "codex-computer-use")![1];
+    // Already captured launches must resolve, but new discovery never emits the reserved key.
+    bridges.push(["computer-use", { ...computer, args: [...computer.args.slice(0, -1), "computer-use"] }]);
+    for (const [name, launch] of bridges) {
       const client = new Client({ name: "offline-all-bridges", version: "1" }); clients.push(client);
       await client.connect(new StdioClientTransport({ ...launch, env: { ...launch.env, FIXTURE_ALL_BRIDGES: "1" }, stderr: "pipe" }));
       assert.ok((await client.listTools()).tools.length, `${name} lists native tools without a Stack server`);
@@ -127,7 +131,7 @@ test("Codex HTTP MCP isolates sessions, preserves upstream tools/media/approvals
     return { client, transport };
   };
   try {
-    assert.deepEqual(Object.keys(listener.urls).sort(), ["chrome", "computer-history", "computer-use", "messages", "openai-developer-docs"]);
+    assert.deepEqual(Object.keys(listener.urls).sort(), ["chrome", "codex-computer-use", "computer-history", "messages", "openai-developer-docs"]);
     assert.equal((await fetch(listener.urls.messages!, { method: "POST" })).status, 401);
     const first = await connect(true);
     const second = await connect();
@@ -222,7 +226,7 @@ createInterface({input:process.stdin}).on('line',line=>{
     assert.equal(status.checking, null);
     assert.deepEqual([status.runtime.state, status.runtime.source], ["found", "override"]);
     assert.deepEqual(Object.fromEntries(status.connections.map((item) => [item.name, item.catalog.state])), {
-      "computer-use": "available", chrome: "available", messages: "available", "computer-history": "unavailable", "openai-developer-docs": "unavailable" });
+      "codex-computer-use": "available", chrome: "available", messages: "available", "computer-history": "unavailable", "openai-developer-docs": "unavailable" });
     assert.equal(catalog("messages").catalog.tools, 2);
     assert.equal(catalog("computer-history").catalog.problem?.code, "plugin_unavailable");
     assert.equal(catalog("chrome").browser?.state, "not_checked", "catalog availability is not a connected browser");

@@ -15,7 +15,7 @@ test("Inspector's read-only server file follows Package API configuration", { ti
   const catalog = await serveInspectorCatalog({ root, env: { STACK_STATE_DIR: join(root, "state") }, mcpPort: 7823 });
   const names = async () => Object.keys((JSON.parse(await readFile(catalog.path, "utf8")) as { mcpServers: Record<string, unknown> }).mcpServers);
   try {
-    const bridges = ["computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"];
+    const bridges = ["codex-computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"];
     assert.deepEqual(await names(), ["alpha", ...bridges]);
     const beta = join(root, "packages", "beta");
     await mkdir(beta);

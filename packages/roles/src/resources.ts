@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isAbsolute } from "node:path";
+import { capabilityHarnesses } from "./capabilities.js";
 
 export const resourceId = z.uuid().describe("Stable role resource ID.");
 export const resourceName = z.string().regex(/^[a-z][a-z0-9-]{0,31}$/).describe("Unique lowercase name used in the private launch directory or MCP config.");
@@ -31,7 +32,7 @@ export const skillFiles = z.array(skillFile).max(128).superRefine((files, ctx) =
 });
 export const skillRecord = z.strictObject({
   id: resourceId, name: resourceName, description: resourceDescription.min(1), body: skillBody,
-  files: skillFiles, enabled: z.boolean(),
+  files: skillFiles, enabled: z.boolean(), harnesses: capabilityHarnesses.optional(),
 });
 export type Skill = z.infer<typeof skillRecord>;
 
@@ -58,7 +59,7 @@ export const mcpDefinition = z.discriminatedUnion("type", [
 ]);
 export const mcpRecord = z.strictObject({
   id: resourceId, name: resourceName, description: resourceDescription,
-  definition: mcpDefinition, enabled: z.boolean(),
+  definition: mcpDefinition, enabled: z.boolean(), harnesses: capabilityHarnesses.optional(),
 });
 export type RoleMcpServer = z.infer<typeof mcpRecord>;
 

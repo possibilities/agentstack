@@ -515,7 +515,10 @@ export function internalNames(internal: Pick<RoleInternalMcp, "servers"> | null,
   return [...new Set([...(internal?.servers ?? []), ...(launch?.internalMcpServers ?? [])].map((server) => server.name))];
 }
 
-export const internalCollision = (name: string, names: Iterable<string>): boolean => [...names].some((other) => other.toLowerCase() === name.toLowerCase());
+export const internalCollision = (name: string, names: Iterable<string>): boolean => {
+  const canonical = (value: string) => value.toLowerCase() === "computer-use" ? "codex-computer-use" : value.toLowerCase();
+  return [...names].some((other) => canonical(other) === canonical(name));
+};
 
 /* ─── Skills, MCP servers and trusted projects ───────────────────────── */
 

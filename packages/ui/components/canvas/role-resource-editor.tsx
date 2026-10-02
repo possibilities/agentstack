@@ -171,7 +171,7 @@ function useCreate<T extends { id: string; enabled: boolean }>(spec: Spec<T>, en
 }
 
 /** Duplicate a skill or MCP server under the next free name, carrying any unsaved edits. */
-function useDuplicate<T extends { id: string; enabled: boolean; name: string }>(spec: Spec<T>, id: string, edits: Fields) {
+function useDuplicate<T extends { id: string; enabled: boolean; name: string; harnesses?: RoleSkill["harnesses"] }>(spec: Spec<T>, id: string, edits: Fields) {
   const { role } = useStack();
   const actions = useRoleActions();
   return () => actions.write(`${resourceOperation[spec.kind]}_create`, (snapshot) => {
@@ -179,7 +179,7 @@ function useDuplicate<T extends { id: string; enabled: boolean; name: string }>(
     const current = findResource(items, id)?.item;
     if (!current) return `This ${spec.noun} was deleted elsewhere.`;
     const fields = { ...spec.text(current), ...edits };
-    return { ...spec.args(fields), name: uniqueName(fields.name || current.name, items.map((item) => item.name)), enabled: current.enabled };
+    return { ...spec.args(fields), name: uniqueName(fields.name || current.name, items.map((item) => item.name)), enabled: current.enabled, harnesses: current.harnesses };
   }, `duplicate:${id}`).then((snapshot) => {
     const created = addedIds(spec.list(role.data) ?? [], spec.list(snapshot) ?? [])[0];
     if (created) actions.open({ kind: spec.kind, id: created });

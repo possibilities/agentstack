@@ -4,6 +4,10 @@
 
 [ADR 0140](0140-internal-mcp-over-stdio.md) supersedes HTTP for internal launches. External HTTP remains; both transports share the bridge handlers and per-connection backend.
 
+[ADR 0162](0162-role-capability-harness-selection.md) renames the computer bridge
+to `codex-computer-use` and adds opt-in Role capability harness selection. The
+original name below is retained as historical context, not the current catalog.
+
 Stack's authenticated loopback HTTP MCP listener includes five stable connections
 alongside Package APIs:
 

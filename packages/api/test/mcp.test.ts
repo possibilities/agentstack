@@ -45,7 +45,7 @@ test("one HTTP process exposes each configured Package API and forwards operatio
     assert.equal((await fetch(served.urls.auth!, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 401);
     assert.equal((await fetch(served.urls.auth!, { method: "POST", headers: { authorization: "Bearer wrong" }, body: "{}" })).status, 401);
     const packageNames = ["auth", "bots", "brain", "browse", "content", "notify", "roles", "scrape", "serve", "usage", "worker"];
-    assert.deepEqual(Object.keys(served.urls), [...packageNames, "computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"]);
+    assert.deepEqual(Object.keys(served.urls), [...packageNames, "codex-computer-use", "chrome", "messages", "computer-history", "openai-developer-docs"]);
     for (const name of packageNames) {
       const url = served.urls[name]!;
       const client = new Client({ name: "test", version: "1.0.0" });

@@ -664,13 +664,17 @@ export type RoleCategory = { id: string; title: string; description: string; ena
   createdAt: number | null; updatedAt: number | null };
 /** A supporting file beside a skill's generated SKILL.md; bytes travel as canonical base64. */
 export type RoleSkillFile = { path: string; contentBase64: string };
+export type RoleCapabilityHarness = "codex" | "opencode" | "claude" | "devin";
+export type RoleCapabilitySelection = "included" | "disabled" | "harness_required" | "harness_mismatch";
+/** Missing/null means all harnesses; [] means none. Not instruction-rendering context. */
+export type RoleCapabilityHarnesses = RoleCapabilityHarness[] | null;
 /** A Role-owned skill. Its name and description become SKILL.md frontmatter, so both reach Bots. */
-export type RoleSkill = { id: string; name: string; description: string; body: string; files: RoleSkillFile[]; enabled: boolean };
+export type RoleSkill = { id: string; name: string; description: string; body: string; files: RoleSkillFile[]; enabled: boolean; harnesses?: RoleCapabilityHarnesses };
 export type RoleMcpDefinition =
   | { type: "http"; url: string; bearerTokenEnvVar?: string; httpHeaders?: Record<string, string>; envHttpHeaders?: Record<string, string> }
   | { type: "stdio"; command: string; args: string[]; env?: Record<string, string>; envVars?: string[] };
 /** An additional MCP server for new Bot launches; its description is for people only. */
-export type RoleMcpServer = { id: string; name: string; description: string; definition: RoleMcpDefinition; enabled: boolean };
+export type RoleMcpServer = { id: string; name: string; description: string; definition: RoleMcpDefinition; enabled: boolean; harnesses?: RoleCapabilityHarnesses };
 /** A canonical project root whose project config Bots launched inside it may load. */
 export type RoleTrustedProject = { id: string; path: string; description: string; enabled: boolean };
 /** A named Role in `roles_snapshot`. `revision` is the Role's own; names are unique ignoring ASCII case. */
@@ -682,16 +686,18 @@ export type RoleShim = { name: string; args: string[]; path: string; revision: s
 export type RoleShims = { binDir: string; shims: RoleShim[] };
 /** `role_editor_snapshot`: operator-only definitions; ordinary snapshots and write replies use MCP summaries. */
 export type RoleSnapshot = Role & { botMarkdown?: string; categories: RoleCategory[]; skills: RoleSkill[]; mcpServers: RoleMcpServer[]; trustedProjects: RoleTrustedProject[];
-  /** Internal Package API names switched off for this Role. Not an inventory: an empty list means every configured server is on. */
-  disabledInternalMcpServers: string[] };
+  /** Stored off-switches, not an inventory. Harness allowlists independently determine launch inclusion. */
+  disabledInternalMcpServers: string[];
+  internalMcpHarnesses?: Record<string, RoleCapabilityHarness[]> };
 export type RoleSummary = Omit<RoleSnapshot, "mcpServers"> & { mcpServers: Array<Omit<RoleMcpServer, "definition"> & { transport: "http" | "stdio" }> };
 /** What a Role write returns instead of a snapshot: reread the Role for its content. */
 export type RoleReceipt = { roleId: string; revision: number };
 /** `role_preview`: exact instruction fragments and their spans, plus the separate Bot-only bot.md personality. */
 export type RolePreview = { roleId: string; revision: number; rendered: string; bytes: number; limitBytes: number; botMarkdown?: string; botBytes?: number;
   segments: Array<{ categoryId: string; fragmentId: string; start: number; end: number }> };
-/** A configured internal Stack MCP server and whether the Role's later launches connect to it. `title` is the key for Package APIs. */
-export type RoleInternalServer = { name: string; title: string; description: string; kind: "package" | "codex"; transport: "stdio"; enabled: boolean };
+/** Stored switch and effective capability selection. `enabled` alone never promises a launch connection. */
+export type RoleInternalServer = { name: string; title: string; description: string; kind: "package" | "codex"; transport: "stdio"; enabled: boolean;
+  harnesses: RoleCapabilityHarnesses; included: boolean; selectionReason: RoleCapabilitySelection };
 /** `role_internal_mcp_list`: the servers configured now, each with this Role's switch. */
 export type RoleInternalMcp = { roleId: string; revision: number; servers: RoleInternalServer[] };
 
@@ -712,11 +718,13 @@ export type NotificationPages = { filter: NotificationFilter; entries: Notificat
 export type RoleLaunchPreview = {
   roleId: string;
   revision: number;
+  harness: RoleCapabilityHarness | null;
   instructions: { bytes: number; botBytes?: number; limitBytes: number; fragments: number };
   skills: Array<{ id: string; name: string; description: string; files: number; bytes: number }>;
-  /** Every configured internal server with this Role's switch; only enabled ones reach a launch. */
+  /** Every configured internal connection; only included ones enter this preview's launch. */
   internalMcpServers: RoleInternalServer[];
   mcpServers: Array<{ id: string; name: string; type: "http" | "stdio" }>;
+  excludedCapabilities: Array<{ kind: "skill" | "mcp" | "internal-mcp"; id: string; name: string; reason: Exclude<RoleCapabilitySelection, "included"> }>;
   config: string;
   trustedProjects: Array<{ id: string; path: string }>;
   cwds: Array<{ cwd: string; path: string | null; trustedProjectIds: string[] }>;

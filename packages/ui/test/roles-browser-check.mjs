@@ -62,12 +62,12 @@ const handlers = {
 };
 const notChecked = { state: "not_checked", checkedAt: null, tools: null, evidence: null, problem: null };
 const codexTools = { checking: null, checkedAt: null, runtime: { state: "not_checked", source: null, checkedAt: null, problem: null },
-  connections: [["computer-use", "Computer Use"], ["chrome", "Chrome"], ["messages", "Messages"], ["computer-history", "Computer History"], ["openai-developer-docs", "OpenAI Developer Docs"]]
+  connections: [["codex-computer-use", "Codex Computer Use"], ["chrome", "Chrome"], ["messages", "Messages"], ["computer-history", "Computer History"], ["openai-developer-docs", "OpenAI Developer Docs"]]
     .map(([name, title]) => ({ name, title, description: `${title} fixture`, upstream: "Fixture upstream", catalog: notChecked, browser: name === "chrome" ? { state: "not_checked", checkedAt: null, evidence: null, problem: null } : null })) };
 const available = (tools) => (at) => ({ state: "available", checkedAt: at, tools, evidence: "Fixture catalog listed. No tool was called.", problem: null });
 const missing = (at) => ({ state: "unavailable", checkedAt: at, tools: null, evidence: "The live catalog has no usable server.",
   problem: { code: "plugin_unavailable", message: "Messages is not in the selected installation's live tool catalog.", recovery: "Install and enable this plugin in the desktop app, then check again." } });
-const codexResults = { "computer-use": available(11), chrome: available(15), messages: missing, "computer-history": missing, "openai-developer-docs": available(3) };
+const codexResults = { "codex-computer-use": available(11), chrome: available(15), messages: missing, "computer-history": missing, "openai-developer-docs": available(3) };
 let serveFixture;
 const fixture = (names) => fixtureOperations(names, handlers);
 /** Lets the page miss change notices, or lag one write, so stale-revision paths are exercised deterministically. */

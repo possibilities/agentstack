@@ -167,7 +167,7 @@ function StackServers() {
       )}
       {list && !on && total ? <p className="px-1.5 text-[0.7rem] text-muted-foreground">Every Stack server is off; later launches receive none of them.</p> : null}
       <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
-        Stack servers use stdio for Bot and Worker launches and <code>stack roles inject</code>. Switches apply to future launches; running sessions keep their connections. New Stack servers start on.
+        Stack connections use stdio for Bot and Worker launches and <code>stack roles inject</code> when enabled and allowed for the actual harness. These switches preserve any API-configured harness filters. Running sessions keep their connections. New Stack connections start on and unrestricted.
       </p>
       <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">{injectionGuidance}</p>
       {list?.servers.some((server) => server.kind === "codex") ? <CodexToolsAvailability servers={list.servers.filter((server) => server.kind === "codex")} now={now} /> : null}

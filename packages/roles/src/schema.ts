@@ -21,7 +21,7 @@ const resources = {
     role_id TEXT NOT NULL REFERENCES roles(id), UNIQUE(role_id, path)`,
 };
 
-/** Initialize the catalog and apply additive fragment metadata upgrades. */
+/** Initialize the catalog and apply additive resource metadata upgrades. */
 export function initializeRoles(db: DatabaseSync): void {
   const tables = new Set((db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>).map(({ name }) => name));
   if (!tables.has("roles")) {
@@ -61,6 +61,16 @@ export function initializeRoles(db: DatabaseSync): void {
     const fragmentColumns = db.prepare("PRAGMA table_info(fragments)").all() as Array<{ name: string }>;
     if (!fragmentColumns.some(({ name }) => name === "conditions_json"))
       db.exec("ALTER TABLE fragments ADD COLUMN conditions_json TEXT NOT NULL DEFAULT '{}'");
+    for (const table of ["skills", "role_mcp_servers"]) {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (!columns.some(({ name }) => name === "harnesses_json")) db.exec(`ALTER TABLE ${table} ADD COLUMN harnesses_json TEXT`);
+    }
+    db.exec(`CREATE TABLE IF NOT EXISTS internal_mcp_harnesses (
+      role_id TEXT NOT NULL REFERENCES roles(id), name TEXT NOT NULL, harnesses_json TEXT NOT NULL, PRIMARY KEY(role_id, name)
+    )`);
+    // Renaming a default-on connection must never re-enable a Role's explicit exclusion.
+    db.exec(`INSERT OR IGNORE INTO disabled_internal_mcp SELECT role_id, 'codex-computer-use' FROM disabled_internal_mcp WHERE name='computer-use';
+      DELETE FROM disabled_internal_mcp WHERE name='computer-use'`);
     db.exec("CREATE TABLE IF NOT EXISTS role_bot_markdown (role_id TEXT PRIMARY KEY REFERENCES roles(id), body TEXT NOT NULL)");
     // Existing Roles retain their instructions; never seed over an edited personality.
     db.exec("INSERT OR IGNORE INTO role_bot_markdown SELECT id, '' FROM roles");

@@ -386,7 +386,7 @@ test("serve socket checks Codex tools only on request and announces the finished
     const status = await read();
     assert.equal(status.runtime.state, "missing");
     assert.deepEqual(status.connections.map((item) => [item.name, item.catalog.state, item.catalog.problem?.code]), [
-      ["computer-use", "unavailable", "runtime_missing"], ["chrome", "unavailable", "runtime_missing"], ["messages", "unavailable", "runtime_missing"],
+      ["codex-computer-use", "unavailable", "runtime_missing"], ["chrome", "unavailable", "runtime_missing"], ["messages", "unavailable", "runtime_missing"],
       ["computer-history", "unavailable", "runtime_missing"], ["openai-developer-docs", "unavailable", "runtime_missing"]]);
     assert.deepEqual(received, ["codex_tools_changed", "codex_tools_changed"], "start and finish are announced");
   } finally {
