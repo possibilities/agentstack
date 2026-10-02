@@ -7,11 +7,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { browseCallError, browseLocalReason, groupHandoffs, handoffOutcomes, handoffStates, heldBy, intentFor, loadIntent, profileName, saveIntent } from "@/lib/stack/browse";
+import { browseCallError, browseLocalReason, groupHandoffs, handoffContentSelection, handoffOutcomes, handoffStates, heldBy, intentFor, loadIntent, profileName, saveIntent } from "@/lib/stack/browse";
+import { localOperations, stateOperations } from "@/lib/stack/state";
 import { primaryViewer, type HandoffActionState } from "@/lib/stack/browse-viewers";
 import type { BrowserHandoff, BrowserHandoffAction, BrowserProfile } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
-import { Empty, Flash, NodeCard, NodeLink, NodeTitle, StatusDot, Time } from "./primitives";
+import { ContentCleared, Empty, Flash, NodeCard, NodeLink, NodeTitle, StatusDot, Time } from "./primitives";
+import { browseMaintenanceOperations } from "./browse-maintenance";
+import { MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
 import { useStack, useStore, useViewerWindows, useWorkbench } from "./provider";
 import { PlacementContext, Section, Window } from "./window";
 
@@ -191,7 +194,7 @@ function HandoffRow({ handoff, profile }: { handoff: BrowserHandoff; profile: Br
           <NodeTitle node={node} label={firstLine(handoff.message)} className="min-w-0 truncate text-[0.8rem] font-medium">{view.label}</NodeTitle>
           <span className="ml-auto shrink-0 text-[0.66rem] text-muted-foreground"><Time at={Date.parse(handoff.createdAt)} /></span>
         </div>
-        <p className="line-clamp-4 text-[0.78rem] whitespace-pre-wrap text-pretty">{handoff.message}</p>
+        {handoff.contentClearedAt ? <ContentCleared at={handoff.contentClearedAt} /> : <p className="line-clamp-4 text-[0.78rem] whitespace-pre-wrap text-pretty">{handoff.message}</p>}
         <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[0.68rem] text-muted-foreground">
           <NodeLink node={{ kind: "bot", id: handoff.botId }} label={`bot ${handoff.botId}`} className="font-mono text-foreground">{handoff.botId}</NodeLink>
           <span aria-hidden>·</span>
@@ -200,7 +203,7 @@ function HandoffRow({ handoff, profile }: { handoff: BrowserHandoff; profile: Br
           <span aria-hidden>·</span>
           <span>{handoff.quiesced ? "Automation drained" : "Automation not drained"}</span>
         </p>
-        {handoff.issue ? (
+        {!handoff.contentClearedAt && handoff.issue ? (
           <p className="flex items-start gap-1.5 rounded-lg bg-warning/10 px-2 py-1.5 text-[0.72rem] text-pretty text-warning">
             <TriangleAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
             <span>{handoff.issue}{handoff.state === "preparing" ? ". The profile stays held; there is no force release." : ""}</span>
@@ -210,6 +213,57 @@ function HandoffRow({ handoff, profile }: { handoff: BrowserHandoff; profile: Br
       </NodeCard>
     </li>
   );
+}
+
+function HistoryRows({ rows, profiles, selection }: { rows: BrowserHandoff[]; profiles: Map<string, BrowserProfile>; selection?: { ids: string[]; locked: boolean; select(id: string): void } }) {
+  return <ul className="flex flex-col gap-0.5">
+    {rows.map((handoff) => {
+      const title = handoff.contentClearedAt ? "Handoff content cleared" : firstLine(handoff.message);
+      return <li key={handoff.id} data-node={`browser-handoff:${handoff.id}`} className="relative">
+        <Flash id={`browser-handoff:${handoff.id}`} />
+        <NodeCard node={{ kind: "browser-handoff", id: handoff.id }} label={title} variant="row">
+          <div className="flex items-center gap-2 text-[0.72rem]">
+            {selection ? <input type="checkbox" aria-label={`Select handoff ${handoff.id}`} checked={selection.ids.includes(handoff.id)}
+              disabled={selection.locked || !!handoff.contentClearedAt || (!selection.ids.includes(handoff.id) && selection.ids.length >= 100)} onChange={() => selection.select(handoff.id)} /> : null}
+            <NodeTitle node={{ kind: "browser-handoff", id: handoff.id }} label={title} className="min-w-0 truncate">{title}</NodeTitle>
+            <span className="ml-auto shrink-0 text-[0.64rem] text-muted-foreground">{handoff.outcome ? handoffOutcomes[handoff.outcome] : "Resolved"} · <Time at={Date.parse(handoff.resolvedAt ?? handoff.createdAt)} /></span>
+          </div>
+          {handoff.contentClearedAt ? <ContentCleared at={handoff.contentClearedAt} /> : null}
+          <p className="flex gap-2 text-[0.66rem] text-muted-foreground">
+            <span className="font-mono">{handoff.botId}</span><span className="truncate">{profileName(profiles.get(handoff.profileId), handoff.profileId)}</span>
+            {!handoff.contentClearedAt && handoff.note ? <span className="min-w-0 truncate italic" title={handoff.note}>“{handoff.note}”</span> : null}
+          </p>
+        </NodeCard>
+      </li>;
+    })}
+  </ul>;
+}
+
+function HandoffHistory({ rows, profiles }: { rows: BrowserHandoff[]; profiles: Map<string, BrowserProfile> }) {
+  const state = useStack();
+  return localOperations(state, "browse", Object.values(browseMaintenanceOperations.handoff)).available
+    ? <MaintainedHistory rows={rows} profiles={profiles} /> : <HistoryRows rows={rows} profiles={profiles} />;
+}
+
+function MaintainedHistory({ rows, profiles }: { rows: BrowserHandoff[]; profiles: Map<string, BrowserProfile> }) {
+  const state = useStack();
+  const store = useStore();
+  const [selected, setSelected] = useState<string[]>([]);
+  const [maintenanceOpen, setMaintenanceOpen] = useState(false);
+  const controls = useStateFlow({ operations: stateOperations(store.call, "browse", browseMaintenanceOperations.handoff, { ids: selected }),
+    recoveryKey: "browse:handoff:ids", observe: state.browserHandoffs.at,
+    onReceipt: (receipt) => { store.refreshBrowse(); if (receipt.status === "completed") setSelected([]); } });
+  const locked = controls.flow.phase !== "idle";
+  const unavailable = state.status.browse !== "open" ? "The Browse connection is not open." : state.browserHandoffs.error ? "Refresh handoffs before preparing."
+    : !handoffContentSelection(rows, selected) ? "Select up to 100 resolved handoffs with retained content; review any changed selection." : null;
+  return <>
+    {!maintenanceOpen && !locked ? <HistoryRows rows={rows} profiles={profiles} /> : null}
+    <MaintenanceDisclosure active={locked} aside="resolved handoff content" onOpenChange={setMaintenanceOpen}>
+      <p className="text-xs text-pretty text-muted-foreground">Redacts exact resolved messages, notes and issues in the Browse ledger. IDs, target/profile/controller identity, outcome, timing and permanent admission/action digests stay. Open handoffs cannot be selected. Screenshots and live control URLs were never persisted here; caller/upstream copies and backups remain independent.</p>
+      <HistoryRows rows={rows} profiles={profiles} selection={{ ids: selected, locked, select: (id) => setSelected((held) => held.includes(id) ? held.filter((value) => value !== id) : [...held, id]) }} />
+      <StateFlowView controls={controls} label={`Prepare clearing ${selected.length} handoff bodies`} applyLabel="Clear handoff content" unavailable={unavailable} />
+    </MaintenanceDisclosure>
+  </>;
 }
 
 /**
@@ -249,24 +303,7 @@ export function HandoffsWindow() {
             {resolved.length ? (
               <Section title="History" aside={<Button type="button" size="xs" variant="ghost" aria-expanded={history} onClick={() => setHistory(!history)}>{history ? "Hide" : `Show ${resolved.length}`}</Button>}>
                 {history ? (
-                  <ul className="flex flex-col gap-0.5">
-                    {resolved.map((handoff) => (
-                      <li key={handoff.id} data-node={`browser-handoff:${handoff.id}`} className="relative">
-                        <Flash id={`browser-handoff:${handoff.id}`} />
-                        <NodeCard node={{ kind: "browser-handoff", id: handoff.id }} label={firstLine(handoff.message)} variant="row">
-                          <div className="flex items-center gap-2 text-[0.72rem]">
-                            <NodeTitle node={{ kind: "browser-handoff", id: handoff.id }} label={firstLine(handoff.message)} className="min-w-0 truncate">{firstLine(handoff.message)}</NodeTitle>
-                            <span className="ml-auto shrink-0 text-[0.64rem] text-muted-foreground">{handoff.outcome ? handoffOutcomes[handoff.outcome] : "Resolved"} · <Time at={Date.parse(handoff.resolvedAt ?? handoff.createdAt)} /></span>
-                          </div>
-                          <p className="flex gap-2 text-[0.66rem] text-muted-foreground">
-                            <span className="font-mono">{handoff.botId}</span>
-                            <span className="truncate">{profileName(profiles.get(handoff.profileId), handoff.profileId)}</span>
-                            {handoff.note ? <span className="min-w-0 truncate italic" title={handoff.note}>“{handoff.note}”</span> : null}
-                          </p>
-                        </NodeCard>
-                      </li>
-                    ))}
-                  </ul>
+                  <HandoffHistory rows={resolved} profiles={profiles} />
                 ) : null}
               </Section>
             ) : null}
