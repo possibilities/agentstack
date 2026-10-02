@@ -898,6 +898,10 @@ export type BrainJobRecord = BrainJob & { failure_summary: string | null; attemp
 export type BrainRevealedJob = BrainJobRecord & { intent: unknown; artifacts: Array<{ content_digest: string; media_type: string; byte_size: number; body: string }> };
 export type BrainJobStats = { total: number; by_state: Record<BrainJobState, number>; runnable_due: number; active_leases: number; stale_leases: number; oldest_runnable_at: string | null };
 export type BrainRunState = "pending" | "failed" | "completed" | "cancelled" | "active" | "completed_with_review";
+/** Content-safe `jobs_run` fields used by the exact Run maintenance view. */
+export type BrainRun = { id: number; run_type: string; state: BrainRunState; content_cleared_at?: string | null; payload_digest?: string | null;
+  operator_controlled: boolean; execution_mode: "offline" | "online" | null; authorization_digest: string | null;
+  counts: { jobs: number; attempts: number; by_job_state: Record<BrainJobState, number> } };
 /** One Research source from `sources_status`: its definition, health, latest Run and checkpoint. */
 export type BrainSource = {
   removed_at?: string | null; checkpoint_generation?: number;

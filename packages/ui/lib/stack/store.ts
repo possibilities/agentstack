@@ -831,11 +831,17 @@ export class StackStore {
     }
   };
 
-  private refreshBrainLedger(): void {
+  refreshBrainLedger = (): void => {
     this.refresh("brainStatus"); this.refresh("brainJobStats"); this.refresh("brainJobs");
     for (const id of Object.keys(this.state.brainJobRecords)) void this.loadBrainJob(Number(id));
     void this.refreshBrainSubmissions();
-  }
+  };
+
+  /** Refresh source maintenance markers without reapplying definitions or admitting work. */
+  refreshBrainSources = (): void => { this.refresh("brainSources"); };
+
+  /** Refresh queue maintenance fences without processing or resubmitting. */
+  refreshScrapeQueue = (): void => { this.refresh("scrapeQueue"); };
 
   private invalidateBrainIndex(): void {
     this.refresh("brainStats"); this.refresh("brainTags");

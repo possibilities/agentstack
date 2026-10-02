@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDownIcon, ChevronRightIcon, EyeIcon, ListChecksIcon, PauseIcon, PlayIcon, RefreshCwIcon, SatelliteDishIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -14,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { Empty, Flash, NodeCard, NodeTitle, StatusDot, Time } from "./primitives";
 import { useNow, useStack, useStore, useWorkbench } from "./provider";
 import { badge, brainUnavailable, SensitivityBadge } from "./brain-shared";
+import { BrainJobMaintenance, BrainRunMaintenance, BrainSourceMaintenance } from "./brain-maintenance";
 import { CallErrorNote, fieldLabel, Raw } from "./scrape-shared";
 import { footerButton, Section, Window } from "./window";
 
@@ -83,6 +85,7 @@ export function JobsWindow() {
               </span>
             ) : null}
           </div>
+          {brainJobView.run !== null ? <BrainRunMaintenance id={brainJobView.run} /> : null}
           {!list ? <Empty icon={ListChecksIcon} title="Reading jobs…" />
             : !list.length ? <Empty icon={ListChecksIcon} title={brainJobView.view === "attention" ? "Nothing needs a decision" : "No jobs here"} /> : (
               <ul className="flex flex-col gap-0.5">
@@ -125,6 +128,7 @@ function JobRow({ job, source, expanded, blocked, onToggle, onRun }: { job: Brai
           {job.run_id !== null ? <button type="button" className="font-mono hover:text-foreground hover:underline" onClick={() => onRun(job.run_id!)}>run {job.run_id}</button> : null}
           {job.state === "retry_wait" ? <span>retries <RunAt at={job.run_at} /></span> : null}
           <SensitivityBadge value={job.sensitivity} />
+          {job.content_cleared_at ? <span>Payload cleared <Time at={Date.parse(job.content_cleared_at)} /></span> : null}
         </p>
         {expanded ? <JobDetail job={job} blocked={blocked} /> : null}
       </NodeCard>
@@ -167,12 +171,15 @@ function JobDetail({ job, blocked }: { job: BrainJob; blocked: string | null }) 
     }
   };
   const data: BrainJobRecord | null = record?.data ?? null;
-  const actions = jobActions(job.state);
+  const clearedAt = job.content_cleared_at ?? data?.content_cleared_at;
+  const currentJob = { ...job, content_cleared_at: clearedAt };
+  const actions = jobActions(job.state, clearedAt);
   return (
     <div className="flex flex-col gap-2 border-t pt-2 pl-5">
       {share?.document_id ? (
         <button type="button" className="self-start text-[0.72rem] font-medium hover:underline" onClick={() => store.openBrainDocument(share.document_id!)}>Read document {share.document_id}</button>
       ) : null}
+      {clearedAt ? <p className="text-xs text-muted-foreground">Payload cleared <Time at={Date.parse(clearedAt)} /> · Retry and Reveal are unavailable.</p> : null}
       {!data ? (record?.error ? <CallErrorNote error={{ text: record.error, uncertain: false }} /> : <p className="text-[0.7rem] text-muted-foreground">Reading diagnostics…</p>) : (
         <>
           {data.failure_summary ? <Raw value={data.failure_summary} className="max-h-40 text-destructive" /> : null}
@@ -217,11 +224,12 @@ function JobDetail({ job, blocked }: { job: BrainJob; blocked: string | null }) 
                 {pending === action ? <Spinner data-icon="inline-start" /> : action === "retry" ? <RotateCcwIcon data-icon="inline-start" /> : null}{actionLabels[action]}
               </Button>
             ))}
-            <RevealContent job={job} blocked={blocked} />
+            {!clearedAt ? <RevealContent job={job} blocked={blocked} /> : null}
           </div>
           <CallErrorNote error={error} />
         </form>
-      ) : <div className="flex"><RevealContent job={job} blocked={blocked} /></div>}
+      ) : !clearedAt ? <div className="flex"><RevealContent job={job} blocked={blocked} /></div> : null}
+      <BrainJobMaintenance job={currentJob} />
     </div>
   );
 }
@@ -353,7 +361,7 @@ function SourceRow({ source, blocked, outcome, onOutcome }: { source: BrainSourc
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<CallError | null>(null);
   const node = { kind: "research-source" as const, id: source.id };
-  const health = !source.enabled ? { label: "Disabled", tone: "muted" as const } : source.paused ? { label: "Paused", tone: "muted" as const } : sourceHealthView[source.health.state];
+  const health = source.removed_at ? { label: "Retired", tone: "muted" as const } : !source.enabled ? { label: "Disabled", tone: "muted" as const } : source.paused ? { label: "Paused", tone: "muted" as const } : sourceHealthView[source.health.state];
   const run = source.latest_run;
   const act = async (name: string, work: () => Promise<unknown>) => {
     setPending(name);
@@ -378,13 +386,15 @@ function SourceRow({ source, blocked, outcome, onOutcome }: { source: BrainSourc
           <NodeTitle node={node} label={source.display_name} className="min-w-0 truncate font-medium">{source.display_name}</NodeTitle>
           <span className={badge}>{source.kind}</span>
           <SensitivityBadge value={source.sensitivity} />
-          <span className="ml-auto shrink-0 text-[0.66rem] text-muted-foreground">{health.label}</span>
+          {source.removed_at ? <Badge variant="secondary" className="ml-auto">Retired</Badge> : <span className="ml-auto shrink-0 text-[0.66rem] text-muted-foreground">{health.label}</span>}
         </div>
         <p className="flex min-w-0 flex-wrap gap-x-2 text-[0.66rem] text-muted-foreground">
           {source.schedule ? <span>every {cadence(source.schedule.cadence_seconds)}</span> : <span>no schedule</span>}
           {source.enabled && !source.paused ? <span className={source.due ? "text-foreground" : undefined}>{source.due ? "due now" : source.health.next_due_at ? `next ${untilTime(Date.parse(source.health.next_due_at), now)}` : null}</span> : null}
           {source.health.last_success_at ? <span>last success {relativeTime(Date.parse(source.health.last_success_at), now)}</span> : null}
           {!source.executable ? <span className="text-warning">not runnable by this Brain</span> : null}
+          <span>checkpoint generation {source.checkpoint_generation ?? 0}</span>
+          {source.removed_at ? <span>retired <Time at={Date.parse(source.removed_at)} /> · Resume, sync and manifest updates unavailable</span> : null}
         </p>
         {source.paused && source.pause_reason ? <p className="text-[0.66rem] text-muted-foreground">Paused: {source.pause_reason}</p> : null}
         {source.health.detail && source.health.state !== "healthy" ? <p className={cn("text-[0.66rem] break-words", source.health.state === "unhealthy" ? "text-destructive" : "text-warning")}>{source.health.detail}</p> : null}
@@ -398,7 +408,7 @@ function SourceRow({ source, blocked, outcome, onOutcome }: { source: BrainSourc
             <span className="ml-auto"><Time at={Date.parse(run.finished_at ?? run.created_at)} /></span>
           </p>
         ) : null}
-        <div className="flex flex-wrap items-center gap-1.5">
+        {!source.removed_at ? <div className="flex flex-wrap items-center gap-1.5">
           <Button type="button" size="xs" variant="outline" disabled={Boolean(blocked) || pending !== null} title={blocked ?? "Admit a discovery Run now"} onClick={() => void sync(false)}>
             {pending === "sync" ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}Sync
           </Button>
@@ -409,8 +419,8 @@ function SourceRow({ source, blocked, outcome, onOutcome }: { source: BrainSourc
             {source.paused ? <PlayIcon data-icon="inline-start" /> : <PauseIcon data-icon="inline-start" />}{source.paused ? "Resume…" : "Pause…"}
           </Button>
           {outcome ? <span className={cn("ml-auto text-[0.66rem]", outcome.tone === "warning" ? "text-warning" : "text-muted-foreground")}>{outcome.text}</span> : null}
-        </div>
-        {pausing ? (
+        </div> : null}
+        {pausing && !source.removed_at ? (
           <form className="flex items-end gap-1.5" onSubmit={(event) => { event.preventDefault(); void pauseOrResume(); }}>
             <label className="flex min-w-0 flex-1 flex-col gap-1">
               <span className={fieldLabel}>Reason (recorded on the audit evidence)</span>
@@ -420,6 +430,7 @@ function SourceRow({ source, blocked, outcome, onOutcome }: { source: BrainSourc
           </form>
         ) : null}
         <CallErrorNote error={error} />
+        <BrainSourceMaintenance source={source} />
       </NodeCard>
     </li>
   );

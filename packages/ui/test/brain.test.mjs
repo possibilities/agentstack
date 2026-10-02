@@ -20,6 +20,9 @@ test("job dispositions mirror the ledger's legal transitions", () => {
   assert.deepEqual(brain.jobActions("queued"), ["cancel", "exclude"]);
   assert.deepEqual(brain.jobActions("excluded"), ["retry"]);
   assert.deepEqual(brain.jobActions("completed"), []);
+  for (const state of ["failed", "excluded", "cancelled", "completed"]) {
+    assert.deepEqual(brain.jobActions(state, "2026-10-01T12:00:00Z"), [], "cleared payloads cannot retry or change disposition");
+  }
 });
 
 test("merged state lists are newest first without duplicates, and tab counts come from stats", () => {

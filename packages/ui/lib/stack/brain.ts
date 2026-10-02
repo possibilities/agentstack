@@ -34,7 +34,8 @@ export const jobStateView: Record<BrainJobState, { label: string; tone: Tone }> 
 export const terminalStates = new Set<BrainJobState>(["completed", "excluded", "cancelled", "failed"]);
 
 /** Operator dispositions each state accepts, mirroring the ledger's legal transitions; the ledger still decides. */
-export function jobActions(state: BrainJobState): Array<"retry" | "cancel" | "exclude"> {
+export function jobActions(state: BrainJobState, contentClearedAt?: string | null): Array<"retry" | "cancel" | "exclude"> {
+  if (contentClearedAt) return [];
   switch (state) {
     case "failed": case "blocked": case "retry_wait": return ["retry", "cancel", "exclude"];
     case "queued": return ["cancel", "exclude"];
