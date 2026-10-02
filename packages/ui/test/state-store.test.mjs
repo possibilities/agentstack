@@ -207,13 +207,28 @@ test("completion history and occurrence subscriptions stay unread until watched,
     // Receipt and occurrence changes arrive on serve_subscriptions_changed.
     receipts.push(completionRow("00000000-0000-4000-8000-0000000000c2"));
     occurrences.push(occurrenceRow("00000000-0000-4000-8000-0000000000b2"));
+    const receiptGeneration = store.getState().completionGeneration;
     socket.publish("serve_subscriptions_changed");
     await until(store, (state) => state.completions.data?.completions.length === 2 && state.occurrences.data?.subscriptions.length === 2, "serve_subscriptions_changed");
+    assert.equal(store.getState().completionGeneration, receiptGeneration + 1, "the notice bumps the generation mounted watch views re-read on");
+
+    // A domain view's history request points the window filter at one Bot and marks each request.
+    assert.equal(store.getState().historyRequest, null);
+    const historyReads = historyCalls.length;
+    await store.showCompletionHistory({ botId: "alpha" });
+    assert.deepEqual(store.getState().completionFilter, { botId: "alpha" });
+    assert.equal(store.getState().historyRequest?.seq, 1);
+    assert.equal(historyCalls.at(-1).botId, "alpha", "a watched History view re-reads with the new filter");
+    assert.ok(historyCalls.length > historyReads);
+    await store.showCompletionHistory({ package: "worker" });
+    assert.equal(store.getState().historyRequest?.seq, 2, "each request bumps the sequence a mounted window follows");
+    await store.filterCompletions({});
 
     // serve_state_changed re-reads watched lists too, and removal re-reads them as well.
+    const beforeState = store.getState().completionGeneration;
     receipts.push(completionRow("00000000-0000-4000-8000-0000000000c3"));
     socket.publish("serve_state_changed");
-    await until(store, (state) => state.completions.data?.completions.length === 3, "serve_state_changed");
+    await until(store, (state) => state.completionGeneration > beforeState && state.completions.data?.completions.length === 3, "serve_state_changed");
     const afterRemove = historyCalls.length;
     await assert.rejects(store.removeSubscription("00000000-0000-4000-8000-0000000000a1", "v1"), /unobserved|revision|Error/);
     await until(store, () => historyCalls.length > afterRemove, "removal re-reads watched history");
@@ -253,6 +268,7 @@ test("a remote store never reads owner inventories, subscriptions, history or oc
   await store.refreshOccurrences();
   await store.moreCompletions();
   await store.moreOccurrences();
+  await store.showCompletionHistory({ botId: "alpha" });
   await store.filterCompletions({ state: "unknown" });
   await store.filterOccurrences({ botId: "alpha" });
   await store.selectStateInventory({ owners: null, measure: true });

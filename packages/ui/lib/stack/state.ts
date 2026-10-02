@@ -24,7 +24,9 @@ export type StateInventory = ServeStateList & {
 export type SubscriptionFilter = { botId?: string; threadId?: string; package?: string };
 export type SubscriptionList = ServeSubscriptionPage & { filter: SubscriptionFilter; restarted: boolean };
 export type CompletionFilter = { botId?: string; package?: string; state?: ServeCompletionReceipt["state"] };
-export type CompletionList = ServeCompletionPage & { filter: CompletionFilter; restarted: boolean };
+/** The page filter plus the exact-record arguments domain views add for a single admission. */
+export type ReceiptQuery = CompletionFilter & { operation?: string; threadId?: string; recordId?: string; limit?: number };
+export type CompletionList = ServeCompletionPage & { filter: ReceiptQuery; restarted: boolean };
 export type OccurrenceFilter = { botId?: string; package?: string };
 export type OccurrenceList = ServeOccurrencePage & { filter: OccurrenceFilter; restarted: boolean };
 
@@ -54,9 +56,10 @@ export async function continueInventory(call: Call, held: StateInventory): Promi
   }
 }
 
-function subscriptionArgs(filter: Record<string, string | undefined>, offset: number, revision?: string): Record<string, unknown> {
+function subscriptionArgs(filter: Record<string, string | number | undefined>, offset: number, revision?: string): Record<string, unknown> {
   const exact = Object.fromEntries(Object.entries(filter).filter(([, value]) => typeof value === "string" && value.length > 0));
-  return { ...exact, offset, limit: statePageLimit, ...(revision ? { revision } : {}) };
+  const limit = typeof filter.limit === "number" ? filter.limit : statePageLimit;
+  return { ...exact, offset, limit, ...(revision ? { revision } : {}) };
 }
 
 export async function loadSubscriptions(call: Call, filter: SubscriptionFilter): Promise<SubscriptionList> {
@@ -75,7 +78,7 @@ export async function continueSubscriptions(call: Call, held: SubscriptionList):
 }
 
 /** Retained completion receipts page by receipt ID, outliving their watches; continuations pin the first page's revision. */
-export async function loadCompletions(call: Call, filter: CompletionFilter): Promise<CompletionList> {
+export async function loadCompletions(call: Call, filter: ReceiptQuery): Promise<CompletionList> {
   return { ...await call<ServeCompletionPage>("serve_completion_list", subscriptionArgs(filter, 0)), filter, restarted: false };
 }
 

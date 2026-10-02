@@ -93,6 +93,10 @@ export type StackState = Snapshot & {
   /** Retained completion receipts for `completionFilter`; they outlive their watches. Local only; read only while watched. */
   completions: Resource<CompletionList>;
   completionFilter: CompletionFilter;
+  /** Bumped on serve (re)connect and `serve_subscriptions_changed`; mounted watch views re-read their exact receipts. */
+  completionGeneration: number;
+  /** A request for the Subscriptions window to open its History view; the sequence marks each request. */
+  historyRequest: { seq: number } | null;
   /** Typed occurrence subscriptions for `occurrenceFilter`; arguments and receipts need the explicit per-row inspection. Local only; read only while watched. */
   occurrences: Resource<OccurrenceList>;
   occurrenceFilter: OccurrenceFilter;
@@ -347,7 +351,8 @@ export class StackStore {
       serveSettings: { data: null, error: null, at: null }, harnessReleases: { data: null, error: null, at: null }, harnessCheck: null,
       stateInventory: { data: null, error: null, at: null }, stateSelection: { owners: null, measure: false },
       subscriptions: { data: null, error: null, at: null }, subscriptionFilter: {}, serveStateGeneration: 0,
-      completions: { data: null, error: null, at: null }, completionFilter: {}, occurrences: { data: null, error: null, at: null }, occurrenceFilter: {},
+      completions: { data: null, error: null, at: null }, completionFilter: {}, completionGeneration: 0, historyRequest: null,
+      occurrences: { data: null, error: null, at: null }, occurrenceFilter: {},
       botStateId: null, botStateGenerations: {}, xcomGeneration: 0,
       roleContext: {}, roleContextShown: {}, roleHarness: null,
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
@@ -424,6 +429,7 @@ export class StackStore {
       if (topic === "serve_settings_changed") this.readServeSettings();
       // Subscription-set and retained-receipt transitions have their own payload-free topic.
       if (topic === "serve_subscriptions_changed") {
+        this.set({ completionGeneration: this.state.completionGeneration + 1 });
         void this.refreshSubscriptions();
         if (this.completionWatchers > 0) void this.refreshCompletions();
         if (this.occurrenceWatchers > 0) void this.refreshOccurrences();
@@ -1567,7 +1573,7 @@ export class StackStore {
 
   private invalidateServeState(): void {
     if (this.state.remote) return;
-    this.set({ serveStateGeneration: this.state.serveStateGeneration + 1 });
+    this.set({ serveStateGeneration: this.state.serveStateGeneration + 1, completionGeneration: this.state.completionGeneration + 1 });
     void this.refreshStateInventory();
     void this.refreshSubscriptions();
     if (this.completionWatchers > 0) void this.refreshCompletions();
@@ -1660,6 +1666,12 @@ export class StackStore {
   filterCompletions = (filter: CompletionFilter): Promise<void> => {
     this.set({ completionFilter: filter, completions: { data: null, error: null, at: null } });
     return this.completionWatchers > 0 ? this.refreshCompletions() : Promise.resolve();
+  };
+
+  /** Point the Subscriptions window's History view at this filter; the sequence marks each request. */
+  showCompletionHistory = (filter: CompletionFilter): Promise<void> => {
+    this.set({ historyRequest: { seq: (this.state.historyRequest?.seq ?? 0) + 1 } });
+    return this.filterCompletions(filter);
   };
 
   refreshCompletions = async (): Promise<void> => {

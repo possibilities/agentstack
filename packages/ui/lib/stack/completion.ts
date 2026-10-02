@@ -1,5 +1,7 @@
+import { jobStateView } from "./brain";
 import { shortId } from "./derive";
-import type { CompletionReceipt, NodeRef, OccurrenceSubscription, ServeCompletionLink, ServeCompletionLinkStatus, ServeCompletionReceipt, ServeOccurrenceRow } from "./types";
+import { span } from "./workers";
+import type { BrainSourcesObservation, BrainSubmissionObservation, BrowserHandoff, CompletionReceipt, NodeRef, OccurrenceSubscription, ProcRunObservation, ServeCompletionLink, ServeCompletionLinkStatus, ServeCompletionReceipt, ServeOccurrenceRow, WorkerEventReceipt, WorkerTurn } from "./types";
 
 /** Shared reference and System vocabulary. Native acknowledgement never means consumption. */
 export const completionReceiptLabels: Record<CompletionReceipt["state"], { label: string; description: string }> = {
@@ -110,4 +112,99 @@ export function occurrenceDeliveryLabel(d: OccurrenceSubscription["deliveries"][
 export function occurrencePolicyLabel(row: ServeOccurrenceRow): string {
   if (row.policy === "interrupt") return "interrupt · cancels before follow-up";
   return row.target.kind === "bot" ? "native · start-or-steer" : "native · follow-up when idle";
+}
+
+type ObservationTone = "success" | "warning" | "destructive" | "muted" | "info";
+
+/** `serve_completion_list` arguments for one exact domain record, omitting empty values. */
+export function receiptQuery(pkg: string, recordId: string, origin?: { botId?: string; threadId?: string }): Record<string, unknown> {
+  return { ...(pkg ? { package: pkg } : {}), ...(recordId ? { recordId } : {}), limit: 100,
+    ...(origin?.botId ? { botId: origin.botId } : {}), ...(origin?.threadId ? { threadId: origin.threadId } : {}) };
+}
+
+const noBotWatchNote = "Bot MCP watches are separate: operator UI admissions never create one, and this view cannot subscribe.";
+
+/** Why an exact record shows no retained receipt; the operator view never offers one. */
+export const noBotWatch: Record<"browse" | "worker" | "proc" | "brain", string> = {
+  browse: `A Bot's MCP request watches its exact request by default; this one has no retained receipt. ${noBotWatchNote}`,
+  worker: `A Bot's MCP request watches its exact request by default; this one has no retained receipt. ${noBotWatchNote}`,
+  proc: `A Bot opts in with subscribe:true; this admission has no retained receipt. ${noBotWatchNote}`,
+  brain: `A Bot opts in with subscribe:true; this admission has no retained receipt. ${noBotWatchNote}`,
+};
+
+/** One `worker_turn_observation` phase as the owner reports it. Unknown is never a proven failure. */
+export const workerObservationPhaseLabels: Record<WorkerTurn["phase"], { label: string; description: string }> = {
+  queued: { label: "Queued", description: "Admitted; waiting for dispatch." },
+  running: { label: "Running", description: "The turn is in progress." },
+  awaiting_input: { label: "Awaiting input", description: "Waiting on a permission or question; only the originating Bot answers it." },
+  cancelling: { label: "Cancelling", description: "Cancellation was requested; waiting for the turn's outcome." },
+  completed: { label: "Completed", description: "The turn ended." },
+  cancelled: { label: "Cancelled", description: "The turn was cancelled." },
+  failed: { label: "Failed", description: "The turn failed." },
+  unknown: { label: "Unknown", description: "Outcome uncertain — not proven failure. Inspect the transcript and records." },
+};
+
+/** `worker_event_list` receipt states. A dispatched turn records an admission, never its outcome. */
+export const workerEventReceiptLabels: Record<WorkerEventReceipt["state"], { label: string; description: string }> = {
+  queued: { label: "Queued", description: "Durable inbox, no native turn dispatch yet" },
+  interrupting: { label: "Interrupting", description: "Explicit cancellation attempt, waiting for the active turn's outcome" },
+  dispatched: { label: "Dispatched", description: "Recorded follow-up turn — inspect its outcome; not processing success" },
+  unknown: { label: "Unknown", description: "Native event turn or interruption uncertain; automatic event input is fenced" },
+  cancelled: { label: "Cancelled", description: "Queued input was not dispatched before lifecycle end" },
+};
+
+/** Shown when any event receipt is unknown: no UI control retries or replays event input. */
+export const workerEventFence = "Automatic event input to this Worker is fenced. Recovery is the existing Worker lifecycle actions only; there is no event replay.";
+
+/** `proc_run_completion` terminal states; an unknown exit is not a proven failure. */
+export const procExitLabels: Record<"exited" | "failed" | "cancelled" | "unknown", { label: string; description: string }> = {
+  exited: { label: "Exited", description: "The process ended on its own." },
+  failed: { label: "Failed", description: "The process or its guardian failed." },
+  cancelled: { label: "Cancelled", description: "The run was stopped." },
+  unknown: { label: "Unknown", description: "The guardian or service was interrupted. Not a proven failed process, and it does not establish that the workspace is free." },
+};
+
+/** The observation's compact exit facts: code/signal/error plus its recorded duration. Never argv or output. */
+export function procExitParts(result: NonNullable<ProcRunObservation["result"]>): string[] {
+  const parts: string[] = [];
+  if (result.exitCode !== null) parts.push(`code ${result.exitCode}`);
+  if (result.signal !== null) parts.push(`signal ${result.signal}`);
+  if (result.error) parts.push(result.error);
+  const duration = result.finishedAt ? Date.parse(result.finishedAt) - Date.parse(result.startedAt) : null;
+  if (duration !== null && Number.isFinite(duration)) parts.push(`ran ${span(duration)}`);
+  return parts;
+}
+
+/** A resolved handoff's human report; an unresolved or absent result has no report. */
+export function browseReportText(outcome: BrowserHandoff["outcome"] | null): string {
+  const word = outcome === "completed" ? "Completed" : outcome === "skipped" ? "Skipped" : outcome === "cancelled" ? "Cancelled" : null;
+  if (word === null) return "No human report yet.";
+  return `The human reported ${word}. A report, not verified browser state; the Bot verifies with a fresh snapshot.`;
+}
+
+/** One submit admission's settlement; an unsettled result is never read as indexed. */
+export function brainSubmissionView(result: BrainSubmissionObservation["result"]): { label: string; tone: ObservationTone; detail: string } {
+  const scope = "Exact job only; transitive fanout isn't included. A retry does not rearm this watch.";
+  if (!result) return { label: "Not settled — queued, running or waiting to retry (or not admitted yet)", tone: "muted", detail: scope };
+  if (result.kind === "already_indexed")
+    return { label: `Already indexed · document #${result.document_id} — an observed document identity, not a queued job`, tone: "success", detail: scope };
+  const state = jobStateView[result.state];
+  return {
+    label: `Job #${result.job_id} · ${state.label}${result.failure_class ? ` · ${result.failure_class}` : ""}`,
+    tone: result.requires_attention ? "warning" : state.tone,
+    detail: `${result.requires_attention ? "Needs attention — not successful indexing. " : ""}${scope}`,
+  };
+}
+
+/** One source-sync admission's settled Run set; null means at least one Run is still active. */
+export function brainSourcesView(result: BrainSourcesObservation["result"]): { label: string; tone: ObservationTone; lines: string[] } {
+  if (!result) return { label: "Not settled — at least one admitted Run is still active. Never read as success.", tone: "muted", lines: [] };
+  const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  const lines = [
+    `${plural(result.admission_count, "admission")} · ${plural(result.run_count, "Run")}${result.no_run_count ? ` · ${plural(result.no_run_count, "admission")} without a Run` : ""}`,
+    ...Object.entries(result.admission_outcomes).map(([status, count]) => `${plural(count, "admission")} ${status}`),
+    ...Object.entries(result.outcomes).map(([outcome, count]) => `${plural(count, "Run")} ${outcome}`),
+    "Discovery and admission settled — not child extraction or indexing.",
+  ];
+  return { label: "Discovery and admission settled", tone: "info", lines };
 }

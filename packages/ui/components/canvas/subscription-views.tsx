@@ -49,7 +49,7 @@ export function PackageSubscriptionFilter({ package: pkg, disabled, onChange }: 
   );
 }
 
-const receiptTone: Record<ServeCompletionReceipt["state"], Tone> = {
+export const receiptTone: Record<ServeCompletionReceipt["state"], Tone> = {
   pending: "info", error: "destructive", observed: "muted", delivered: "success", unknown: "warning", cancelled: "muted",
 };
 

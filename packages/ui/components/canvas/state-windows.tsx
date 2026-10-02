@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BookOpenIcon, CableIcon, ChevronDownIcon, ChevronRightIcon, DatabaseIcon, EyeIcon, EyeOffIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogMedia, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -462,6 +462,12 @@ export function SubscriptionsWindow() {
   const { subscriptions, occurrences, completions, status, endpoints, remote } = state;
   const [view, setView] = useState<SubscriptionView>("watches");
   const [loading, setLoading] = useState(false);
+  const seenHistory = useRef(0);
+  const historySeq = state.historyRequest?.seq ?? 0;
+  // A domain view's "Open in History" switches this window to the History view it just filtered.
+  useEffect(() => {
+    if (historySeq !== seenHistory.current) { seenHistory.current = historySeq; if (historySeq > 0) setView("history"); }
+  }, [historySeq]);
   const run = (work: Promise<void>) => { setLoading(true); void work.finally(() => setLoading(false)); };
   if (remote) return <LocalOnly id="subscriptions" title="Subscriptions" icon={CableIcon}
     what="Bot event subscriptions, occurrence subscriptions and completion history are local operator state. Remote sessions cannot list, inspect or remove them." />;

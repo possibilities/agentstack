@@ -14,8 +14,9 @@ registerHooks({
   },
 });
 
-const { completionDelivery, completionDiagnostic, completionLinkStatusLabels, completionReceiptLabels, completionTargets,
-  completionUncertainty, completionWatch, completionWatchLabels, occurrenceDeliveryLabel, occurrencePolicyLabel } = await import("../lib/stack/completion.ts");
+const { brainSourcesView, brainSubmissionView, browseReportText, completionDelivery, completionDiagnostic, completionLinkStatusLabels, completionReceiptLabels, completionTargets,
+  completionUncertainty, completionWatch, completionWatchLabels, noBotWatch, occurrenceDeliveryLabel, occurrencePolicyLabel, procExitLabels, procExitParts,
+  receiptQuery, workerEventFence, workerEventReceiptLabels, workerObservationPhaseLabels } = await import("../lib/stack/completion.ts");
 const { continueCompletions, continueOccurrences, loadCompletions, loadOccurrences } = await import("../lib/stack/state.ts");
 
 const receipt = (extra = {}) => ({ id: "00000000-0000-4000-8000-0000000000c1", botId: "alpha", threadId: "thread-1", pkg: "notify", operation: "notification_send",
@@ -124,6 +125,77 @@ test("completion paging passes exact filters, appends pages and restarts on a ch
   assert.equal(restarted.restarted, true);
   assert.deepEqual(restarted.completions.map((row) => row.id), ["receipt-0"]);
   assert.equal(calls.at(-1)[1].offset, 0, "a changed observation pages again from the first page");
+});
+
+test("receiptQuery builds exact-record arguments and omits empty values", () => {
+  assert.deepEqual(receiptQuery("worker", "00000000-0000-4000-8000-0000000000d1"), { package: "worker", recordId: "00000000-0000-4000-8000-0000000000d1", limit: 100 });
+  assert.deepEqual(receiptQuery("browse", "abc", { botId: "bot-1", threadId: "thread-1" }), { package: "browse", recordId: "abc", limit: 100, botId: "bot-1", threadId: "thread-1" });
+  assert.deepEqual(receiptQuery("browse", "", { botId: "", threadId: undefined }), { package: "browse", limit: 100 }, "empty record and origin fields are omitted, never sent");
+  assert.deepEqual(receiptQuery("proc", "run-1", {}), { package: "proc", recordId: "run-1", limit: 100 });
+});
+
+test("domain labels cover every state and never promise a subscribe or retry control", () => {
+  assert.deepEqual(Object.keys(noBotWatch).sort(), ["brain", "browse", "proc", "worker"]);
+  for (const text of Object.values(noBotWatch)) {
+    assert.match(text, /no retained receipt/);
+    assert.match(text, /operator UI admissions never create one, and this view cannot subscribe\.$/);
+    assert.doesNotMatch(text, /retry|rearm/i);
+  }
+  assert.match(noBotWatch.browse, /watches its exact request by default/);
+  assert.match(noBotWatch.brain, /subscribe:true/);
+
+  const phases = ["queued", "running", "awaiting_input", "cancelling", "completed", "cancelled", "failed", "unknown"];
+  assert.deepEqual(Object.keys(workerObservationPhaseLabels).sort(), phases.sort());
+  assert.match(workerObservationPhaseLabels.unknown.description, /Outcome uncertain — not proven failure\. Inspect the transcript and records\./);
+
+  assert.deepEqual(Object.keys(workerEventReceiptLabels).sort(), ["cancelled", "dispatched", "interrupting", "queued", "unknown"]);
+  assert.equal(workerEventReceiptLabels.queued.description, "Durable inbox, no native turn dispatch yet");
+  assert.equal(workerEventReceiptLabels.dispatched.description, "Recorded follow-up turn — inspect its outcome; not processing success");
+  assert.match(workerEventFence, /fenced\. Recovery is the existing Worker lifecycle actions only; there is no event replay\./);
+
+  assert.deepEqual(Object.keys(procExitLabels).sort(), ["cancelled", "exited", "failed", "unknown"]);
+  assert.match(procExitLabels.unknown.description, /guardian or service was interrupted\. Not a proven failed process/);
+  const exited = { id: "run-1", state: "exited", exitCode: 3, signal: null, error: null, startedAt: "2026-01-01T00:00:00Z", finishedAt: "2026-01-01T00:01:05Z" };
+  assert.deepEqual(procExitParts(exited), ["code 3", "ran 1m 5s"]);
+  assert.deepEqual(procExitParts({ ...exited, exitCode: null, signal: "SIGTERM", error: "guardian_failed", finishedAt: null }), ["signal SIGTERM", "guardian_failed"]);
+});
+
+test("browseReportText reports the human's outcome without claiming verified browser state", () => {
+  assert.equal(browseReportText(null), "No human report yet.");
+  assert.equal(browseReportText("completed"), "The human reported Completed. A report, not verified browser state; the Bot verifies with a fresh snapshot.");
+  assert.equal(browseReportText("skipped"), "The human reported Skipped. A report, not verified browser state; the Bot verifies with a fresh snapshot.");
+  assert.equal(browseReportText("cancelled"), "The human reported Cancelled. A report, not verified browser state; the Bot verifies with a fresh snapshot.");
+});
+
+test("brainSubmissionView words each settlement and never reads an unsettled result as success", () => {
+  const unsettled = brainSubmissionView(null);
+  assert.match(unsettled.label, /Not settled/);
+  assert.doesNotMatch(unsettled.label, /indexed|completed|success/i);
+  assert.equal(unsettled.tone, "muted");
+  const indexed = brainSubmissionView({ kind: "already_indexed", document_id: 7 });
+  assert.equal(indexed.label, "Already indexed · document #7 — an observed document identity, not a queued job");
+  const done = brainSubmissionView({ kind: "job", job_id: 41, state: "completed", failure_class: null, document_id: 7, requires_attention: false, scope: "exact_job" });
+  assert.equal(done.label, "Job #41 · Completed");
+  assert.doesNotMatch(done.detail, /Needs attention/);
+  const blocked = brainSubmissionView({ kind: "job", job_id: 2, state: "blocked", failure_class: "egress_denied", document_id: null, requires_attention: true, scope: "exact_job" });
+  assert.equal(blocked.label, "Job #2 · Blocked · egress_denied");
+  assert.equal(blocked.tone, "warning");
+  assert.match(blocked.detail, /Needs attention — not successful indexing\./);
+  for (const view of [unsettled, indexed, done, blocked]) assert.match(view.detail, /A retry does not rearm this watch\./);
+});
+
+test("brainSourcesView counts the settled Run set; null means at least one Run is still active", () => {
+  const unsettled = brainSourcesView(null);
+  assert.match(unsettled.label, /Not settled — at least one admitted Run is still active\. Never read as success\./);
+  assert.deepEqual(unsettled.lines, []);
+  const settled = brainSourcesView({ scope: "discovery_and_admission", admission_count: 3, run_count: 2, no_run_count: 1,
+    admission_outcomes: { queued: 2, not_due: 1 }, outcomes: { success: 1, partial: 1 },
+    runs: [], truncated: false, nextOffset: null, read: { operation: "sources_sync_completion", requestId: "00000000-0000-4000-8000-0000000000d1", offset: null } });
+  assert.equal(settled.label, "Discovery and admission settled");
+  assert.ok(settled.lines.includes("3 admissions · 2 Runs · 1 admission without a Run"));
+  assert.ok(settled.lines.includes("2 admissions queued"));
+  assert.ok(settled.lines.includes("1 Run success"));
+  assert.ok(settled.lines.includes("Discovery and admission settled — not child extraction or indexing."));
 });
 
 test("occurrence paging passes exact filters and restarts on a changed inventory", async () => {
