@@ -1,4 +1,4 @@
-description: List, inspect or inject a Role into an isolated Claude, Codex or OpenCode invocation.
+description: List, inspect or inject a Role into an isolated Claude, Codex or OpenCode invocation. Injection initializes missing default Roles without a running Server.
 usage: |-
   usage: stack roles list | snapshot [role-id]
          stack roles inject [default|existing-role-name] [--with-model VALUE] [--with-harness VALUE] -- <claude|codex|opencode> [native args...]

@@ -18,7 +18,9 @@ For Bots, Stack materializes `SYSTEM_APPEND.md`, the enabled Role and internal M
 
 ## Inject into a native CLI
 
-With Stack running, launch a fresh native session using the default or a named Role:
+Launch a fresh native session using the default or a named Role; no running Server
+is required. If the local Roles store is missing, injection initializes the same
+Manager and Worker defaults as Server startup:
 
 ```sh
 stack roles inject -- claude
@@ -33,6 +35,12 @@ match ASCII case-insensitively; an unknown name fails. Executables resolve from
 files, internal and additional MCP connections, and rendered instruction
 fragments. It uses local operator authority for internal MCPs and does not create
 a Bot or Worker. MCP environment references resolve from the launching process.
+
+Every invocation regenerates its private capabilities from the current Role
+snapshot, so edits reach the next launch without a Server restart. Existing Roles
+are read without migration or replacement; empty, corrupt, incompatible or legacy
+storage requires inspection rather than automatic repair. Some injected tools
+still require their running owner.
 
 Role resources are materialized privately and removed after the native processes
 exit. Ambient personal capabilities are excluded; ordinary harness configuration
@@ -51,13 +59,14 @@ pinned native packages and requires the matching stable **OpenCode 2.0.16** CLI;
 a mismatch fails before the server opens the database.
 
 Only fresh foreground launches are supported. Resume, attachment, background
-modes and capability/configuration overrides are refused, as are unrecognized
-native options. Normal model, effort, prompt, output and permission options are
-supported; use `stack roles inject --help` for the current contract. Native UI
+modes and capability/configuration overrides are refused. Other native options
+are forwarded unchanged for the harness to validate; use `stack roles inject
+--help` for the current contract. Native UI
 history selection after startup is still possible. Claude and OpenCode retain
 their ordinary native history; Codex history is retained under
 `<STACK_STATE_DIR>/roles/inject`, whose path is printed on exit. SIGKILL cannot
 guarantee cleanup of generated files.
 
 The design and OpenCode's pre-boot configuration boundary are recorded in
-[ADR 0123](adr/0123-role-injection-for-native-clis.md).
+[ADR 0123](adr/0123-role-injection-for-native-clis.md); on-demand initialization is
+recorded in [ADR 0160](adr/0160-on-demand-role-initialization.md).

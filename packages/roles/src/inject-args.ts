@@ -6,6 +6,9 @@ export const injectUsage = `usage: stack roles inject [default|existing-role-nam
 
 Omitting the Role, or using literal default, selects the catalog's default.
 Other names match SQLite NOCASE (ASCII case-insensitive).
+No running Server is required. A missing Roles store is initialized with Manager
+and Worker defaults; existing Roles are read without migration or replacement.
+Each invocation regenerates its private capabilities from the current Role.
 --with-model and --with-harness supply exact, case-sensitive fragment rendering
 context only. They do not add native arguments or infer values from the command.
 Both conditions must match when both are set; missing context does not match.

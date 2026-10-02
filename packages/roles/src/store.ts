@@ -1,4 +1,4 @@
-import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, realpathSync, statSync } from "node:fs";
+import { chmodSync, closeSync, constants, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, realpathSync, rmSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -60,13 +60,40 @@ export function renderBotInstructions(snapshot: Pick<RoleSnapshot, "categories" 
   return rendered;
 }
 
+/** Publish a complete fresh catalog without replacing any existing filesystem entry. */
+function initializeMissingStore(stateDir: string): void {
+  const path = join(stateDir, "roles.sqlite");
+  if (lstatSync(path, { throwIfNoEntry: false })) return;
+  if (lstatSync(join(stateDir, "capabilities.sqlite"), { throwIfNoEntry: false }))
+    throw new Error("roles_store_legacy\nLegacy capabilities.sqlite exists; inspect and replace or convert it offline before initializing Roles. No initialization was attempted.");
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  const temporary = mkdtempSync(join(stateDir, ".roles-init-"));
+  const prepared = join(temporary, "roles.sqlite");
+  let db: DatabaseSync | undefined;
+  try {
+    closeSync(openSync(prepared, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600));
+    db = new DatabaseSync(prepared);
+    initializeRoles(db);
+    db.close(); db = undefined;
+    // An exclusive hard link publishes only the closed, initialized database.
+    // Concurrent initializers use whichever complete catalog wins; no reader
+    // can observe an empty database or a half-provisioned pair of defaults.
+    try { linkSync(prepared, path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+  } finally {
+    try { db?.close(); }
+    finally { rmSync(temporary, { recursive: true, force: true }); }
+  }
+}
+
 export class RoleStore {
   private readonly db: DatabaseSync;
 
-  constructor(stateDir: string, options: { readOnly?: boolean } = {}) {
+  constructor(stateDir: string, options: { readOnly?: boolean; initializeIfMissing?: boolean } = {}) {
     if (options.readOnly) {
+      if (options.initializeIfMissing) initializeMissingStore(stateDir);
       const path = join(stateDir, "roles.sqlite");
-      if (!existsSync(path)) throw new Error("roles_store_missing\nExisting Roles store required; run stack serve and provision a Role before injecting it.");
+      if (!existsSync(path)) throw new Error("roles_store_missing\nRoles store missing; run stack roles inject or stack serve to initialize the default Roles.");
       try { this.db = new DatabaseSync(path, { readOnly: true }); }
       catch (error) { throw new Error("roles_store_unavailable\nExisting Roles store cannot be opened read-only; inspect or restore it with the Roles owner before injecting. No initialization was attempted.", { cause: error }); }
       try {
@@ -91,8 +118,7 @@ export class RoleStore {
     const path = join(stateDir, "roles.sqlite");
     const legacy = join(stateDir, "capabilities.sqlite");
     if (existsSync(legacy)) throw new Error("legacy capabilities.sqlite exists; inspect and replace or convert it offline before starting Roles");
-    try { closeSync(openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600)); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    initializeMissingStore(stateDir);
     chmodSync(path, 0o600);
     this.db = new DatabaseSync(path);
     try { initializeRoles(this.db); }

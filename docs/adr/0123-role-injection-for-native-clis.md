@@ -11,12 +11,14 @@ Internal MCP transport is now native stdio under [ADR 0140](0140-internal-mcp-ov
 
 [ADR 0146](0146-server-independent-internal-mcp.md) replaces the launcher's socket
 prerequisite with a consistent read-only snapshot of the existing local Role store.
+[ADR 0160](0160-on-demand-role-initialization.md) additionally permits initialization
+of a missing store without a running Server; existing stores remain read-only.
 
 The Roles package owns `stack roles inject [default|role-name] --
 <claude|codex|opencode> [native args...]`; the Stack CLI dispatches to it.
 Omission or literal `default` selects the catalog's designated default. Another
 name resolves with the catalog's ASCII case-insensitive naming semantics. The
-launcher captures a complete Role snapshot through the existing socket API.
+launcher captures a complete Role snapshot from the local Role store.
 Unknown names fail rather than falling back to the default.
 
 This operator invocation receives enabled skills and their supporting files,

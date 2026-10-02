@@ -28,7 +28,7 @@ async function executable(command: string): Promise<string> {
 }
 
 async function snapshotFor(name: string): Promise<RoleSnapshot> {
-  const store = new RoleStore(stateDir(), { readOnly: true });
+  const store = new RoleStore(stateDir(), { readOnly: true, initializeIfMissing: true });
   try { return store.namedLaunchSnapshot(name); } finally { store.close(); }
 }
 

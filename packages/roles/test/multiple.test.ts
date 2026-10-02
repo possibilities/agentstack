@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,51 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { serveApi, socketCall } from "@stack/api";
 import { RoleStore, type RoleCatalog, type RoleSnapshot } from "../src/store.js";
+
+test("concurrent owner and injection initialization share one complete pair of defaults", { timeout: 15_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-role-init-race-"));
+  const script = `
+    import { RoleStore } from ${JSON.stringify(new URL("../src/store.js", import.meta.url).href)};
+    process.once('message', () => {
+      try {
+        const store = new RoleStore(process.argv[1], JSON.parse(process.argv[2]));
+        console.log(JSON.stringify(store.catalog()));
+        store.close(); process.exit(0);
+      } catch (error) { console.error(error); process.exit(1); }
+    });
+    process.send('ready');
+  `;
+  const children = [{}, { readOnly: true, initializeIfMissing: true }, { readOnly: true, initializeIfMissing: true }].map(options => {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", script, root, JSON.stringify(options)], { stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    let stdout = "", stderr = "";
+    child.stdout!.on("data", chunk => { stdout += chunk; });
+    child.stderr!.on("data", chunk => { stderr += chunk; });
+    const done = new Promise<RoleCatalog>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", code => {
+        if (code !== 0) reject(new Error(stderr || `Role initializer exited ${code}`));
+        else { try { resolve(JSON.parse(stdout)); } catch (error) { reject(error); } }
+      });
+    });
+    const ready = new Promise<void>((resolve, reject) => {
+      child.once("message", () => resolve());
+      void done.catch(reject);
+    });
+    return { child, ready, done };
+  });
+  try {
+    await Promise.all(children.map(({ ready }) => ready));
+    for (const { child } of children) child.send("initialize");
+    const catalogs = await Promise.all(children.map(({ done }) => done));
+    assert.deepEqual(catalogs[0]!.roles.map(role => role.name), ["Manager", "Worker"]);
+    assert.ok(catalogs[0]!.defaultRoleId && catalogs[0]!.workerDefaultRoleId);
+    for (const catalog of catalogs.slice(1)) assert.deepEqual(catalog, catalogs[0]);
+  } finally {
+    for (const { child } of children) if (child.exitCode === null) child.kill("SIGKILL");
+    await Promise.allSettled(children.map(({ done }) => done));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("fresh Roles start with independent Manager and instruction-free Worker defaults", async () => {
   const root = await mkdtemp(join(tmpdir(), "stack-role-pair-"));

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { configuredMcpServers, workspaceRoot, withLocalAuth, serveApi, socketCall, socketPath, socketSubscribe } from "@stack/api";
 import { startOpenCodeHost } from "../src/inject-opencode.js";
+import { RoleStore, type RoleCatalog } from "../src/store.js";
 
 const cli = fileURLToPath(new URL("../../../cli/dist/src/main.js", import.meta.url));
 const instructions = "  Role instructions — verbatim.\n\nSecond paragraph.  ";
@@ -80,7 +81,7 @@ if (process.env.FIXTURE_WAIT) {
 }
 `;
 
-async function setup() {
+async function setup({ serve = true } = {}) {
   const root = await mkdtemp(join(tmpdir(), "ri-"));
   const home = join(root, "home"), bin = join(root, "bin"), state = join(root, "s");
   await mkdir(home); await mkdir(bin);
@@ -93,8 +94,8 @@ async function setup() {
     STACK_CODEX_TOOLS_BIN: join(root, "no-desktop-runtime"),
     ROLE_TEST_TOKEN: "private-fixture-token", ROLE_TEST_HEADER: "private-fixture-header", ROLE_TEST_ENV: "private-fixture-env" };
   await mkdir(env.CODEX_HOME); await writeFile(join(env.CODEX_HOME, "auth.json"), '{"fixture":"never-real-auth"}');
-  const roles = await serveApi({ name: "roles", transport: "socket", env });
-  const call = (name: string, args: Record<string, unknown> = {}) => socketCall(roles.socketPath!, "tools/call", { name, arguments: args }) as Promise<any>;
+  const roles = serve ? await serveApi({ name: "roles", transport: "socket", env }) : undefined;
+  const call = (name: string, args: Record<string, unknown> = {}) => socketCall(socketPath("roles", env), "tools/call", { name, arguments: args }) as Promise<any>;
   const run = (args: string[], extra: NodeJS.ProcessEnv = {}, direct?: string) => new Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((resolve, reject) => {
     const child = direct ? spawn(join(bin, direct), args, { env: { ...env, ...extra }, cwd: home })
       : spawn(process.execPath, [cli, "roles", ...args], { env: { ...env, ...extra }, cwd: home });
@@ -103,9 +104,85 @@ async function setup() {
     child.once("error", reject); child.once("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
     child.stdin.end("piped input\n");
   });
-  const stop = async () => { await roles.close(); };
+  const stop = async () => { await roles?.close(); };
   return { root, home, bin, state, env, call, run, stop, close: async () => { await stop(); await rm(root, { recursive: true, force: true }); } };
 }
+
+test("inject provisions missing defaults without a server and regenerates capabilities from later Role edits", async () => {
+  const f = await setup({ serve: false });
+  let server: Awaited<ReturnType<typeof serveApi>> | undefined;
+  try {
+    await assert.rejects(stat(f.state), { code: "ENOENT" });
+    const results = await Promise.all([
+      f.run(["inject", "--", "claude"]),
+      f.run(["inject", "Worker", "--", "claude"]),
+    ]);
+    for (const result of results) {
+      assert.equal(result.code, 0, result.stderr);
+      const report = JSON.parse(result.stdout);
+      assert.equal(report.instructions, "");
+      assert.deepEqual(report.skills, {});
+    }
+    await assert.rejects(stat(socketPath("roles", f.env)), { code: "ENOENT" });
+    assert.equal((await stat(f.state)).mode & 0o777, 0o700);
+    assert.equal((await stat(join(f.state, "roles.sqlite"))).mode & 0o777, 0o600);
+    const store = new RoleStore(f.state, { readOnly: true });
+    let initial: RoleCatalog;
+    try {
+      initial = JSON.parse(JSON.stringify(store.catalog()));
+      assert.deepEqual(initial.roles.map(role => role.name), ["Manager", "Worker"]);
+      assert.equal(store.defaultSnapshot().name, "Manager");
+      assert.equal(store.launchSnapshot(undefined, "worker").name, "Worker");
+    } finally { store.close(); }
+    server = await serveApi({ name: "roles", transport: "socket", env: f.env });
+    assert.deepEqual(await f.call("roles_snapshot"), initial, "server startup retains CLI-created IDs and defaults");
+    const roleId = initial.defaultRoleId!;
+    await f.call("category_create", { roleId, expectedRevision: 0, title: "Guidance" });
+    const snapshot = await f.call("role_snapshot", { roleId });
+    await f.call("fragment_create", { roleId, expectedRevision: 1, categoryId: snapshot.categories[0].id, title: "Rule", body: "First revision" });
+    const first = await f.run(["inject", "--", "claude"]);
+    assert.equal(first.code, 0, first.stderr);
+    assert.equal(JSON.parse(first.stdout).instructions, "First revision");
+    const authored = await f.call("role_snapshot", { roleId });
+    await f.call("fragment_update", { roleId, expectedRevision: 2, id: authored.categories[0].fragments[0].id, body: "Revised instructions" });
+    await f.call("skill_create", { roleId, expectedRevision: 3, name: "new-skill", description: "Added later", body: "Revised skill" });
+    await server.close(); server = undefined;
+    const second = await f.run(["inject", "--", "claude"]);
+    assert.equal(second.code, 0, second.stderr);
+    const regenerated = JSON.parse(second.stdout);
+    assert.equal(regenerated.instructions, "Revised instructions");
+    assert.match(regenerated.skills["new-skill/SKILL.md"], /Revised skill/);
+    const worker = await f.run(["inject", "Worker", "--", "claude"]);
+    assert.equal(worker.code, 0, worker.stderr);
+    assert.equal(JSON.parse(worker.stdout).instructions, "");
+  } finally { await server?.close(); await f.close(); }
+});
+
+test("inject never replaces existing empty, corrupt, incompatible or legacy Role storage", async () => {
+  const f = await setup({ serve: false });
+  try {
+    for (const kind of ["empty", "corrupt", "incompatible", "legacy"] as const) {
+      const state = join(f.root, kind);
+      await mkdir(state);
+      const path = join(state, kind === "legacy" ? "capabilities.sqlite" : "roles.sqlite");
+      if (kind === "incompatible") {
+        const store = new RoleStore(state);
+        store.close();
+        const db = new DatabaseSync(path);
+        try { db.exec("ALTER TABLE role_catalog DROP COLUMN worker_default_role_id"); }
+        finally { db.close(); }
+      } else await writeFile(path, kind === "empty" ? "" : "Existing storage must not be replaced");
+      const before = await readFile(path), metadata = await stat(path);
+      const result = await f.run(["inject", "--", "claude"], { STACK_STATE_DIR: state });
+      assert.equal(result.code, 1, `${kind}: ${result.stderr}`);
+      assert.equal(result.stdout, "", "a refused store must not launch the harness");
+      assert.match(result.stderr, kind === "legacy" ? /roles_store_legacy/ : /roles_store_incompatible|roles_store_unavailable/);
+      assert.deepEqual(await readFile(path), before);
+      assert.equal((await stat(path)).mtimeMs, metadata.mtimeMs);
+      assert.deepEqual(await readdir(state), [kind === "legacy" ? "capabilities.sqlite" : "roles.sqlite"]);
+    }
+  } finally { await f.close(); }
+});
 
 async function populate(f: Awaited<ReturnType<typeof setup>>) {
   const initial = await f.call("roles_snapshot");
