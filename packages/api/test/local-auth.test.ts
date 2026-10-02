@@ -127,6 +127,37 @@ test("Access backend assertions bind method, route and all remote authorization 
   assert.throws(() => auth.verifyRemote(proof, ...args));
 });
 
+test("browser surfaces keep default and configured cookie names separate, including logout and duplicate refusal", async t => {
+  const { auth, env } = fixture(t);
+  const client = { cookieName: "stack_client_ui_root1", surface: "client" as const };
+  const post = (action: string, body: object, cookie = "") => new Request(`${origin}/connect/local/${action}`, {
+    method: "POST", headers: { origin, cookie, "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  const platform = await localBrowserResponse(post("session", { token: auth.bootstrap(origin, "ui") }), env, "ui");
+  const connected = await localBrowserResponse(post("session", { token: auth.bootstrap(origin, "ui") }), env, "ui", client);
+  const platformCookie = platform.headers.get("set-cookie")!, clientCookie = connected.headers.get("set-cookie")!;
+  assert.match(platformCookie, /^stack_local_ui=/);
+  assert.match(clientCookie, /^stack_client_ui_root1=/);
+  assert.equal(localCookie(clientCookie, "ui"), "");
+  assert.equal(localCookie(platformCookie, "ui", client.cookieName), "");
+  assert.equal((await localBrowserResponse(post("logout", {}, platformCookie), env, "ui", client)).status, 401);
+  assert.equal((await localBrowserResponse(post("logout", {}, clientCookie), env, "ui")).status, 401);
+  const both = `${platformCookie.split(";")[0]}; ${clientCookie.split(";")[0]}`;
+  assert.ok(localCookie(both, "ui"));
+  assert.ok(localCookie(both, "ui", client.cookieName));
+  assert.equal(localCookie(`${both}; ${clientCookie.split(";")[0]}`, "ui", client.cookieName), "");
+  const shell = await localBrowserResponse(new Request(`${origin}/connect/local`), env, "ui", client);
+  const html = await shell.text();
+  assert.ok(html.includes("location.replace('/client')"));
+  assert.ok(html.includes("stack-ui"));
+  assert.ok(!html.includes("stack serve open"));
+  const logout = await localBrowserResponse(post("logout", {}, both), env, "ui", client);
+  assert.equal(logout.status, 200);
+  assert.match(logout.headers.get("set-cookie")!, /^stack_client_ui_root1=;/);
+  auth.session(localCookie(platformCookie, "ui"), origin, "ui");
+  assert.throws(() => localCookie("", "ui", "bad; name"));
+});
+
 test("unsafe credential permissions fail closed", t => {
   const { root, env } = fixture(t);
   const path = join(root, "local-auth", "authority.sqlite3");

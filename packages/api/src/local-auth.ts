@@ -141,8 +141,12 @@ export function localOrigin(origin: string): URL {
   if (url.origin !== origin || url.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || !url.port) throw new LocalAuthError();
   return url;
 }
-export const localCookieName = (audience: LocalAudience) => `stack_local_${audience}`;
-export function localCookie(header: string | null | undefined, audience: LocalAudience): string {
-  const values = (header ?? "").split(";").map(part => part.trim()).filter(part => part.startsWith(`${localCookieName(audience)}=`));
-  return values.length === 1 ? values[0]!.slice(localCookieName(audience).length + 1) : "";
+export function localCookieName(audience: LocalAudience, name = `stack_local_${audience}`): string {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(name)) throw new LocalAuthError();
+  return name;
+}
+export function localCookie(header: string | null | undefined, audience: LocalAudience, name?: string): string {
+  const key = localCookieName(audience, name);
+  const values = (header ?? "").split(";").map(part => part.trim()).filter(part => part.startsWith(`${key}=`));
+  return values.length === 1 ? values[0]!.slice(key.length + 1) : "";
 }
