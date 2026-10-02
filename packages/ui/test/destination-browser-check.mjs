@@ -54,6 +54,9 @@ async function startPlatform(label, serverId) {
       events: { topics, scope: name === "bots" ? { valid: () => true, description: "Fixture", example: "bot-1" } : undefined } }));
   }
   const notification = await socketCall(socketPath("notify", env), "tools/call", { name: "notification_send", arguments: { title: `Notice from ${label}`, message: `Held by platform ${label}.`, source: "fixture" } });
+  // A dismissed notification whose content can be selected for clearing, so a state flow has something to prepare.
+  const dismissed = await socketCall(socketPath("notify", env), "tools/call", { name: "notification_send", arguments: { title: `Dismissed from ${label}`, message: `Closed on platform ${label}.`, source: "fixture" } });
+  await socketCall(socketPath("notify", env), "tools/call", { name: "notification_dismiss", arguments: { id: dismissed.id } });
   let log = "";
   const next = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(nextPort)], { cwd: ui, env, stdio: ["ignore", "pipe", "pipe"] });
   next.stdout.on("data", (chunk) => { log = (log + chunk).slice(-12_000); }); next.stderr.on("data", (chunk) => { log = (log + chunk).slice(-12_000); });
@@ -85,11 +88,13 @@ try {
   page.on("pageerror", (error) => problems.push(error.message));
   page.on("console", (message) => { if (message.type() === "error" && /hydrat|did not match|#418|#423|#425/i.test(message.text())) problems.push(message.text()); });
   const receiptReads = [];
+  const maintenance = [];
   await page.routeWebSocket(/\/websocket/, (socket) => {
     const server = socket.connectToServer();
     socket.onMessage((message) => {
       const request = JSON.parse(String(message));
       if (request.method === "tools/call" && request.params?.name === "notify_state_receipt_get") receiptReads.push(request.params.arguments.requestId);
+      if (request.method === "tools/call" && ["notification_history_plan", "notification_history_clear"].includes(request.params?.name)) maintenance.push(request.params.name);
       server.send(message);
     });
     server.onMessage((message) => socket.send(message));
@@ -185,6 +190,13 @@ try {
   await inboxWindow.getByRole("button", { name: /^Prepare clearing/ }).waitFor();
   assert.equal(await inboxWindow.getByText("Result not confirmed").count(), 0, "A's unconfirmed request is not B's");
   assert.deepEqual(receiptReads, [], "nothing stored for A or in legacy form is dispatched to B");
+  // Named, the same flow prepares a plan for a selected dismissed notification and offers to apply it (then it is discarded).
+  await inboxWindow.getByRole("checkbox", { name: /^Select Dismissed from b/ }).check();
+  await inboxWindow.getByRole("button", { name: "Prepare clearing 1 notification" }).click();
+  await inboxWindow.getByRole("button", { name: "Clear this content" }).waitFor();
+  assert.deepEqual(maintenance, ["notification_history_plan"], "a named destination prepares its plan");
+  await inboxWindow.getByRole("button", { name: "Discard plan" }).click();
+  maintenance.length = 0;
   all = await storage();
   assert.deepEqual(owned(all, idA), snapshotA, "B never read, wrote, merged or removed anything of A's");
   for (const [name, value] of Object.entries(legacy)) assert.equal(all[name], value, `${name} is still untouched`);
@@ -196,6 +208,7 @@ try {
   // ---- A server that has not named itself: nothing is read, written or recovered ----
   platform = await startPlatform("unnamed", null);
   receiptReads.length = 0;
+  maintenance.length = 0;
   const kept = all;
   await open(platform);
   await inboxWindow.locator("[data-notification]").first().waitFor();
@@ -216,6 +229,17 @@ try {
   await inboxWindow.getByRole("button", { name: /^Prepare clearing/ }).waitFor();
   assert.equal(await inboxWindow.getByText("Result not confirmed").count(), 0, "and recovers nothing");
   assert.deepEqual(receiptReads, [], "nor reads any stored request back");
+  // A state flow saves its request before sending it, so with nowhere to save it the flow cannot even prepare: its control is
+  // disabled and says why, and nothing reaches the owner.
+  await inboxWindow.getByRole("checkbox", { name: /^Select Dismissed from unnamed/ }).check();
+  const prepare = inboxWindow.getByRole("button", { name: "Prepare clearing 1 notification" });
+  assert.equal(await prepare.isDisabled(), true, "a flow that cannot record its request cannot be prepared");
+  await inboxWindow.getByText("Waiting for the server to name itself…", { exact: true }).waitFor();
+  await prepare.click({ force: true, timeout: 1000 }).catch(() => {});
+  await settle(500);
+  assert.deepEqual(maintenance, [], "no plan or apply is sent");
+  assert.equal(await inboxWindow.getByRole("button", { name: "Clear this content" }).count(), 0);
+  assert.deepEqual(await storage(), before, "and nothing is recorded");
   assert.deepEqual(problems, [], "no hydration or page errors with no identity");
   await leave();
 
