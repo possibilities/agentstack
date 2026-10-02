@@ -234,13 +234,13 @@ function OwnerGroup({ owner, entries }: { owner: StateOwner; entries: StateEntry
   const { setSpace } = useWorkbench();
   return (
     <section aria-label={`${owner.package} state`} className="flex flex-col">
-      <div className="flex min-w-0 items-center gap-2 px-1 pt-1.5 pb-0.5 text-xs">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-1.5 pb-0.5 text-xs">
         <StatusDot tone={owner.available ? "success" : "destructive"} label={owner.available ? "Available" : "Unavailable"} />
         <NodeLink node={{ kind: "package", id: owner.package }} label={`${owner.package} Package API`} className="font-semibold">{owner.package}</NodeLink>
         <span className="text-muted-foreground">{owner.available ? `${entries.length} loaded` : "unavailable"}</span>
-        <span className="ml-auto flex items-center gap-1">
+        <span className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-1">
           {ownerHomes[owner.package] ? <button type="button" onClick={() => setSpace(ownerHomes[owner.package].space)} title={`Open ${owner.package}'s controls in ${ownerHomes[owner.package].title}`}
-            className="inline-flex h-5 items-center rounded-md px-1.5 text-[0.66rem] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">Open in {ownerHomes[owner.package].title}</button> : null}
+            className="inline-flex h-5 shrink-0 items-center rounded-md px-1.5 text-[0.66rem] text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">Open in {ownerHomes[owner.package].title}</button> : null}
           <OperationChip pkg={owner.package} operation={ownerStateRead(owner.package)} />
         </span>
       </div>
@@ -493,4 +493,3 @@ export function SubscriptionsWindow() {
     </Window>
   );
 }
-

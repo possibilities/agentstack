@@ -565,7 +565,7 @@ try {
   await framedShot(factory, "factory-reset-dark", resetRow);
   await factory.emulateMedia({ colorScheme: "light" });
 
-  // Narrow: the disclosure reflows without horizontal overflow.
+  // Narrow: the whole State window, including owner-group headers, reflows without horizontal overflow.
   await frame(factory, fstate);
   const stateGrip = fstate.locator('span[title="Resize State"]').first();
   const stateEdge = await stateGrip.boundingBox();
@@ -576,7 +576,7 @@ try {
   await factory.mouse.move(stateEdge.x - 320, gripY, { steps: 6 });
   await factory.mouse.up();
   assert.ok((await fstate.boundingBox()).width < 352, "resized narrow");
-  // The disclosure wraps without horizontal overflow; owner-group headers overflow below ~352px (pre-existing, out of scope).
+  assert.ok(await fstate.locator("[data-scroll]").evaluate((el) => el.scrollWidth <= el.clientWidth), "the State window has no horizontal overflow");
   assert.ok(await disclosure.evaluate((el) => el.scrollWidth <= el.clientWidth), "the disclosure has no horizontal overflow");
   for (const pre of await disclosure.locator("pre[aria-label]").all())
     assert.ok(await pre.evaluate((el) => el.scrollWidth <= el.clientWidth), `the "${await pre.getAttribute("aria-label")}" pre has no horizontal overflow`);
