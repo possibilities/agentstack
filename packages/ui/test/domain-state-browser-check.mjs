@@ -62,6 +62,15 @@ infer.requests.push(request(correlated, "completed", "signal"));
 const content = { owner: journalOwner("content"), stages: [{ id: uuid(), bytes: 2048, received: 2048, digest: "ab".padEnd(64, "1"), blob: "ab".padEnd(64, "1"), createdAt: at(), revision: "stage-r1" },
   { id: uuid(), bytes: 4096, received: 1024, digest: "cd".padEnd(64, "2"), blob: null, createdAt: at(), revision: "stage-r1" }],
   blobs: [{ digest: "ab".padEnd(64, "1"), bytes: 2048, items: [{ id: uuid(), revision: 3 }] }, { digest: "ab".padEnd(64, "3"), bytes: 512, items: [] }] };
+const publicationIds = { dead: uuid(), live: uuid(), uncertain: uuid() };
+const publicationAt = "2026-10-01T12:00:00.000Z";
+content.publications = Object.entries(publicationIds).map(([kind, id]) => ({ id, scope: kind === "live" ? "artifact" : "bundle", path: kind === "live" ? `.publication-${id}` : id,
+  bytes: kind === "live" ? null : 512, createdAt: publicationAt, releasedAt: null, blockedBy: kind === "live" ? ["Publication writer liveness is unknown"] : [], revision: `claim-${id}` }));
+content.publicationBlocked = false;
+content.publicationRevision = "publications-r1";
+content.historyRevision = "history-r1";
+content.historyCalls = [];
+content.publicationCalls = [];
 // Xcom: scanning, not paused; the sync finishes a few reads after pausing.
 const xcom = { owner: journalOwner("xcom"), paused: false, running: true, finishAfter: 0,
   posts: [1, 2, 3].map((n) => ({ tweet_id: `17000000000000000${n}`, author_id: `a${n}`, author_handle: `author${n}`, created_at: at(), archived_at: at(), source_uri: `https://x.com/i/${n}`, content: `Post number ${n}`, article_title: null })) };
@@ -185,6 +194,42 @@ const handlers = {
   content_storage_collect: (input) => content.owner.apply(input, (payload) => JSON.stringify(payload), (payload) => ({ status: "partial",
     outcomes: payload.digests.map((digest) => ({ resource: digest, outcome: "unknown", detail: "Removal interrupted; inspect .stack-clear quarantine" })) })),
   content_state_receipt_get: (input) => content.owner.receipt(input),
+  content_publication_list: ({ offset = 0, revision }) => {
+    if (revision && revision !== content.publicationRevision) throw new Error("Publication inventory changed; restart paging");
+    return { entries: content.publications.slice(offset, offset + 2), nextOffset: offset + 2 < content.publications.length ? offset + 2 : null,
+      revision: content.publicationRevision, retained: ["Published Artifact objects and source references remain", "Unattributed temporary retained: bundle:legacy-no-claim"] };
+  },
+  content_publication_plan: ({ ids }) => {
+    assert.ok(ids.length > 0 && ids.length <= 100, "UI never sends an empty or oversized selection");
+    content.publicationCalls.push(["plan", ids]);
+    return content.owner.plan("publication_collect", { ids }, { resources: ids, blockedBy: content.publicationBlocked ? ["Temporary publication incarnation changed; retain recovery evidence"] : [],
+      retained: ["Published Artifacts, source references, Vault/Git and independent device copies remain", "Publication claims and uncertain admission evidence remain"] });
+  },
+  content_publication_clear: (input) => {
+    content.publicationCalls.push(["apply", input.requestId]);
+    const receipt = content.owner.apply(input, (payload) => JSON.stringify(payload), ({ ids }) => {
+      content.publications = content.publications.filter((row) => !ids.includes(row.id));
+      content.publicationRevision = "publications-r2";
+      return ids.map((id) => ({ resource: id, outcome: "removed", detail: "Exact dead-writer temporary collected; publication outcome unchanged" }));
+    });
+    publishers.content?.("content_changed");
+    return receipt;
+  },
+  content_vault_history_plan: ({ slugs, offset = 0, revision }) => {
+    assert.equal(slugs.length, 1);
+    assert.ok(slugs[0], "history requires an exact nonempty slug");
+    content.historyCalls.push({ slugs, offset, revision });
+    const failure = { "missing-git": "ENOENT: Vault Git metadata is missing", "non-owned-git": "Vault Git metadata is external/linked; exact local history ownership is unavailable",
+      "over-budget": "Vault history exceeds the 2000-commit inspection bound; no incomplete disclosure is returned" }[slugs[0]];
+    if (failure) throw new Error(failure);
+    if (revision && revision !== content.historyRevision) throw new Error("Vault history changed; restart paging");
+    const entries = [1, 2, 3].map((n) => ({ slug: slugs[0], path: `${slugs[0]}.md`, commit: String(n).repeat(40), blob: String(n + 3).repeat(40), mode: "100644" }));
+    return { entries: slugs[0] === "empty-history" ? [] : entries.slice(offset, offset + 2), revision: content.historyRevision,
+      nextOffset: slugs[0] === "empty-history" || offset ? null : 2, commitsScanned: 4, paths: [{ slug: slugs[0], path: `${slugs[0]}.md`, current: false }],
+      remotes: [{ name: "backup-origin", fetch: true, push: true }], retained: ["Read-only retention disclosure, not an erasure plan", "Renamed different slugs, unreachable objects, clones, remotes, backups and device copies are unobservable"] };
+  },
+  list: () => ({ documents: [{ slug: "retained-note", title: "Retained note", tags: [] }], nextOffset: null }),
+  get: () => ({ slug: "retained-note", title: "Retained note", digest: "a".repeat(64), content: "# Retained note", tags: [], updated: null }),
   xcom_status: xcomStatus,
   xcom_control: ({ paused }) => { xcom.paused = paused; if (paused) xcom.finishAfter = 2; return { paused, running: xcom.running }; },
   xcom_list: () => ({ results: xcom.posts, next_offset: null }),
@@ -257,7 +302,8 @@ try {
   await socketFor("signal", ["attention_status", "attention_control", "attention_history_plan", "attention_history_clear", "signal_state_receipt_get", "attention_infer_requests", "attention_checkpoint_plan", "attention_checkpoint_reset"]);
   await socketFor("infer", ["infer_request_list", "infer_model_list", "infer_discover", "infer_catalog_clear", "infer_history_plan", "infer_history_clear", "infer_state_receipt_get"]);
   await socketFor("auth", ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"]);
-  await socketFor("content", ["blob_stage_list", "blob_stage_abort", "content_blob_list", "content_storage_plan", "content_storage_collect", "content_state_receipt_get"]);
+  await socketFor("content", ["blob_stage_list", "blob_stage_abort", "content_blob_list", "content_storage_plan", "content_storage_collect", "content_state_receipt_get",
+    "content_publication_list", "content_publication_plan", "content_publication_clear", "content_vault_history_plan", "list", "get"]);
   // Xcom selects explicit WebSocket operations, so the fixture answers each (reads it does not model fail explicitly).
   const xcomNames = ["xcom_state_read", "xcom_status", "xcom_list", "xcom_get", "xcom_users", "xcom_articles_pending", "xcom_control", "xcom_history_plan", "xcom_history_clear", "xcom_state_receipt_get"];
   for (const name of xcomNames) handlers[name] ??= () => { throw new Error(`${name} is not observed in this fixture`); };
@@ -282,6 +328,126 @@ try {
   const shot = (name, locator) => (locator ?? page).screenshot({ path: join(evidence, `${name}.png`), animations: "disabled" });
   const go = async (space) => { await page.goto(`${origin}/${space}`); await page.getByRole("button", { name: /Fit bench/ }).click().catch(() => undefined); };
   const completed = (scope) => scope.getByText("Completed for the declared scope only.");
+
+  if (process.env.DOMAIN_STATE_SLICE === "content") {
+    // This bounded slice exercises UI obligations the backend tests cannot reach: exact selection,
+    // paged disclosure/error language, browser recovery authority, and responsive rendered controls.
+    await go("content");
+    const storage = page.locator('[data-window="content-storage"]');
+    const publications = storage.locator("details").filter({ has: page.locator("summary", { hasText: "Maintenance" }) });
+    await publications.locator("summary").click();
+    await publications.getByRole("checkbox", { name: `Select publication ${publicationIds.dead}` }).waitFor();
+    assert.equal(await publications.getByRole("checkbox", { name: `Select publication ${publicationIds.live}` }).isDisabled(), true);
+    await publications.getByText("artifact · unmeasured", { exact: true }).waitFor();
+    await publications.getByText("Blocked: Publication writer liveness is unknown", { exact: true }).waitFor();
+    await publications.getByText("Unattributed temporary retained: bundle:legacy-no-claim", { exact: true }).waitFor();
+    await publications.getByRole("button", { name: "Load more publications" }).click();
+    await publications.getByRole("checkbox", { name: `Select publication ${publicationIds.uncertain}` }).waitFor();
+    await publications.getByRole("checkbox", { name: `Select publication ${publicationIds.dead}` }).check();
+    content.publicationBlocked = true;
+    await publications.getByRole("button", { name: "Prepare collecting 1 temporary publication", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await publications.getByText("Temporary publication incarnation changed; retain recovery evidence", { exact: true }).waitFor();
+    assert.equal(await publications.getByRole("button", { name: "Collect these temporaries" }).isDisabled(), true);
+    assert.equal(await publications.getByRole("checkbox", { name: `Select publication ${publicationIds.dead}` }).isDisabled(), true);
+    await shot("content-publications-blocked", storage);
+    await publications.getByRole("button", { name: "Discard plan" }).focus(); await page.keyboard.press("Enter");
+    content.publicationBlocked = false;
+    await publications.getByRole("button", { name: "Prepare collecting 1 temporary publication", exact: true }).focus(); await page.keyboard.press("Enter");
+    await publications.getByText("Publication claims and uncertain admission evidence remain", { exact: true }).waitFor();
+    await shot("content-publications-plan-light", storage);
+    await page.emulateMedia({ colorScheme: "dark" }); await shot("content-publications-plan-dark", storage);
+    await page.emulateMedia({ colorScheme: "light" });
+    await publications.getByRole("button", { name: "Collect these temporaries" }).focus(); await page.keyboard.press("Enter");
+    await completed(publications).waitFor();
+    assert.deepEqual(content.publicationCalls.filter(([op]) => op === "apply").length, 1);
+    assert.ok(!content.publications.some((row) => row.id === publicationIds.dead));
+    await publications.getByRole("button", { name: "Close receipt" }).focus(); await page.keyboard.press("Enter");
+    assert.equal(await publications.getByRole("button", { name: "Prepare collecting 0 temporary publications", exact: true }).isDisabled(), true);
+
+    assert.equal(content.historyCalls.length, 0, "collapsed history does not inspect Git");
+    const history = storage.locator("details").filter({ has: page.locator("summary", { hasText: "Retained history" }) });
+    await history.locator("summary").click();
+    const slugInput = history.getByLabel("Exact document slug", { exact: true });
+    await slugInput.fill("Removed Note");
+    assert.equal(await history.getByRole("button", { name: "Inspect history" }).isDisabled(), true, "no fuzzy/normalized slug admission");
+    await slugInput.fill("removed-note");
+    await history.getByRole("button", { name: "Inspect history" }).focus(); await page.keyboard.press("Enter");
+    await history.getByText("4 commits scanned · 2 entries loaded · more available", { exact: true }).waitFor();
+    await history.getByText("removed-note.md · historical path", { exact: false }).waitFor();
+    await history.getByText("backup-origin · fetch present · push present", { exact: false }).waitFor();
+    assert.equal(await history.getByRole("button", { name: /apply|collect|clear/i }).count(), 0, "history is not a flow");
+    await history.getByRole("button", { name: "Load more history" }).focus(); await page.keyboard.press("Enter");
+    await history.getByText("4 commits scanned · 3 entries loaded", { exact: true }).waitFor();
+    assert.equal(content.historyCalls.at(-1).revision, "history-r1");
+    await shot("content-history-light", storage);
+    await page.emulateMedia({ colorScheme: "dark" }); await shot("content-history-dark", storage);
+    await page.emulateMedia({ colorScheme: "light" });
+    for (const slug of ["missing-git", "non-owned-git", "over-budget"]) {
+      await slugInput.fill(slug);
+      await history.getByRole("button", { name: "Inspect history" }).focus(); await page.keyboard.press("Enter");
+      await history.getByRole("alert").filter({ hasText: "Retained history inspection failed" }).waitFor();
+      assert.equal(await history.getByText(/No matching retained entries/).count(), 0, "failed coverage is never empty history");
+    }
+    await shot("content-history-error", storage);
+    await slugInput.fill("empty-history");
+    await history.getByRole("button", { name: "Inspect history" }).focus(); await page.keyboard.press("Enter");
+    await history.getByText(/No matching retained entries in the observed local refs/).waitFor();
+
+    // Refs changed between pages: restart, do not merge revisions or hide the coverage warning.
+    await slugInput.fill("removed-note");
+    await history.getByRole("button", { name: "Inspect history" }).focus(); await page.keyboard.press("Enter");
+    await history.getByRole("button", { name: "Load more history" }).waitFor();
+    content.historyRevision = "history-r2";
+    await history.getByRole("button", { name: "Load more history" }).focus(); await page.keyboard.press("Enter");
+    await history.getByText("Vault history changed while paging; restarted from the first page.", { exact: true }).waitFor();
+
+    // Editor uses the same read-only reader for its exact current slug.
+    const documents = page.locator('[data-window="content-documents"]');
+    await documents.getByRole("button", { name: "Retained note actions", exact: true }).focus(); await page.keyboard.press("Enter");
+    await page.getByRole("menuitem", { name: "Open in editor", exact: true }).click();
+    const editor = page.locator('[data-window="content-editor"]');
+    await editor.getByRole("form", { name: "Edit Retained note" }).waitFor();
+    await editor.locator("summary", { hasText: "Retained history" }).click();
+    await editor.getByRole("region", { name: "Retained history for retained-note" }).waitFor();
+    await editor.getByText(/4 commits scanned/).waitFor();
+    assert.deepEqual(content.historyCalls.at(-1).slugs, ["retained-note"]);
+
+    const plan = handlers.content_publication_plan({ ids: [publicationIds.uncertain] });
+    const input = { planId: plan.id, expectedRevision: plan.revision, requestId: uuid() };
+    content.owner.journal.begin(input, plan);
+    content.owner.journal.finish(input.requestId, "unknown", [{ resource: publicationIds.uncertain, outcome: "unknown", detail: "Interrupted filesystem collection; inspect retained evidence" }]);
+    const beforeRecovery = content.publicationCalls.length;
+    await page.evaluate(({ input }) => localStorage.setItem("stack.state-flow.content:publication_clear:claims", JSON.stringify({ input, at: Date.now() })), { input });
+    await page.reload();
+    // Initial recovery can precede the socket connection; explicit receipt observation resolves
+    // that transport uncertainty without retrying effects or creating a new plan.
+    await publications.getByRole("checkbox", { name: `Select publication ${publicationIds.uncertain}` }).waitFor();
+    await publications.getByRole("button", { name: /^Read receipt(?: again)?$/ }).focus(); await page.keyboard.press("Enter");
+    await publications.getByRole("region", { name: "content receipt unknown" }).waitFor();
+    assert.equal(await publications.getByRole("button", { name: /Send identical request|Prepare a new plan|Close receipt/ }).count(), 0);
+    await publications.getByRole("button", { name: "Read receipt again" }).focus(); await page.keyboard.press("Enter");
+    await publications.getByRole("region", { name: "content receipt unknown" }).waitFor();
+    assert.equal(content.publicationCalls.length, beforeRecovery, "recovery reads receipts without planning or replay");
+    await shot("content-publications-unknown-light", storage);
+    await page.emulateMedia({ colorScheme: "dark" }); await shot("content-publications-unknown-dark", storage);
+    await page.emulateMedia({ colorScheme: "light" });
+    const grip = storage.locator('span[title^="Resize"]').first();
+    const edge = await grip.boundingBox();
+    await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2); await page.mouse.down();
+    await page.mouse.move(edge.x - 140, edge.y + edge.height / 2, { steps: 8 }); await page.mouse.up();
+    assert.ok((await storage.boundingBox()).width < 400, "Storage is narrow");
+    assert.ok(await storage.locator("[data-scroll]").evaluate((body) => body.scrollWidth <= body.clientWidth), "narrow Storage has no horizontal overflow");
+    await shot("content-publications-unknown-narrow", storage);
+    await history.locator("summary").click();
+    await history.getByLabel("Exact document slug", { exact: true }).fill("removed-note");
+    await history.getByRole("button", { name: "Inspect history" }).focus(); await page.keyboard.press("Enter");
+    await history.getByText(/4 commits scanned/).waitFor();
+    assert.ok(await storage.locator("[data-scroll]").evaluate((body) => body.scrollWidth <= body.clientWidth), "narrow history has no horizontal overflow");
+    await shot("content-history-narrow", storage);
+    assert.deepEqual(errors, [], "no uncaught application errors");
+    console.log(JSON.stringify({ ok: true, evidence, assertions: "Content publication blocked/unmeasured rows, paging, exact selection, blocked plan, retained-copy preview, completed collection, zero selection guard, read-only current/removed Vault history, paged revisions and stale restart, explicit missing/non-owned/over-budget failures, successful empty disclosure, durable unknown receipt recovery without replay/rearm, light/dark/narrow without horizontal overflow" }));
+  } else {
 
   // System State: unsupported coverage is stated, and each owner links to its controls.
   await go("system");
@@ -625,6 +791,7 @@ try {
 
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
   console.log(JSON.stringify({ ok: true, evidence, assertions: "HUD journal-body plan with retained copies, explicit scope, tombstone refused until children are selected, Worker and live-Chat blockers shown by the plan, subtree tombstone with markers and read-only item, Proc removed-schedule redaction with digest and cleared markers, protected schedule refused by the plan, unknown receipt recovered after reload in a self-opening disclosure, active schedule offers no maintenance, Lab catalog clear with scope choice, inline confirm and count and no implicit rediscovery, dark and narrow; owner gaps and links; Xcom pause observed until drained, explicit reimport/author choices, exact post removal; Signal pause required, draining read blocks, replan and whole-scope clear advancing generation; correlated Infer clear as separate selection; Lab running and cleared requests unselectable, lost response recovered from same receipt; Inbox real notify clear keeps outcome and open record; Content stage revision refusal, referenced blob unselectable, partial receipt kept uncertain" }, null, 2));
+  }
 } catch (error) {
   failed = true;
   const page = browser?.contexts()[0]?.pages()[0];

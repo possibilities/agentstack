@@ -119,7 +119,10 @@ test("shipped controls disclose remaining limits rather than claiming their main
   assert.match(ownerGaps.roles, /missing\/legacy locks.*block/);
   assert.match(ownerGaps.auth, /Devin\/Claude.*unsupported/);
   assert.match(ownerGaps.access, /Audit has no manual prune/);
-  assert.match(ownerGaps.content, /^Vault or Git-history purge/);
+  assert.match(ownerGaps.content, /exact claimed dead-writer paths only/);
+  assert.match(ownerGaps.content, /read-only disclosure, not Git-history purge or rewrite/);
+  assert.match(ownerGaps.content, /Remotes, backups and device copies remain independent/);
+  assert.match(ownerGaps.content, /no device-local reset/);
 });
 
 test("inventory links with empty arguments are drill-downs, and relationships link only known records", () => {
