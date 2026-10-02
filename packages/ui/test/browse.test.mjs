@@ -71,6 +71,7 @@ test("holds, Bot help and deletion blocks mirror the API's rules", () => {
   assert.equal(deleteBlock(profile({ id: "p2", default: false }), [], list), "A handoff holds this profile");
   assert.equal(deleteBlock(profile({ id: "p3", default: false }), [controller({ profileId: "p9", actualProfileId: "p3" })], []), "A controller has this profile selected");
   assert.equal(deleteBlock(profile({ id: "p3", default: false }), [controller()], []), null);
+  assert.equal(deleteBlock(profile({ botId: null, maintenanceRequestId: "exact-request" }), [], []), "Profile maintenance is fenced; inspect its receipt before release");
   // A retained, unassigned former default can be deleted.
   assert.equal(deleteBlock(profile({ botId: null }), [], []), null);
   assert.equal(controllerKey(controller()), "bot-1/i/default");

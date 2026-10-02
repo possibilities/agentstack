@@ -92,6 +92,7 @@ export function profileName(profile: Pick<BrowserProfile, "id" | "label"> | null
 
 /** Why a profile cannot be deleted, mirroring the API's refusals; null when deletion may proceed. */
 export function deleteBlock(profile: BrowserProfile, controllers: readonly BrowserController[] | null, handoffs: readonly BrowserHandoff[] | null): string | null {
+  if (profile.maintenanceRequestId) return "Profile maintenance is fenced; inspect its receipt before release";
   if (profile.default && profile.botId) return "A Bot's default profile can't be deleted";
   if (heldBy(profile.id, handoffs)) return "A handoff holds this profile";
   if (controllers?.some((item) => item.profileId === profile.id || item.actualProfileId === profile.id)) return "A controller has this profile selected";

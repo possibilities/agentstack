@@ -56,11 +56,11 @@ const maintenanceClear = (input) => {
   } else if (payload.kind === "volume") { volumes = volumes.filter((row) => !payload.volumeIds.includes(row.id)); volumeRevision++; }
   return journal.finish(input.requestId, "completed", plan.resources.map((resource) => ({ resource, outcome: "removed", detail: "Fixture owner effect recorded" })));
 };
-const seedUnknown = (kind, input) => {
+const seedUnknown = (kind, input, status = "unknown") => {
   const plan = maintenancePlan(kind, input);
   const apply = { planId: plan.id, expectedRevision: plan.revision, requestId: crypto.randomUUID() };
   journal.begin(apply, plan);
-  journal.finish(apply.requestId, "unknown", [{ resource: "provider-volume-leftover-exact-789", outcome: "retained", detail: "Provider resource remains; inspect before release" }, { resource: "provider-instance-uncertain-exact-012", outcome: "unknown", detail: "Absence not verified" }]);
+  journal.finish(apply.requestId, status, [{ resource: "provider-volume-leftover-exact-789", outcome: "retained", detail: "Provider resource remains; inspect before release" }, { resource: "provider-instance-uncertain-exact-012", outcome: "unknown", detail: "Absence not verified" }]);
   return apply;
 };
 let nekoBase = "";
@@ -287,6 +287,12 @@ try {
   await maintenance.getByText("Other profiles, foreign/occupied volumes, external copies/backups and other owners' history remain", { exact: true }).waitFor();
   await page.screenshot({ path: join(evidence, "browse-reset-blocked-light.png"), animations: "disabled" });
   await maintenance.getByRole("button", { name: "Close dialog" }).click();
+  // A failed/non-ready profile cannot prepare site data, and this UI never starts it to make it ready.
+  await profiles.getByRole("button", { name: "More for research" }).click();
+  await page.getByRole("menuitem", { name: "Clear site data…" }).click();
+  await page.getByRole("dialog").getByText("The exact running profile CDP must be ready. Planning never starts or navigates a browser.", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("dialog").getByRole("button", { name: "Prepare clear site data", exact: true }).isDisabled(), true);
+  await page.getByRole("dialog").getByRole("button", { name: "Close dialog" }).click();
 
   await profiles.getByRole("button", { name: "More for retired" }).click();
   await page.getByRole("menuitem", { name: "Clear site data…" }).click();
@@ -327,7 +333,7 @@ try {
   // Recover from real owner journal receipts, not a fabricated UI state. No new plan or resend.
   const resetUnknown = seedUnknown("reset", { profileId: uuid(2) });
   state.profiles.find((row) => row.id === uuid(2)).maintenanceRequestId = resetUnknown.requestId;
-  const siteUnknown = seedUnknown("site", { profileId: uuid(3), origins: ["https://example.com"], categories: ["storage"] });
+  const siteUnknown = seedUnknown("site", { profileId: uuid(3), origins: ["https://example.com"], categories: ["storage"] }, "partial");
   await page.evaluate(({ resetUnknown, siteUnknown, research, retired }) => {
     localStorage.setItem(`stack.state-flow.browse:reset:${research}`, JSON.stringify({ input: resetUnknown, at: Date.now() }));
     localStorage.setItem(`stack.state-flow.browse:site:${retired}`, JSON.stringify({ input: siteUnknown, at: Date.now() }));
@@ -337,6 +343,10 @@ try {
   const fence = profiles.getByRole("region", { name: "Maintenance fence research" });
   await fence.getByRole("region", { name: "browse receipt unknown" }).waitFor();
   await fence.getByRole("list", { name: "Exact remaining or uncertain resources" }).getByText(/provider-volume-leftover-exact-789/).waitFor();
+  await fence.screenshot({ path: join(evidence, "browse-fence-light.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await fence.screenshot({ path: join(evidence, "browse-fence-dark.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "light" });
   await profiles.getByRole("button", { name: "More for research" }).click();
   await page.getByRole("menuitem", { name: "Reset profile…" }).click();
   maintenance = page.getByRole("dialog");
@@ -349,14 +359,21 @@ try {
   await profiles.getByRole("button", { name: "More for retired" }).click();
   await page.getByRole("menuitem", { name: "Clear site data…" }).click();
   maintenance = page.getByRole("dialog");
-  await maintenance.getByRole("region", { name: "browse receipt unknown" }).waitFor();
+  await maintenance.getByRole("region", { name: "browse receipt partial" }).waitFor();
   assert.equal(await maintenance.getByRole("button", { name: /Send identical|Prepare a new|Close receipt/ }).count(), 0);
   assert.equal(calls.filter((call) => /_(plan|clear)$/.test(call.name)).length, plansBeforeRecovery);
   await maintenance.getByRole("button", { name: "Close dialog" }).click();
   await fence.getByRole("button", { name: "Release fence…" }).click();
+  // A changed generation cannot be acknowledged under an older confirmation.
+  state.profiles.find((row) => row.id === uuid(2)).generation++;
+  publish("browser_profiles_changed");
+  await page.getByRole("dialog").getByRole("alert").getByText(/generation changed/).waitFor();
+  assert.equal(await page.getByRole("dialog").getByRole("button", { name: "Release fence", exact: true }).isDisabled(), true);
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  await fence.getByRole("button", { name: "Release fence…" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Release fence", exact: true }).click();
   await fence.waitFor({ state: "detached" });
-  assert.deepEqual(calls.find((call) => call.name === "browse_state_fence_release").input, { profileId: uuid(2), requestId: resetUnknown.requestId, expectedGeneration: 0 });
+  assert.deepEqual(calls.find((call) => call.name === "browse_state_fence_release").input, { profileId: uuid(2), requestId: resetUnknown.requestId, expectedGeneration: 1 });
   assert.equal(journal.receipt(resetUnknown.requestId).status, "unknown");
 
   // History only selects resolved retained content, and refreshes the existing reader on redaction.
@@ -372,6 +389,7 @@ try {
   assert.equal(await historyMaintenance.getByText("Not needed", { exact: true }).count(), 0);
   assert.equal(await historyMaintenance.getByLabel(`Select handoff ${uuid(51)}`).isDisabled(), true);
   assert.equal(handoff(uuid(51)).outcome, "skipped");
+  await historyMaintenance.screenshot({ path: join(evidence, "browse-handoff-cleared-light.png"), animations: "disabled" });
   await historyMaintenance.getByRole("button", { name: "Close receipt" }).click();
   await historyMaintenance.locator("summary").click();
 
@@ -455,6 +473,39 @@ try {
   await page.locator('[data-window="bots"]').waitFor();
   await page.keyboard.press("b");
   await page.waitForURL(/\/browse/);
+
+  // A running or absent receipt never authorizes release, even though the exact fence is visible.
+  const runningPlan = maintenancePlan("reset", { profileId: uuid(2) });
+  const runningInput = { planId: runningPlan.id, expectedRevision: runningPlan.revision, requestId: crypto.randomUUID() };
+  journal.begin(runningInput, runningPlan);
+  state.profiles.find((row) => row.id === uuid(2)).maintenanceRequestId = runningInput.requestId;
+  publish("browser_profiles_changed");
+  await fence.getByRole("region", { name: "browse receipt running" }).waitFor();
+  assert.equal(await fence.getByRole("button", { name: "Release fence…" }).isDisabled(), true);
+  state.profiles.find((row) => row.id === uuid(2)).maintenanceRequestId = crypto.randomUUID();
+  publish("browser_profiles_changed");
+  await fence.getByText("No receipt available; release is unavailable.", { exact: true }).waitFor();
+  assert.equal(await fence.getByRole("button", { name: "Release fence…" }).isDisabled(), true);
+
+  // Consumer gating follows each independently selected apply/receipt operation, not just the plan.
+  const browseTransport = catalog.find((doc) => doc.name === "browse").transports[0];
+  browseTransport.operations = browseTransport.operations.filter((name) => name !== "browser_profile_reset_clear");
+  await page.reload();
+  await profiles.getByRole("button", { name: "More for default" }).click();
+  assert.equal(await page.getByRole("menuitem", { name: "Reset profile…" }).count(), 0);
+  await page.getByRole("menuitem", { name: "Clear site data…" }).waitFor();
+  await page.keyboard.press("Escape");
+  browseTransport.operations = browseTransport.operations.filter((name) => name !== "browse_state_receipt_get");
+  await page.reload();
+  await profiles.getByRole("button", { name: "More for default" }).click();
+  await page.getByRole("menu").waitFor();
+  assert.equal(await page.getByRole("menuitem", { name: "Reset profile…" }).count(), 0);
+  assert.equal(await page.getByRole("menuitem", { name: "Clear site data…" }).count(), 0);
+  await page.keyboard.press("Escape");
+  await page.getByRole("menu").waitFor({ state: "hidden" });
+  await handoffs.getByRole("button", { name: "Show 2" }).click();
+  assert.equal(await handoffs.locator("details").count(), 0);
+  assert.equal(await toolchain.locator("details").count(), 0);
 
   assert.deepEqual(errors, []);
   console.log(`browse rendered check passed; evidence in ${evidence}`);

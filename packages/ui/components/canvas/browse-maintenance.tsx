@@ -50,7 +50,7 @@ export function ProfileMaintenanceDialog({ profile, kind, onClose }: { profile: 
       <p className={hint}>Profile <code className="break-all">{profile.id}</code> · generation {profile.generation}. Other profiles, independent native pages/clients, upstream copies and backups remain outside this scope.</p>
       {kind === "site" ? <>
         <FieldGroup>
-          <Field data-invalid={!!text && !!origins.error}>
+          <Field data-invalid={!!text && !!origins.error} data-disabled={locked}>
             <FieldLabel htmlFor={id}>Exact origins (one per line)</FieldLabel>
             <Textarea id={id} value={text} disabled={locked} spellCheck={false} autoComplete="off" placeholder="https://example.com" aria-invalid={!!text && !!origins.error}
               onChange={(event) => setText(event.target.value)} />
@@ -74,7 +74,7 @@ export function ProfileMaintenanceDialog({ profile, kind, onClose }: { profile: 
 export function BrowseMaintenanceFence({ profile }: { profile: BrowserProfile }) {
   const state = useStack();
   if (!profile.maintenanceRequestId || !localOperations(state, "browse", ["browse_state_receipt_get"]).available) return null;
-  return <ProfileFence profile={profile} requestId={profile.maintenanceRequestId} />;
+  return <ProfileFence key={`${profile.id}:${profile.maintenanceRequestId}`} profile={profile} requestId={profile.maintenanceRequestId} />;
 }
 
 function ProfileFence({ profile, requestId }: { profile: BrowserProfile; requestId: string }) {
@@ -82,17 +82,18 @@ function ProfileFence({ profile, requestId }: { profile: BrowserProfile; request
   const store = useStore();
   const now = useNow(15_000);
   const receipt = useKeyedRead(() => store.call<{ receipt: StateReceipt | null }>("browse", "browse_state_receipt_get", { requestId }).then((value) => value.receipt), `${profile.id}:${requestId}`, state.browserProfiles.at ?? 0);
-  const [confirming, setConfirming] = useState(false);
+  const [confirmingGeneration, setConfirmingGeneration] = useState<number | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const access = localOperations(state, "browse", ["browse_state_receipt_get", "browse_state_fence_release"]);
   const inspected = receipt.data?.subject?.id === profile.id && ["partial", "unknown", "completed"].includes(receipt.data.status);
   const disabled = pending || receipt.loading || !!receipt.error || !inspected || state.status.browse !== "open";
   const release = async () => {
+    if (confirmingGeneration === null || confirmingGeneration !== profile.generation || disabled || !access.available) return;
     setPending(true); setError(null);
     try {
-      await store.call("browse", "browse_state_fence_release", { profileId: profile.id, requestId, expectedGeneration: profile.generation });
-      toast.success("Profile fence released; the receipt is unchanged"); setConfirming(false);
+      await store.call("browse", "browse_state_fence_release", { profileId: profile.id, requestId, expectedGeneration: confirmingGeneration });
+      toast.success("Profile fence released; the receipt is unchanged"); setConfirmingGeneration(null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setPending(false); store.refreshBrowse(); }
   };
@@ -106,12 +107,13 @@ function ProfileFence({ profile, requestId }: { profile: BrowserProfile; request
       </ul></> : <p className={hint}>{receipt.loading ? "Reading exact receipt…" : "No receipt available; release is unavailable."}</p>}
     <p className={hint}>Inspect the receipt and exact remaining provider IDs above, and verify native resources separately. Unknown absence is not proof that nothing remains. Release only acknowledges inspection; it never completes or reruns maintenance, stops/starts a Bot, closes a controller, or starts/navigates a browser. The receipt stays unchanged; later supervision may recover the retained profile.</p>
     <Button size="xs" variant="outline" disabled={receipt.loading || state.status.browse !== "open"} onClick={receipt.refresh}>Read fence receipt</Button>
-    {access.available ? <Button size="xs" variant="outline" disabled={disabled} onClick={() => { setError(null); setConfirming(true); }}>Release fence…</Button> : null}
+    {access.available ? <Button size="xs" variant="outline" disabled={disabled} onClick={() => { setError(null); setConfirmingGeneration(profile.generation); }}>Release fence…</Button> : null}
     {state.status.browse !== "open" ? <p className={hint}>The Browse connection is not open.</p> : null}
-    <Dialog open={confirming} onOpenChange={(open) => { if (!pending) setConfirming(open); }}>
-      <DialogContent className="[&>*]:min-w-0"><DialogHeader><DialogTitle>Release profile fence?</DialogTitle><DialogDescription>Confirm you inspected request {requestId}, its receipt and exact native resources. This only acknowledges inspection for generation {profile.generation}; partial and unknown results stay that way.</DialogDescription></DialogHeader>
+    <Dialog open={confirmingGeneration !== null} onOpenChange={(open) => { if (!pending && !open) setConfirmingGeneration(null); }}>
+      <DialogContent className="[&>*]:min-w-0"><DialogHeader><DialogTitle>Release profile fence?</DialogTitle><DialogDescription>Confirm you inspected request {requestId}, its receipt and exact native resources. This only acknowledges inspection for generation {confirmingGeneration}; partial and unknown results stay that way.</DialogDescription></DialogHeader>
+        {confirmingGeneration !== profile.generation ? <p role="alert" className="text-xs text-destructive">The profile generation changed. Cancel and inspect the current state before release.</p> : null}
         {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-        <DialogFooter><Button variant="ghost" disabled={pending} onClick={() => setConfirming(false)}>Cancel</Button><Button disabled={disabled || !access.available} onClick={() => void release()}>Release fence</Button></DialogFooter>
+        <DialogFooter><Button variant="ghost" disabled={pending} onClick={() => setConfirmingGeneration(null)}>Cancel</Button><Button disabled={disabled || !access.available || confirmingGeneration !== profile.generation} onClick={() => void release()}>Release fence</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   </section>;
