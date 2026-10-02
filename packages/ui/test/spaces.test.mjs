@@ -259,7 +259,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
   assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], source: [], hud: [], api: [] });
 });
 
-test("spaceAttention flags Proc's legacy and held schedules, operator failures, capacity and channel — but never Bot-owned failures", () => {
+test("spaceAttention flags Proc's legacy and blocked schedules, operator failures, capacity and channel — but never retry-held schedules or Bot-owned failures", () => {
   const apiAction = { type: "api", package: "notify", operation: "notify_push", input: {} };
   const operator = { kind: "operator" };
   const bot = { kind: "bot", botId: "bot-1", mainThreadId: "main-1", threadId: "t-1" };
@@ -273,15 +273,18 @@ test("spaceAttention flags Proc's legacy and held schedules, operator failures, 
     schedules: { total: 0, enabled: 0, held: 0, blocked: 0, legacy: 0, removed: 0 },
     lastSweepAt: null, lastPruneAt: null, closing: false, retentionDays: 30, output: { maxBytes: 2_000_000, maxLines: 10_000 } });
 
-  // Quiet: healthy schedules, a disabled legacy... no, the spec — nothing.
+  // Healthy schedules and available capacity stay quiet.
   assert.deepEqual(spaceAttention({ ...quiet, procSchedules: resource([schedule("s1")]), procStatus: procStatus(0) }).proc, []);
 
   const noisy = spaceAttention({ ...quiet, status: { proc: "closed" },
     procSchedules: resource([
       schedule("legacy", { label: null, authority: null, enabled: false, blockedReason: "legacy_reauthorization_required" }),
-      schedule("held", { blockedReason: "bot_removed", retryAt: null }),
-      schedule("failing", { recent: [run("failed", "2026-01-02T00:00:00Z")] }),
-      schedule("bot-owned-failed", { authority: bot, createdBy: { kind: "bot", botId: "bot-1", threadId: "t-1" }, recent: [run("failed", "2026-01-02T00:00:00Z")] }),
+      schedule("legacy-without-reason", { label: "Legacy", authority: null, enabled: false }),
+      schedule("blocked", { label: "Blocked", blockedReason: "bot_removed", retryAt: null }),
+      schedule("retry-held", { blockedReason: "bot_not_running", retryAt: "2026-01-02T00:00:00Z" }),
+      schedule("failing", { label: "Op fail", recent: [run("failed", "2026-01-02T00:00:00Z")] }),
+      // Authority owns the failure, even when the creator is an operator.
+      schedule("bot-owned-failed", { authority: bot, recent: [run("failed", "2026-01-02T00:00:00Z")] }),
       schedule("removed-legacy", { authority: null, removedAt: "2026-01-03T00:00:00Z" }),
     ]),
     procStatus: procStatus(16),
@@ -289,8 +292,9 @@ test("spaceAttention flags Proc's legacy and held schedules, operator failures, 
   assert.deepEqual(noisy.proc, [
     "proc reconnecting",
     "notify.notify_push needs reauthorization",
-    "held: Its Bot was removed",
-    "failing last run failed",
+    "Legacy needs reauthorization",
+    "Blocked: Its Bot was removed",
+    "Op fail last run failed",
     "All 16 process slots busy",
   ]);
   // Bot-owned failures stay informational: no "last run" flag for the Bot's schedule.

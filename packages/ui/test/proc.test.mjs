@@ -15,7 +15,7 @@ registerHooks({
 });
 
 const { blockedCopy, cadence, errorCopy, executionView, filterRuns, filterSchedules, formatLimitBytes, groupRuns, groupSchedules,
-  joinPartials, lineGaps, maskActionEnv, ownerLabel, ownerOf, procAttention, runTitle, runView, scheduleTitle, stripAnsi } = await import("../lib/stack/proc.ts");
+  joinPartials, lineGaps, maskActionEnv, ownerLabel, ownerOf, runTitle, runView, scheduleTitle, stripAnsi } = await import("../lib/stack/proc.ts");
 
 const operator = { kind: "operator" };
 const system = { kind: "system", name: "brain-source-sync" };
@@ -151,31 +151,6 @@ test("filterRuns matches owners", () => {
   assert.deepEqual(filterRuns(list, {}).map((item) => item.id), ["a", "b", "c"]);
   assert.deepEqual(filterRuns(list, { owner: "bot-1" }).map((item) => item.id), ["b"]);
   assert.deepEqual(filterRuns(list, { owner: "unattributed" }).map((item) => item.id), ["c"]);
-});
-
-test("procAttention flags only what a human owns and ignores Bot-owned failures", () => {
-  const resource = (data) => ({ data, error: null, at: 1 });
-  const status = (running = 0, capacity = 16) => resource({ running, capacity, inFlightCalls: 0, callCapacity: 16,
-    schedules: { total: 0, enabled: 0, held: 0, blocked: 0, legacy: 0, removed: 0 }, lastSweepAt: null, lastPruneAt: null, closing: false,
-    retentionDays: 30, output: { maxBytes: 2_000_000, maxLines: 10_000 } });
-  assert.deepEqual(procAttention({ status: {}, procSchedules: resource([schedule("s1")]), procStatus: status() }), []);
-  const attention = procAttention({ status: { proc: "closed" },
-    procSchedules: resource([
-      schedule("legacy", { label: "Legacy", authority: null, enabled: false }),
-      schedule("blocked", { label: "Blocked", blockedReason: "bot_removed", retryAt: null }),
-      schedule("held", { label: "Held", blockedReason: "bot_not_running", retryAt: "2026-01-02T00:00:00Z" }),
-      schedule("opfail", { label: "Op fail", recent: [execution("failed")] }),
-      schedule("botfail", { label: "Bot fail", authority: bot, recent: [execution("failed")] }),
-      schedule("gone", { label: "Gone", authority: null, removedAt: "2026-01-02T00:00:00Z" }),
-    ]),
-    procStatus: status(16) });
-  assert.deepEqual(attention, [
-    "proc reconnecting",
-    "Legacy needs reauthorization",
-    "Blocked: Its Bot was removed",
-    "Op fail last run failed",
-    "All 16 process slots busy",
-  ]);
 });
 
 test("blockedCopy and errorCopy write plain words and fall back to the raw code", () => {
