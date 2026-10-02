@@ -20,6 +20,8 @@ async function until(call, label) {
   throw new Error(`workflow_timeout_${label}`);
 }
 const exists = file => access(file).then(() => true, () => false);
+// The recorded stage a job is at (or last reached) is the current step of its sequence.
+const currentStage = (scope, label) => scope.locator('li[aria-current="step"]').getByText(label, { exact: true });
 
 export async function checkNoTrustedRelease(page, client, pass, evidence) {
   await page.goto(`${client.origin}/client/local`);
@@ -156,7 +158,8 @@ fs.writeFileSync(file,JSON.stringify(state));\n`;
     assert.equal(await page.getByRole("button", { name: "Retry identical request" }).isDisabled(), true);
     await page.getByRole("button", { name: "Inspect job and snapshot" }).click();
     await page.getByRole("button", { name: "Retry identical request" }).click();
-    await page.getByText("Stage: Downloading", { exact: true }).waitFor();
+    const savedRequest = page.getByRole("region", { name: "Saved exact request" });
+    await currentStage(savedRequest, "Downloading").waitFor();
     const installs = actionCalls().filter(call => call.operation === "client_install");
     assert.deepEqual(installs[1], installs[0]); assert.equal(downloads, 1);
     if (evidence) await page.screenshot({ path: join(evidence, "local-install-downloading.png"), fullPage: true });
@@ -164,7 +167,7 @@ fs.writeFileSync(file,JSON.stringify(state));\n`;
     pass("storage failure blocks dispatch; lost admission survives reload and only explicit identical UUID/input retry installs");
     releaseDownload();
     await until(() => exists(join(fixtures, "runtime-entered")), "runtime");
-    await page.getByText("Stage: Installing shared codexnk runtime", { exact: true }).waitFor();
+    await currentStage(savedRequest, "Installing shared codexnk runtime").waitFor();
     await writeFile(join(fixtures, "runtime-continue"), "continue");
     await until(async () => (await client.host.call("client_job_get", { id: persisted.input.requestId })).state === "completed", "install");
     await page.getByText("Installed release ui-fixture-1", { exact: true }).waitFor();
@@ -185,12 +188,12 @@ fs.writeFileSync(file,JSON.stringify(state));\n`;
     owner.close();
     await page.evaluate(({ key, unknown }) => localStorage.setItem(key, JSON.stringify({ version: 1, operation: "client_platform_start", input: { requestId: unknown } })), { key, unknown });
     const beforeUnknown = actionCalls().length; await page.reload();
-    await page.getByText("Outcome unknown", { exact: true }).waitFor();
+    await savedRequest.getByText("Outcome unknown", { exact: true }).waitFor();
     if (evidence) await page.screenshot({ path: join(evidence, "local-unknown-recovery.png"), fullPage: true });
     assert.equal(actionCalls().length, beforeUnknown); assert.equal(await page.getByRole("button", { name: "Retry identical request" }).count(), 0);
     for (const item of renderedStages) {
       await page.getByRole("button", { name: `Install · unknown · ${item.id.slice(0, 8)}`, exact: true }).click();
-      await page.getByText(`Stage: ${{ admitted: "Admitted", extracting: "Extracting", selecting: "Selecting installed release" }[item.stage]}`, { exact: true }).waitFor();
+      await currentStage(page.getByRole("region", { name: "Recent local jobs" }), { admitted: "Admitted", extracting: "Extracting", selecting: "Selecting installed release" }[item.stage]).waitFor();
     }
     await page.getByRole("button", { name: "Inspect job and snapshot" }).click();
     await page.getByRole("button", { name: "Acknowledge inspected outcome" }).click();
