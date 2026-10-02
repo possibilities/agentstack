@@ -313,14 +313,18 @@ try {
     cli.stdout.on("data", append); cli.stderr.on("data", append);
     cli.once("exit", () => { clearTimeout(timer); reject(new Error("cli_start_failed")); });
   });
-  assert.equal((await socketCall(join(root, "client.sock"), "tools/call", { name: "client_snapshot", arguments: {} })).version, 1);
+  const beforeSignal = await socketCall(join(root, "client.sock"), "tools/call", { name: "client_snapshot", arguments: {} });
+  assert.equal(beforeSignal.version, 1);
   const cliExit = once(cli, "exit");
   cli.kill("SIGTERM");
   assert.equal((await cliExit)[0], 0);
   await assert.rejects(access(join(root, "client.sock")));
   assert.ok(sentinel.listening);
+  const afterSignal = new ClientState(root);
+  try { assert.deepEqual(afterSignal.jobs().map(job => ({ ...job })), beforeSignal.jobs, "launcher exit must not admit install/start/stop/login jobs"); }
+  finally { afterSignal.close(); }
   assert.ok(!cliOutput.includes("#") && !cliOutput.includes("stack_client_ui_"));
-  pass("real launcher bin SIGTERM cleans its host/child, logs no capability and leaves platform running");
+  pass("real launcher bin SIGTERM cleans its host/child, logs no capability, admits no service jobs and leaves platform socket running");
 
   await assert.rejects(startClientUi({ root: join(base, "n"), port: 0,
     navigation: { openClientSurface(url) { throw new Error(url); } } }), /^Error: navigation_open_failed$/);
