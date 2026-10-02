@@ -253,8 +253,8 @@ export function StateFlowView({ controls, label, applyLabel = "Apply this plan",
  * until it is opened, but it opens itself, and stays open, while a flow inside it is past idle: a retained running,
  * partial or unknown receipt must never hide behind a closed disclosure.
  */
-export function MaintenanceDisclosure({ children, active = false, aside, className, onOpenChange }: {
-  children: React.ReactNode; active?: boolean; aside?: string; className?: string;
+export function MaintenanceDisclosure({ children, active = false, aside, title = "Maintenance", className, onOpenChange }: {
+  children: React.ReactNode; active?: boolean; aside?: string; title?: string; className?: string;
   /** Lets a view show row selection controls only while maintenance is open. */
   onOpenChange?(open: boolean): void;
 }) {
@@ -262,7 +262,7 @@ export function MaintenanceDisclosure({ children, active = false, aside, classNa
   return (
     <details open={open || active} onToggle={(event) => { setOpen(event.currentTarget.open); onOpenChange?.(event.currentTarget.open); }} className={cn("group/maintenance rounded-lg border border-dashed", className)}>
       <summary className="flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-[0.72rem] text-muted-foreground select-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-        <WrenchIcon aria-hidden className="size-3.5" />Maintenance
+        <WrenchIcon aria-hidden className="size-3.5" />{title}
         {aside ? <span className="ml-auto text-[0.66rem]">{aside}</span> : null}
       </summary>
       <div className="flex flex-col gap-2 border-t border-dashed p-2.5">{children}</div>

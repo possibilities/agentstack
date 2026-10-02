@@ -33,6 +33,22 @@ export function settingsPackage(target: SettingsTarget): "bots" | "worker" {
   return target.kind === "bot" || target.kind === "bot-defaults" ? "bots" : "worker";
 }
 
+/** Exact receipt target: omitted Bot ID means future-Bot defaults, never all Bots. */
+export function settingsReceiptTarget(target: SettingsTarget): { id?: string; provider?: WorkerProvider } {
+  switch (target.kind) {
+    case "bot": case "worker": return { id: target.id };
+    case "bot-defaults": return {};
+    case "worker-defaults": return { provider: target.provider };
+  }
+}
+
+/** Keep invalid/empty buffers visible instead of silently rounding or clamping a retention window. */
+export function receiptRetentionDays(text: string): number | null {
+  if (!text.trim()) return null;
+  const days = Number(text);
+  return Number.isSafeInteger(days) && days >= 7 && days <= 3650 ? days : null;
+}
+
 /** The catalog a target's editable keys come from. Worker catalogs are per provider. */
 export function catalogKey(target: SettingsTarget, provider?: WorkerProvider): string | null {
   if (settingsPackage(target) === "bots") return "bots";

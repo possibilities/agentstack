@@ -18,6 +18,7 @@ import type { SettingEvidence, SettingValue, SettingsCatalog, SettingsPlan, Sett
 import { cn } from "@/lib/utils";
 import { Time } from "./primitives";
 import { useStack, useStore } from "./provider";
+import { SettingsReceipts } from "./settings-maintenance";
 
 type Definition = SettingsCatalog["settings"][number];
 type Field = SettingsView["fields"][number];
@@ -198,6 +199,8 @@ export function SettingsEditor({ target, view, viewError, catalog, choices, extr
           <ul className="mt-1.5 flex list-disc flex-col gap-1 pl-4 text-pretty">{catalog.limitations.map((line) => <li key={line}>{line}</li>)}</ul>
         </details>
       ) : null}
+
+      <SettingsReceipts key={key} target={target} />
 
       <div className="sticky bottom-0 -mx-1 flex flex-col gap-2 rounded-lg border bg-background/95 p-2.5 shadow-sm backdrop-blur" aria-live="polite">
         {conflict ? (

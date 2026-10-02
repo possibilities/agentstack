@@ -6,11 +6,20 @@ import test from "node:test";
 registerHooks({ resolve(specifier, context, next) {
   return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const { botChoices, buildPatch, conflictKeys, controlFor, describeEvidence, draftIssues, editRequest, parseInput, settleDraft, workerApplyBlock, workerChoices } = await import("../lib/stack/settings.ts");
+const { botChoices, buildPatch, conflictKeys, controlFor, describeEvidence, draftIssues, editRequest, parseInput, receiptRetentionDays, settingsReceiptTarget, settleDraft, workerApplyBlock, workerChoices } = await import("../lib/stack/settings.ts");
 const { StackStore } = await import("../lib/stack/store.ts");
 
 const snapshot = (values, revision = 3) => ({ revision, values, source: "test", sourceRevision: null, updatedAt: 1 });
 const id = "c34f83f2-1f43-46d1-854f-014fc40f9683";
+
+test("old receipt scopes distinguish exact instances from defaults and never shorten the minimum window", () => {
+  assert.deepEqual(settingsReceiptTarget({ kind: "bot", id: "bot-1" }), { id: "bot-1" });
+  assert.deepEqual(settingsReceiptTarget({ kind: "bot-defaults" }), {});
+  assert.deepEqual(settingsReceiptTarget({ kind: "worker", id }), { id });
+  assert.deepEqual(settingsReceiptTarget({ kind: "worker-defaults", provider: "devin" }), { provider: "devin" });
+  for (const value of ["", " ", "6", "7.5", "3651", "NaN", "Infinity"]) assert.equal(receiptRetentionDays(value), null);
+  assert.equal(receiptRetentionDays("7"), 7); assert.equal(receiptRetentionDays("30"), 30);
+});
 
 test("a draft becomes the minimal patch, and the three prompt-clear meanings stay distinct", () => {
   const saved = snapshot({ model: "sol", "voice.prompt": "Hi", web_search: "live" });

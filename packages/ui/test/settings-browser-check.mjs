@@ -93,6 +93,12 @@ const workerSubject = (target) => target.id ? `worker:${target.id}` : `worker-de
 const backendOf = (target) => target.provider && target.provider !== "claude" ? "opencode-codex" : "claude-sdk";
 
 const handlers = {
+  bot_settings_receipts_plan: ({ targets, retainDays }) => settings.receiptsPlan(targets.map((target) => subject(target.id)), retainDays),
+  bot_settings_receipts_clear: (input) => settings.receiptsClear(input),
+  bot_state_receipt_get: ({ requestId }) => ({ receipt: settings.maintenance.receipt(requestId) }),
+  worker_settings_receipts_plan: ({ targets, retainDays }) => settings.receiptsPlan(targets.map(workerSubject), retainDays),
+  worker_settings_receipts_clear: (input) => settings.receiptsClear(input),
+  worker_state_receipt_get: ({ requestId }) => ({ receipt: settings.maintenance.receipt(requestId) }),
   serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   serve_resources: () => { throw new Error("not part of this fixture"); }, serve_resource_history: () => { throw new Error("not part of this fixture"); },
   account_list: () => ({ accounts: [{ id: "account-1", enabled: true, removing: false, linkedAccounts: [] }] }),
@@ -372,6 +378,43 @@ try {
   await workerDefaults.getByText("No unsaved changes").waitFor();
   assert.deepEqual(settings.get("worker-defaults:claude").values, { model: "claude-opus-5-5" });
   await shot("worker-defaults");
+
+  // Old receipts use the real settings ledger: only old, below-current rows retire, never settings/application.
+  const receiptSubject = "worker-defaults:claude";
+  const old = settings.db.prepare("SELECT request_id FROM managed_settings_receipts WHERE subject=?").get(receiptSubject).request_id;
+  settings.db.prepare("UPDATE managed_settings_receipts SET created_at=? WHERE request_id=?").run(now - 9 * 86400_000, old);
+  settings.patch(receiptSubject, "claude-sdk", { expectedRevision: 1, requestId: crypto.randomUUID(), set: { effort: "high" } });
+  sockets.get("worker").publish("workers_changed");
+  const beforeReceipts = settings.get(receiptSubject);
+  const applications = count("worker_settings_apply");
+  const oldReceipts = workerDefaults.locator("details").filter({ has: workerDefaults.locator("summary", { hasText: "Old receipts" }) });
+  await oldReceipts.locator("summary").click();
+  await oldReceipts.getByRole("spinbutton", { name: "Retain days" }).fill("6");
+  assert.equal(await oldReceipts.getByRole("button", { name: "Prepare old receipt clearing" }).isDisabled(), true);
+  await oldReceipts.getByRole("spinbutton", { name: "Retain days" }).fill("7");
+  await oldReceipts.getByRole("button", { name: "Prepare old receipt clearing" }).click();
+  await oldReceipts.getByText(old, { exact: true }).waitFor();
+  await oldReceipts.getByText("Saved settings, loaded selections and native/runtime effective state are unchanged", { exact: true }).waitFor();
+  assert.equal(await oldReceipts.getByRole("spinbutton", { name: "Retain days" }).isDisabled(), true);
+  await page.emulateMedia({ colorScheme: "light" }); await shot("old-receipts-plan-light");
+  await page.emulateMedia({ colorScheme: "dark" }); await shot("old-receipts-plan-dark");
+  await oldReceipts.getByRole("button", { name: "Clear these old receipts" }).click();
+  await oldReceipts.getByText("Completed for the declared scope only.").waitFor();
+  assert.deepEqual(settings.get(receiptSubject), beforeReceipts);
+  assert.equal(count("worker_settings_apply"), applications);
+  assert.ok(settings.db.prepare("SELECT 1 FROM managed_settings_retired_receipts WHERE request_id=?").get(old));
+  assert.ok(settings.db.prepare("SELECT 1 FROM managed_settings_receipts WHERE subject=?").get(receiptSubject), "current receipt stays");
+  const recoveryPlan = settings.receiptsPlan([receiptSubject], 7);
+  const recoveryInput = { planId: recoveryPlan.id, expectedRevision: recoveryPlan.revision, requestId: crypto.randomUUID() };
+  settings.maintenance.begin(recoveryInput, recoveryPlan);
+  settings.maintenance.finish(recoveryInput.requestId, "unknown", [{ resource: receiptSubject, outcome: "unknown", detail: "Interrupted receipt clearing" }]);
+  await page.evaluate((input) => localStorage.setItem("stack.state-flow.worker:settings_receipts:worker-defaults:claude", JSON.stringify({ input, at: Date.now() })), recoveryInput);
+  await page.reload();
+  await list.getByRole("button", { name: "Defaults for new Workers" }).click();
+  await workerDefaults.getByRole("radio", { name: "Claude", exact: true }).check();
+  await oldReceipts.getByRole("region", { name: "worker receipt unknown" }).waitFor();
+  assert.equal(await oldReceipts.getByRole("button", { name: "Send identical request" }).count(), 0);
+  await page.setViewportSize({ width: 390, height: 844 }); await shot("old-receipts-unknown-narrow");
 
   const forbidden = writes.filter(([op]) => !["bot_settings_patch", "bot_settings_apply", "worker_settings_patch", "worker_settings_apply"].includes(op));
   assert.deepEqual(forbidden, [], "no start, stop, prompt, call or legacy defaults write");
