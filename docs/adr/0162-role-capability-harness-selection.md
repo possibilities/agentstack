@@ -67,9 +67,16 @@ be used by an additional Role MCP connection to alias the internal bridge.
 Existing UI types, duplication semantics and launch status text track the changed
 records. The Launch view distinguishes stored enablement from inclusion and states
 that its unspecified-harness preview contains unrestricted capabilities only.
-New filter editors and a separate capability-harness preview selector are deferred
-to a UI handoff, not added implicitly. The instruction-context controls remain
-render-only.
+The human-authorized follow-up added the remaining controls in the existing Roles
+space. Skill, additional MCP and internal connection editors show three explicit
+filter modes: Any harness (the default), Only (an exact allowlist) and No harness.
+Saves omit an unchanged filter and send null to clear one. The internal filter is
+edited beside, and independently of, the enabled switch. The Launch view has its
+own Capability harness selector (Unspecified, codex, opencode, claude or devin) and
+lists excluded capabilities with their reasons: Off, Needs a harness choice, or Not
+for the selected harness. Its answers are fenced by Role, harness, rendering context
+and revision. The instruction-context controls remain render-only and never select
+capabilities.
 
 Verification covers revisioned persistence and clearing through the socket API,
 read-only compatibility and owner upgrades, actual private Bot/CLI capability
