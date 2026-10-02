@@ -15,7 +15,7 @@ function clientProxy(request: NextRequest) {
     requireClientSession(request.headers, request.method, request.nextUrl.pathname + request.nextUrl.search, { exchange: true });
     const path = request.nextUrl.pathname;
     if (path === "/") return secured(NextResponse.redirect(new URL("/client", runtime.origin), 303));
-    if (!(path === "/client" || path.startsWith("/api/client/") || path.startsWith("/_next/static/")
+    if (!(path === "/client" || path === "/client/local" || path.startsWith("/api/client/") || path.startsWith("/_next/static/")
       || path === "/connect/local" || path === "/connect/local/session" || path === "/connect/local/logout")) return secured(new NextResponse(null, { status: 404 }));
     const incoming = new Headers(request.headers);
     // Next extracts this nonce for its own inline and external scripts.

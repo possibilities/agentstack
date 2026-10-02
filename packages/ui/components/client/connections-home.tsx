@@ -1,66 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { ClientOutput } from "@stack/client/contract";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { clientCall } from "@/lib/client/channel";
+import { useClientObservation } from "@/lib/client/use-observation";
+import { ClientShell } from "./shell";
 
-type Observation = { snapshot: ClientOutput<"client_snapshot">; peers: ClientOutput<"client_connection_list">; at: number };
 export function ConnectionsHome() {
-  const [observation, setObservation] = useState<Observation | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  useEffect(() => {
-    const controller = new AbortController();
-    const events = new EventSource("/api/client/events");
-    let busy = false, dirty = false;
-    const refresh = async () => {
-      if (busy) { dirty = true; return; }
-      busy = true;
-      do {
-        dirty = false;
-        try {
-          const [snapshot, peers] = await Promise.all([
-            clientCall("client_snapshot", {}, controller.signal), clientCall("client_connection_list", {}, controller.signal),
-          ]);
-          if (!controller.signal.aborted) { setObservation({ snapshot, peers, at: Date.now() }); setError(null); }
-        } catch (error) {
-          if (!controller.signal.aborted) setError(error instanceof Error ? error.message : "Client observation unavailable.");
-        } finally { if (!controller.signal.aborted) setLoading(false); }
-      } while (dirty && !controller.signal.aborted);
-      busy = false;
-    };
-    // Do not snapshot before the private subscription has acknowledged.
-    events.addEventListener("ready", () => void refresh());
-    events.addEventListener("client_changed", () => void refresh());
-    events.addEventListener("session_expired", () => {
-      events.close(); controller.abort(); setLoading(false);
-      setError("Client session expired. Run stack-ui to reconnect. The last observation is retained.");
-    });
-    const unavailable = () => { setLoading(false); setError("Client updates unavailable: the host may have disconnected or your session may have expired. The last observation is retained. Run stack-ui to reconnect if needed."); };
-    events.addEventListener("unavailable", unavailable);
-    events.onerror = unavailable;
-    return () => { controller.abort(); events.close(); };
-  }, []);
+  const { observation, error, loading } = useClientObservation();
   const snapshot = observation?.snapshot;
   const peers = observation?.peers;
   const unresolved = snapshot?.jobs.filter(job => job.state === "running" || job.state === "unknown") ?? [];
   const pending = [...(peers?.pending.pairings ?? []).map(intent => ({ ...intent, kind: "Manual pairing" })),
     ...(peers?.pending.enrollments ?? []).map(intent => ({ ...intent, kind: "Phone enrollment" }))];
-  const localState = !snapshot ? "Loading" : snapshot.service.ready ? "Ready" : !snapshot.service.available ? "Observation unavailable"
+  const localState = !snapshot ? error ? "Observation unavailable" : "Loading" : snapshot.service.ready ? "Ready" : !snapshot.service.available ? "Observation unavailable"
     : snapshot.service.running ? "Running, not ready" : snapshot.installation ? "Installed, stopped" : "Not installed";
-  return <div className="client-home">
-    <a className="client-skip" href="#connections-main">Skip to connections</a>
-    <header className="client-header">
-      <span className="font-medium">Stack Client</span>
-      <nav aria-label="Client"><a href="/client" aria-current="page">Connections</a></nav>
-    </header>
-    <main id="connections-main" className="client-main">
+  return <ClientShell>
       <div className="flex flex-col gap-2">
         <h1 className="text-2xl font-semibold tracking-tight">Connections</h1>
         <p className="text-muted-foreground">Your local platform and saved remote platforms, together.</p>
-        <p className="text-sm text-muted-foreground">Closing this Client UI does not stop a platform. Installation and connection setup are not available in this foundation release.</p>
+        <p className="text-sm text-muted-foreground">Closing this Client UI does not stop a platform. Remote connection setup is a later milestone.</p>
       </div>
       <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
         {loading ? "Loading client observation…" : observation ? `Last observation: ${new Date(observation.at).toLocaleTimeString()}` : "No client observation available."}
@@ -73,6 +31,7 @@ export function ConnectionsHome() {
             <div className="client-peer-title"><h3 className="font-medium">On this machine</h3><Badge variant="outline">{localState}</Badge></div>
             <p className="text-sm text-muted-foreground">{snapshot?.installation ? `Installed release ${snapshot.installation.version}` : snapshot ? "No local platform installed. Remote connections work independently." : "Waiting for the Client host."}</p>
             {snapshot ? <p className="text-sm text-muted-foreground">Start at login: {snapshot.service.login.saved ? "saved on" : "saved off"}; {snapshot.service.login.applied === snapshot.service.login.saved ? "applied" : "application pending"}.</p> : null}
+            <a className="underline underline-offset-4" href="/client/local">Run locally</a>
           </li>
           {peers?.connections.map(peer => <li key={peer.id} className="client-peer">
             <div className="client-peer-title"><h3 className="font-medium">{peer.label}</h3><Badge variant="outline">{peer.pendingOpen ? "Open unresolved" : peer.expiresAt <= Date.now() ? "Credential expired" : "Saved remote"}</Badge></div>
@@ -96,6 +55,5 @@ export function ConnectionsHome() {
           <p className="text-sm text-muted-foreground">Stage: {job.stage}. {job.state === "unknown" ? "Inspect before any new explicit action; this job is not replayed." : "Admission does not establish platform readiness."}</p>
         </li>)}</ul> : <p className="text-sm text-muted-foreground">{observation ? "No unresolved jobs in the 50 most recent retained jobs." : "Waiting for an observation."}</p>}
       </section>
-    </main>
-  </div>;
+  </ClientShell>;
 }

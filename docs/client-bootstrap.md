@@ -88,13 +88,60 @@ readiness; the browser then reads snapshot/list and rereads after reconnect. It
 rechecks the live session before notices and every 250 ms, closing on expiry or
 revocation. The Connections home retains last-good reads with loading/error state,
 shows local and saved remote platforms as peers, pending intents and unresolved
-jobs, and adds no install/pair/enroll controls in this foundation milestone.
+jobs. Remote pair/enroll controls remain a later milestone.
 
 `bin/navigation.mjs` defines `openClientSurface`, destination-pinned `openPlatform`,
 `focusConnections` and explicit `openExternal` for the later desk adapter. Platform
 pages never receive a Client/native installation bridge. Portable packaging,
-release bundles, public npm publication and remaining workflow screens are later
+release bundles, public npm publication and remote workflow screens are later
 milestones; a bin field alone is not an available public npx distribution.
+
+### Local platform workflow
+
+`/client/local`, reached through **Run locally** on Connections, observes
+prerequisites, reviews the install plan and separately admits Install, Start,
+Stop and platform login changes. Readiness is explicitly an observed
+`serve_status` answer, not successful admission or native service completion.
+Closing the Client UI or launcher never stops the platform. Connections remains
+available in the page header.
+
+The launcher alone selects the reviewed descriptor:
+
+```sh
+stack-ui --release-manifest /absolute/reviewed-release.json
+# Alternatively, set STACK_CLIENT_RELEASE_MANIFEST in the parent environment.
+```
+
+The bounded JSON file must satisfy `releaseSchema` (the descriptor below).
+The parent validates it before starting a host and pins its value for that UI
+child's lifetime. HTTP Install and Plan use only that value and refuse absent or
+changed browser descriptors. No platform descriptor, URL entry or browser
+storage can select a release. Without configuration the page says **No trusted
+release configured for this Client** and install is unavailable. A configured
+descriptor is not a claim that a published release exists.
+
+Prerequisites describe only observed OS/architecture, executable availability
+and user-service availability; they do not prove Debian qualification or GitHub
+authentication. Reviewed plans disclose paths, hashes, byte limits, requirements
+and the shared codexnk runtime effect. Jobs show actual stages without fabricated
+percentages.
+
+Install/Start/Stop/Login persist a UUID and immutable input in a client-root-scoped
+browser recovery slot before dispatch. Storage failure blocks dispatch. Reload
+inspects but never dispatches; unresolved admission offers an identical retry
+only after inspection. Known jobs are inspected, not rerun; unknown outcomes
+require inspection and explicit acknowledgement before another new request.
+Local Open has no request UUID, retains no sensitive URL and offers a fresh
+deliberate Open if navigation/admission is uncertain. It opens a separate page,
+never an iframe or an installation bridge on a platform page.
+
+Only unresolved local Start/Stop receive bounded one-second observation polling
+(up to 30 reads within 30 seconds); no action is retried. If still unresolved, explicit inspection
+remains available. Platform login shows saved and applied values separately,
+defaults off and does not imply permission to restart or future native-app login.
+Local server setup preserves omitted defaults, binds `expectedRevision`, retains
+conflicted drafts and applies on next start. TLS files, joining Tailscale and ACLs
+remain operator-provisioned; no cert/Serve/Funnel/sudo convenience runs here.
 
 ## Local platform APIs
 

@@ -201,6 +201,9 @@
 .client-skip { position: fixed; left: 1rem; top: -5rem; padding: 0.5rem; background: var(--background); }
 .client-skip:focus { top: 0.5rem; z-index: 1; }
 .client-home a:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
+.client-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); }
+.client-json { white-space: pre-wrap; overflow-wrap: anywhere; }
+.client-main > *, .client-main section, .client-main form { min-width: 0; }
 
 @keyframes ui-ping {
   0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--ping, var(--success)) 55%, transparent); }
