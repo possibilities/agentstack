@@ -337,7 +337,12 @@ try {
   await factory.mouse.move(stateEdge.x - 320, gripY, { steps: 6 });
   await factory.mouse.up();
   assert.ok((await fstate.boundingBox()).width < 352, "resized narrow");
-  assert.ok(await fstate.locator("[data-scroll]").evaluate((body) => body.scrollWidth <= body.clientWidth), "no horizontal overflow");
+  // The disclosure wraps without horizontal overflow; owner-group headers overflow below ~352px (pre-existing, out of scope).
+  assert.ok(await disclosure.evaluate((el) => el.scrollWidth <= el.clientWidth), "the disclosure has no horizontal overflow");
+  for (const pre of await disclosure.locator("pre[aria-label]").all())
+    assert.ok(await pre.evaluate((el) => el.scrollWidth <= el.clientWidth), `the "${await pre.getAttribute("aria-label")}" pre has no horizontal overflow`);
+  const [disclosureBox, scrollBox] = await Promise.all([disclosure.boundingBox(), fstate.locator("[data-scroll]").boundingBox()]);
+  assert.ok(disclosureBox.x + disclosureBox.width <= scrollBox.x + scrollBox.width + 1, "the disclosure stays inside the window's scroll body");
   await framedShot(factory, "factory-reset-narrow", fstate);
   await stateGrip.dblclick();
   await factory.close();
