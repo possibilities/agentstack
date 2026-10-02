@@ -69,13 +69,15 @@ function WorkerMaintenanceFlow({ worker, kind }: { worker: WorkerSession; kind: 
         <li>Worker closed; exact owned linked worktree, branch and base required</li>
         <li>No different earlier retained tip, symlinks, submodules, special files or checkout filters</li>
         <li>HEAD, index and files must still match the plan; changed or uncertain ownership blocks apply</li>
+        <li>Quiesce external Git writers separately before preparing and applying</li>
       </ul>
-      <p className={hint}>Worktree <code className="break-all">{worker.cwd}</code><br />Recorded base <code className="break-all">{worker.baseCommit}</code></p>
+      <p className={hint}>Worktree <code className="break-all">{worker.cwd}</code><br />Branch <code className="break-all">{worker.branch}</code><br />Recorded base <code className="break-all">{worker.baseCommit}</code><br />Source (retained) <code className="break-all">{worker.repo}</code></p>
     </> : kind === "transcript" ? <>
       <p className={hint}>Redacts stored prompts, messages, tools and record bodies in Worker SQLite only. Turn IDs, admission digests, outcomes including unknown, usage, settings and captured HUD Work context stay.</p>
       <p className={hint}>Native sessions and HUD, Signal and Infer copies remain independent. This is logical clearing, not erasure of SQLite free pages, WAL, physical media or backups.</p>
     </> : kind === "native_session" ? <>
       <p className={hint}>Purge, not reset or reopen. One native root per account/plan; only exact IDs and verified descendants disclosed by the owner are selected.</p>
+      <p className={hint}>Account <code className="break-all">{worker.accountId}</code><br />Native directory <code className="break-all">{worker.cwd}</code></p>
       <ul aria-label="Native purge preconditions" className="flex flex-col gap-1 text-xs">
         {conditions.map((condition) => <li key={condition.label}>{condition.state}: {condition.label}</li>)}
         <li>Owner plan must verify runtime, catalog and teardown drained</li>

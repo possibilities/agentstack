@@ -12,6 +12,7 @@ import { providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive"
 import { classifyWorkerRole, workerRoleHint, workerRoleLabel, type WorkerRole } from "@/lib/stack/roles";
 import { primaryWorker } from "@/lib/stack/worker-windows";
 import type { StackStore } from "@/lib/stack/store";
+import { localOperations } from "@/lib/stack/state";
 import type { RoleCatalog, WorkerDiff, WorkerDiffFile, WorkerDetail, WorkerPermission, WorkerRecord, WorkerRecordChunk, WorkerRecordPage, WorkerSession, WorkerStatus, WorkerTool, WorkerToolPage, WorkerTranscriptEntry, WorkerTranscriptPage, WorkerTurn, WorkerTurnPage } from "@/lib/stack/types";
 import { appendBySeq, conversation, localOperator, settingsMismatch, span, workerAttention, workerLabel, workerOrigin, type ConversationItem, type PlanEntry } from "@/lib/stack/workers";
 import { cn } from "@/lib/utils";
@@ -23,7 +24,7 @@ import { phaseTitle, phaseTone } from "./worker-windows";
 import { Window } from "./window";
 import { WorkerSettingsTab } from "./worker-settings";
 import { WorkContextLink } from "./hud-shared";
-import { WorkerMaintenance, WorkerSessionMaintenance } from "./worker-maintenance";
+import { WorkerMaintenance, WorkerSessionMaintenance, workerStateOperations } from "./worker-maintenance";
 
 type Tab = "conversation" | "changes" | "files" | "turns" | "tools" | "records" | "session" | "settings";
 const tabs: Array<[Tab, string]> = [["conversation", "Conversation"], ["changes", "Changes"], ["files", "Files"], ["turns", "Turns"], ["tools", "Tools"], ["records", "Records"], ["session", "Session"], ["settings", "Settings"]];
@@ -268,7 +269,9 @@ function Chip({ icon: Icon, children, title, copy, label, tone }: { icon: React.
 
 /** Identity, requested versus observed settings, worktree and what the Worker is waiting on. */
 function Summary({ worker, status, statusError }: { worker: WorkerSession; status: WorkerStatus | null; statusError: string | null }) {
-  const { workerAccounts, bots, roleCatalog } = useStack();
+  const state = useStack();
+  const { workerAccounts, bots, roleCatalog, remote } = state;
+  const maintenance = localOperations(state, "worker", Object.values(workerStateOperations)).available;
   const now = useNow();
   const labels = workerAccountLabels(workerAccounts.data);
   const turn = status?.turn ?? null;
@@ -288,7 +291,7 @@ function Summary({ worker, status, statusError }: { worker: WorkerSession; statu
         {active && started ? <span className="text-[0.72rem] text-muted-foreground tabular-nums">turn {span(now - started)}</span> : null}
         {turn && !active ? <span className="truncate text-[0.72rem] text-muted-foreground">last turn {turn.phase}{turn.stopReason ? ` · ${turn.stopReason}` : ""}</span> : null}
         <span className="ml-auto flex items-center gap-1 text-[0.68rem] text-muted-foreground" title="Bots start and steer Workers; this window offers managed settings and explicit local state maintenance, never lifecycle or permission controls">
-          <LockIcon className="size-3 shrink-0" />Observe · settings · maintenance
+          <LockIcon className="size-3 shrink-0" />{remote ? "Read only" : maintenance ? "Observe · settings · maintenance" : "Observe · settings"}
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-1">
@@ -574,7 +577,7 @@ function TurnsTab({ worker, generation }: { worker: WorkerSession; generation: n
               <Time at={turn.createdAt} className="ml-auto text-[0.65rem] text-muted-foreground" />
             </div>
             {turn.prompt !== null ? <p className="line-clamp-4 text-[0.75rem] break-words whitespace-pre-wrap text-foreground/90">{turn.prompt}</p>
-              : <p className="text-[0.72rem] text-muted-foreground italic">{turn.contentClearedAt ? "Prompt cleared" : "Prompt not recorded"}</p>}
+              : <p className="text-[0.72rem] text-muted-foreground italic">{turn.contentClearedAt != null ? "Prompt cleared" : "Prompt not recorded"}</p>}
             <dl className="flex flex-col">
               <Row label="Requested" mono>{[turn.requestedModel, turn.requestedEffort].filter(Boolean).join(" · ") || "—"}</Row>
               <Row label="Observed" mono className={mismatch ? "text-warning" : undefined}>{turn.observedSettings ? [turn.observedSettings.model, turn.observedSettings.effort, turn.observedSettings.mode].filter(Boolean).join(" · ") || "—" : "not reported"}</Row>
