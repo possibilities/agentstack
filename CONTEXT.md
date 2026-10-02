@@ -301,7 +301,11 @@ The Role selected in the Role catalog for every later Bot launch and for new Wor
 
 ## Internal Role MCP enablement
 
-Per-Role selection of Stack's configured Package API MCP connections. All are on by default, including newly configured internal servers. `disabledInternalMcpServers` stores explicit exclusions. These settings affect launch connections, not the package's availability, operation exposure or authorization. Additional Role MCP servers remain separately managed.
+Per-Role switches for Stack's configured Package API and bridge MCP connections. All are on and unrestricted by default, including newly configured connections. `disabledInternalMcpServers` stores off-switches; `internalMcpHarnesses` separately stores explicit capability harness allowlists. These settings affect later launch connections, not availability, operation exposure or authorization. Additional Role MCP servers remain separately managed.
+
+## Capability harness
+
+The actual launcher identity used to select a Role's enabled skills and MCP connections: `codex` for Bots, `opencode` for Codex Workers, `claude` for Claude SDK Workers, `devin` for Devin Workers, and the selected native CLI for Role injection. Optional `harnesses` allowlists are unrestricted when absent or null; `[]` selects none. Updates preserve omission and null clears the restriction. Instruction-rendering `context.harness` and `--with-harness` are independent and cannot override selection. See [ADR 0162](docs/adr/0162-role-capability-harness-selection.md). _Avoid_: model family, instruction context, native tool availability, execution authority
 
 ## Trusted project
 
@@ -325,11 +329,11 @@ A durable, ordered developer-instruction body with a stable ID, human-only title
 
 ## Role skill
 
-A named, enabled or disabled skill record containing Markdown instructions and optional supporting files. Stack stores the bytes in the Role and writes only enabled skills to a Bot's private launch snapshot. Codex also discovers project skills, while the three-axis launch excludes home-level skills. Role skill selection does not suppress project, bundled, or explicitly added skill roots.
+A named, enabled or disabled skill record containing Markdown instructions, optional supporting files and an optional capability harness allowlist. Stack stores the bytes in the Role and materializes only enabled, harness-selected skills for Bot, Worker and injected CLI launches. Codex also discovers project skills, while the three-axis launch excludes home-level skills. Role skill selection does not suppress project, bundled, or explicitly added skill roots.
 
 ## Role MCP server
 
-An additional named, enabled or disabled HTTP or stdio MCP definition in the Role. Enabled definitions join internal Package API connections in a Bot's private launch configuration or a Worker's native session. They do not change ambient configuration or running sessions.
+An additional named, enabled or disabled HTTP or stdio MCP definition in the Role, with an optional capability harness allowlist. Enabled, harness-selected definitions join internal connections in later Bot, Worker and injected CLI launch configuration. They do not change ambient configuration or running sessions.
 
 ## MCP invocation context
 
