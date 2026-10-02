@@ -154,6 +154,7 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
     operations: [
       operation({ name: "jobs_show", description: "Read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { return { ok: true }; } }),
       operation({ name: "share_read_states", description: "Trusted local read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { shareReads++; return { ok: true }; } }),
+      operation({ name: "brain_completion_identity_get", description: "Local identity read.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { maintenanceCalls++; return { ok: true }; } }),
       ...brainMaintenance.map(name => operation({ name, description: "Local maintenance.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: true }, async call() { maintenanceCalls++; return { ok: true }; } })),
     ], events: { topics: {} } });
   const rolesDirectory = join(root, "packages", "roles"); mkdirSync(rolesDirectory, { recursive: true });
@@ -179,10 +180,11 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
   let developerCalls = 0;
   const factoryControls = ["serve_factory_reset_plan", "serve_factory_reset_clear", "serve_factory_reset_receipt_get", "serve_factory_reset_recover", "serve_factory_reset_fence_release"];
   const server = await serveSocket({ info: { name: "serve", description: "Demo.", transportDescription: "Socket.", path: socketPath("serve", env) }, context: {},
-    operations: ["serve_status", "serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check", ...factoryControls].map(name => operation({
-      name, description: "Server control.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: !name.endsWith("update") && !name.endsWith("check") },
+    operations: ["serve_status", "serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check", "serve_subscription_list", "serve_subscription_get", "serve_subscription_remove",
+      "serve_completion_list", "serve_completion_get", ...factoryControls].map(name => operation({
+      name, description: "Server control.", input: z.strictObject({}), output: ok, annotations: { readOnlyHint: !name.endsWith("update") && !name.endsWith("check") && name !== "serve_subscription_remove" },
       async call() { developerCalls++; return { ok: true }; },
-    })), events: { topics: { pids_changed: "Changed.", serve_settings_changed: "Settings changed.", harness_releases_changed: "Releases changed." } } });
+    })), events: { topics: { pids_changed: "Changed.", serve_state_changed: "Subscriptions changed.", serve_subscriptions_changed: "Subscription set changed.", serve_settings_changed: "Settings changed.", harness_releases_changed: "Releases changed." } } });
   const githubLocal = ["github_auth_status", "github_repositories", "github_organizations", "github_hook_list", "github_hook_apply", "github_remote_receipt_get", "github_endpoint_secret_reveal", "github_endpoint_secret_rotate", "github_endpoint_create", "github_endpoint_update"];
   for (const owner of ["infer", "hud", "scrape", "signal", "worker", "auth", "access", "browse", "content", "source"]) {
     const dir = join(root, "packages", owner); mkdirSync(dir, { recursive: true });
@@ -191,10 +193,10 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
   const maintenance = await Promise.all(([ ["infer", ["infer_catalog_clear"]], ["hud", ["hud_history_plan", "hud_history_clear"]],
     ["scrape", ["scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear"]],
     ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]],
-    ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies", "worker_state_plan", "worker_state_clear", "worker_state_branches", "worker_state_native_effect"]],
+    ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies", "worker_state_plan", "worker_state_clear", "worker_state_branches", "worker_state_native_effect", "worker_completion_identity_get"]],
     ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get", "worker_account_state_guard"]],
     ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]],
-    ["browse", ["browser_factory_reset_inspect", "browser_factory_reset_clear", "browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect"]],
+    ["browse", ["browser_factory_reset_inspect", "browser_factory_reset_clear", "browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect", "browser_completion_identity_get"]],
     ["content", ["content_vault_history_plan", "content_publication_list", "content_publication_plan", "content_publication_clear"]], ["source", githubLocal] ] as const).map(([owner, names]) =>
     serveSocket({ info: { name: owner, description: "Fixture.", transportDescription: "Socket.", path: socketPath(owner, env) }, context: {},
       operations: names.map(name => operation({ name, description: "Local maintenance.", input: z.strictObject({}), output: ok,
@@ -233,13 +235,13 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
       assert.match((await send("tools/call", { package: "bots", name, arguments: {} })).error.message, /not available/);
     assert.equal(stateCalls, 0);
     for (const [owner, names] of [["infer", ["infer_catalog_clear"]], ["hud", ["hud_history_plan", "hud_history_clear"]],
-      ["brain", ["brain_jobs_plan", "brain_jobs_clear", "brain_runs_plan", "brain_runs_clear", "brain_source_plan", "brain_source_clear", "brain_artifacts_plan", "brain_artifacts_clear"]],
+      ["brain", ["brain_jobs_plan", "brain_jobs_clear", "brain_runs_plan", "brain_runs_clear", "brain_source_plan", "brain_source_clear", "brain_artifacts_plan", "brain_artifacts_clear", "brain_completion_identity_get"]],
       ["scrape", ["scrape_queue_plan", "scrape_queue_apply", "scrape_corpus_list", "scrape_corpus_plan", "scrape_corpus_clear"]],
       ["signal", ["attention_checkpoint_plan", "attention_checkpoint_reset"]],
-      ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies", "worker_state_plan", "worker_state_clear", "worker_state_branches", "worker_state_native_effect"]],
+      ["worker", ["worker_settings_receipts_plan", "worker_settings_receipts_clear", "worker_state_receipt_get", "worker_account_state_dependencies", "worker_state_plan", "worker_state_clear", "worker_state_branches", "worker_state_native_effect", "worker_completion_identity_get"]],
       ["auth", ["worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get", "worker_account_state_guard"]],
       ["access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]],
-      ["browse", ["browser_factory_reset_inspect", "browser_factory_reset_clear", "browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect"]],
+      ["browse", ["browser_factory_reset_inspect", "browser_factory_reset_clear", "browser_profile_reset_plan", "browser_profile_reset_clear", "browser_site_data_plan", "browser_site_data_clear", "browser_handoff_history_plan", "browser_handoff_history_clear", "browser_volume_list", "browser_volume_plan", "browser_volume_clear", "browse_state_receipt_get", "browse_state_fence_release", "browse_state_bot_effect", "browser_completion_identity_get"]],
       ["content", ["content_vault_history_plan", "content_publication_list", "content_publication_plan", "content_publication_clear"]]] as const) {
       assert.deepEqual((await send("tools/list", { package: owner })).result.tools.map((tool: { name: string }) => tool.name), owner === "brain" ? ["jobs_show"] : []);
       for (const name of names) assert.match((await send("tools/call", { package: owner, name, arguments: {} })).error.message, /not available/);
@@ -251,11 +253,22 @@ test("remote UI cannot read Brain share jobs or use local Role, state and develo
     const listed = await send("tools/list", { package: "serve" });
     assert.deepEqual(listed.result.tools.map((tool: { name: string }) => tool.name), ["serve_status"]);
     assert.equal((await send("tools/call", { package: "serve", name: "serve_status", arguments: {} })).result.ok, true);
-    for (const name of ["serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check", ...factoryControls])
+    for (const name of ["serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check", "serve_subscription_list", "serve_subscription_get", "serve_subscription_remove",
+      "serve_completion_list", "serve_completion_get", ...factoryControls])
       assert.match((await send("tools/call", { package: "serve", name, arguments: {} })).error.message, /not available/);
-    for (const topic of ["serve_settings_changed", "harness_releases_changed"])
+    for (const topic of ["serve_settings_changed", "harness_releases_changed", "serve_subscriptions_changed"])
       assert.match((await send("events/subscribe", { package: "serve", subscription: topic, topics: [topic] })).error.message, /not available|selected|topic/i);
     assert.equal(developerCalls, 1, "only existing server status reaches the private socket");
+    const narrowed = new Promise<void>(resolve => ws!.once("close", () => resolve()));
+    store.updateGrant(store.inventory().grants[0]!.id, 1, ["ui:view"], []);
+    await narrowed;
+    const viewing = store.startUi(issued.refreshToken, randomUUID());
+    ws = await open(`wss://127.0.0.1:${port}/websocket`, `https://127.0.0.1:${port}`, `__Host-stack_ui=${viewing.accessToken}`);
+    assert.deepEqual((await send("tools/list", { package: "serve" })).result.tools.map((tool: { name: string }) => tool.name), ["serve_status"],
+      "a view-only grant still cannot reach operator history");
+    for (const name of ["serve_completion_list", "serve_completion_get", "serve_subscription_list", "serve_subscription_get", "serve_subscription_remove"])
+      assert.match((await send("tools/call", { package: "serve", name, arguments: {} })).error.message, /not available/);
+    assert.equal(developerCalls, 1);
   } finally {
     ws?.terminate(); await remote.close(); for (const owner of maintenance) await owner.close(); await server.close(); await bots.close(); await roles.close(); await backend.close(); store.close(); rmSync(root, { recursive: true, force: true });
   }

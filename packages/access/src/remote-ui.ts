@@ -58,7 +58,7 @@ const controls: Record<string, (name: string) => boolean> = {
 
 // State inspection includes local filesystem/credential metadata. Read-only hints
 // do not extend a remote grant to these new operator surfaces.
-const localStateOperation = (name: string) => /_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|_settings_receipts_(plan|clear)$|^browser_(profile_reset_|site_data_|volume_|handoff_history_)|^role_launch_(list|plan|clear)$|^worker_account_cache_(plan|clear)$|^attention_checkpoint_(plan|reset)$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_subscription_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_|publication_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
+const localStateOperation = (name: string) => /_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|_settings_receipts_(plan|clear)$|^browser_(profile_reset_|site_data_|volume_|handoff_history_)|^role_launch_(list|plan|clear)$|^worker_account_cache_(plan|clear)$|^attention_checkpoint_(plan|reset)$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_(subscription|completion)_|_completion_identity_get$|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_|publication_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 const localDeveloperOperation = (pkg: string, name: string) => /^(?:serve|browser)_factory_reset_/.test(name) || pkg === "serve" && /^(serve_settings_|serve_harness_releases)/.test(name);
 const localGithubOperation = (pkg: string, name: string) => pkg === "source" && /^(github_auth_|github_repositories$|github_organizations$|github_hook_|github_remote_receipt_|github_endpoint_(create|update|secret_))/.test(name);
 
@@ -216,7 +216,7 @@ export async function startRemoteUi(options: RemoteUiOptions, tls: { key: Buffer
           const denied = (name: string) => localStateOperation(name) || localDeveloperOperation(pkg, name) || localGithubOperation(pkg, name) || pkg === "bots" && name.startsWith("voice_") || pkg === "brain" && name === "share_read_states" || pkg === "roles" && name.startsWith("role_shim_");
           return { operations: exposure.operations.filter(name => !denied(name) && (safe.has(name) || principal.scopes.includes("ui:control") && controls[pkg]?.(name))),
             events: exposure.events.filter(name => !(pkg === "bots" && name === "voice_changed") && !(pkg === "roles" && name === "role_shims_changed")
-              && !(pkg === "serve" && ["serve_settings_changed", "harness_releases_changed"].includes(name))) };
+              && !(pkg === "serve" && ["serve_settings_changed", "harness_releases_changed", "serve_subscriptions_changed"].includes(name))) };
         },
         mutation(pkg, operation) {
           this.check();
