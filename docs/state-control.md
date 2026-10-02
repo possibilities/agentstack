@@ -63,7 +63,7 @@ can retain `.stack-clear-<uuid>` quarantine, named in the result for inspection.
 | Owner | Inspection / selection | Maintenance and effect |
 | --- | --- | --- |
 | Bots | `bot_state_read`, `bot_workspace_list/read`, `bot_history_list`, `bot_queue_history`, `bot_launch_read`, `bot_log_read`, `bot_recovery_list`, `chat_upload_list/read` | `bot_state_plan` selects `workspace_clear`, `session_reset` with `history:retain/purge`, `history_clear` of one retired generation, `queue_bodies_clear` with exact IDs or an attributed retired generation, `log_clear`, `launch_args_clear`, `upload_remove` or `recovery_discard`. Apply through corresponding `bot_<kind>`. Terminal queue clearing retains original bytes/digest, destination and sent/unknown/cancelled outcome; pending/dispatching blocks. |
-| Serve | `serve_state_list`, `serve_subscription_list/get`, `serve_settings_read`, enabled-only `serve_harness_releases` | `serve_subscription_remove` uses exact ID/revision. Pending reads are aborted; already admitted native input cannot be recalled. `serve_settings_update` uses the observed revision and applies developer mode immediately; disabling aborts/fences release checks while retaining observations. |
+| Serve | `serve_state_list`, `serve_subscription_list/get`, `serve_occurrence_list/get`, `serve_completion_list/get`, `serve_settings_read`, enabled-only `serve_harness_releases` | `serve_subscription_remove` uses exact ID/revision. Pending reads are aborted; already admitted native input cannot be recalled. `serve_settings_update` uses the observed revision and applies developer mode immediately; disabling aborts/fences release checks while retaining observations. |
 | Installation factory reset (Serve) | `serve_factory_reset_plan({scope:"installation"})`; `serve_factory_reset_receipt_get({requestId})` | `serve_factory_reset_clear` adds literal `confirmation:"factory-reset"` and `externalWritersQuiesced:true` to the shared apply input. Return on admission; parent teardown precedes owner resource cleanup and active-state deletion. New data generation and later Access identity; installation stays stopped/fenced. Exact cold `serve_factory_reset_recover` records dead-writer uncertainty without replay; `serve_factory_reset_fence_release({requestId,expectedGeneration})` permits a later explicit start only after completed reset, absent writer and still-empty root. Private socket only; no MCP/WebSocket/UI control. |
 | Worker | Status/detail/transcript/turn/record/tool/diff; `worker_workspace_list/read`; `worker_state_branches` retains recorded branch metadata after Worker removal | `worker_state_plan({ids,kind:"git_reset"\|"transcript"\|"branch"\|"native_session"\|"catalog",allowUnmerged:[]})` / `worker_state_clear`. Closed-only except catalog; reset preserves old tip at `refs/stack/retained/<worker>`. Transcript redaction keeps turn/replay/outcome/usage/settings/Work authority with `contentClearedAt`. Branch collection requires recorded, unreferenced, unchecked-out scope and merge into recorded base or per-branch override. Native purge requires disabled/drained account, idle sign-in and verified exact scope/version. Account-shared catalog clearing fences discovery. `worker_state_receipt_get` covers every kind; existing close/remove remain separate. |
 | Bot / Worker settings receipts | Existing `bot_settings_read` / `worker_settings_read` | `bot_settings_receipts_plan({targets:[{id?}],retainDays:7})` / `bot_settings_receipts_clear`; `worker_settings_receipts_plan({targets:[{id?\|provider?}],retainDays:7})` / `worker_settings_receipts_clear`. Exact targets, below current revision and at least seven days old; retain unknown-age legacy rows and permanent minimal intent-digest/revision tombstones. Saved/loaded/native settings never change. Receipts are read through `bot_state_receipt_get` / `worker_state_receipt_get`. |
@@ -151,6 +151,34 @@ history, not a reconstructible installed-version comparison. No independent glob
 reset or release-cache deletion operation is supplied; explicit installation factory
 reset is a separate destructive lifecycle. See
 [ADR 0138](adr/0138-developer-mode-and-harness-releases.md).
+
+### Operator completion history
+
+Retained completion receipts outlive the watches that created them, so the
+operator can page them independently of any active Bot or subscription.
+`serve_completion_list` orders by stable receipt ID — never delivery time — and
+pages under a revision fence: `offset > 0` requires the `revision` returned at
+offset 0, and any receipt-visible change between pages refuses stale paging with
+"restart paging". Exact filters (`botId`, `threadId`, `package`, `operation`,
+`recordId`, `state`) compose; `serve_completion_get` is one exact receipt by ID
+regardless of filters or watch presence. Receipts are projected
+safely: `lastError` is only ever `diagnostic_withheld` or
+`native_admission_unknown`, and read arguments, error text, prompts and domain
+content are never returned. Cancelling after an unknown admission keeps
+`nativeAdmissionUncertain` and the uncertain code; cancelling a known-failed or
+pending watch clears it.
+
+`serve_completion_get` adds one bounded domain-navigation link resolved at read
+time — never a stored argument and never a replay. Notify and Proc links are
+derived locally from the receipt's `recordId`; Browse, Worker and Brain links are
+resolved through socket-only `*_completion_identity_get` owner reads that return
+identifiers only and must verify exact Bot/thread/request identity, one call at
+most five seconds. A null owner answer is `missing`; any throw, timeout or
+unexpected payload is `unavailable`; unknown package/operation is `unsupported`.
+Neither read reaches MCP, and remote Access sessions see neither the reads nor
+the `serve_subscriptions_changed` payload-free invalidation topic that announces
+receipt and subscription-set transitions. See
+[ADR 0163](adr/0163-operator-completion-history-reads.md).
 
 ### Installation factory-reset lifecycle
 
