@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { serveSocket, serveWebSocket, socketPath } from "@stack/api";
+import { serveSocket, serveWebSocket, socketPath, StateJournal } from "@stack/api";
 import { fixtureWorkspace, anyObject, transport, z, authorizeBrowser } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
@@ -41,11 +41,24 @@ accounts.forEach(newAttempt);
 const botAttempt = { id: id(100), account: null, targetAccount: null, status: "pending", authUrl: authUrls.codex, userCode: "BOT-CODE", error: null };
 const served = new Map();
 const calls = [];
+const cacheJournal = new StateJournal(join(dir, "cache-state.sqlite"), "auth");
+let cacheDraining = true, cacheClears = 0;
 let websocket, next, browser, submitGate, submitEntered;
 let log = "";
 const current = (provider) => [...attempts.values()].findLast((attempt) => attempt.provider === provider);
 const publish = () => served.get("auth").publish("worker_login_changed");
 const handlers = {
+  worker_account_cache_plan: ({ accountId }) => cacheJournal.plan({ subject: { kind: "worker-account", id: accountId }, action: "account_cache_clear", revision: `cache-${cacheClears}`,
+    resources: ["cache/opencode/models.json"], blockedBy: cacheDraining ? ["Catalog teardown is still draining"] : [],
+    retained: ["Credentials, keychains, native sessions and sibling accounts"], regeneration: ["Explicit later model discovery may recreate models.json"] }, { accountId }),
+  worker_account_cache_clear: (input) => {
+    const existing = cacheJournal.existing(input); if (existing) return existing;
+    const { plan } = cacheJournal.getPlan(input.planId);
+    cacheJournal.begin(input, plan); cacheClears++;
+    const receipt = cacheJournal.finish(input.requestId, "completed", [{ resource: "cache/opencode/models.json", outcome: "removed", detail: "Pure model-list cache cleared" }]);
+    served.get("auth").publish("worker_accounts_changed"); return receipt;
+  },
+  auth_state_receipt_get: ({ requestId }) => ({ receipt: cacheJournal.receipt(requestId) }),
   serve_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   account_list: () => ({ accounts: [] }),
   account_login_current: () => ({ login: botAttempt }),
@@ -84,7 +97,7 @@ async function port() {
   return value;
 }
 try {
-  const definitions = { serve: ["serve_status"], auth: Object.keys(handlers).filter((name) => /^(account_|worker_account_)/.test(name)),
+   const definitions = { serve: ["serve_status"], auth: Object.keys(handlers).filter((name) => /^(account_|worker_account_|auth_state_)/.test(name)),
     bots: ["bot_list", "bot_defaults_get", "voice_status"], worker: ["worker_list", "worker_runtime_list"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
   websocket = await serveWebSocket({ env, root: await fixtureWorkspace(dir, Object.keys(definitions)), port: 0 });
   const topics = { auth: Object.fromEntries(["accounts_changed", "worker_accounts_changed", "login_changed", "worker_login_changed"].map((name) => [name, "Fixture"])) };
@@ -308,6 +321,39 @@ try {
   assert.deepEqual(await page.evaluate(() => window.authFixture.opens), [], "no browser opening attempted");
   assert.deepEqual(popups, [], "no popup created");
   assert.deepEqual(navigations, [], "auth actions do not navigate");
+  const codexAccount = accounts.find((account) => account.provider === "codex");
+  const codex = card("codex");
+  await codex.getByRole("button", { name: /^Inspect worker account/ }).evaluate((element) => element.focus({ preventScroll: true }));
+  await page.keyboard.press("Enter");
+  const inspector = page.getByRole("region", { name: "Inspector" });
+  const cache = inspector.locator("details").filter({ hasText: "model cache" });
+  await cache.locator("summary").click();
+  assert.equal(await cache.getByRole("button", { name: "Prepare model cache clearing" }).isDisabled(), true);
+  codexAccount.enabled = false;
+  Object.assign(current("codex"), { status: "complete", needsCode: false }); publish();
+  served.get("auth").publish("worker_accounts_changed");
+  await cache.getByRole("button", { name: "Prepare model cache clearing" }).click();
+  await cache.getByText("Catalog teardown is still draining").waitFor();
+  assert.equal(await cache.getByRole("button", { name: "Clear model cache", exact: true }).isDisabled(), true);
+  cacheDraining = false;
+  await cache.getByRole("button", { name: "Prepare a new plan" }).click();
+  await cache.getByText("Credentials, keychains, native sessions and sibling accounts", { exact: true }).waitFor();
+  await page.emulateMedia({ colorScheme: "light" }); await inspector.screenshot({ path: join(evidence, "cache-plan-light.png") });
+  await page.emulateMedia({ colorScheme: "dark" }); await inspector.screenshot({ path: join(evidence, "cache-plan-dark.png") });
+  await cache.getByRole("button", { name: "Clear model cache", exact: true }).click();
+  await cache.getByText("Completed for the declared scope only.").waitFor();
+  assert.equal(cacheClears, 1);
+  assert.deepEqual(calls.filter((call) => /worker_(?:runtime_stop|close|cancel|start)/.test(call.name)), [], "cache cleanup never drains or launches");
+  const cp = handlers.worker_account_cache_plan({ accountId: codexAccount.id });
+  const input_ = { planId: cp.id, expectedRevision: cp.revision, requestId: crypto.randomUUID() };
+  cacheJournal.begin(input_, cp); cacheJournal.finish(input_.requestId, "unknown", [{ resource: "cache/opencode/models.json", outcome: "unknown", detail: "Interrupted cache clearing" }]);
+  await page.evaluate(({ input, id }) => localStorage.setItem(`stack.state-flow.auth:account_cache:${id}`, JSON.stringify({ input, at: Date.now() })), { input: input_, id: codexAccount.id });
+  await page.reload();
+  await codex.getByRole("button", { name: /^Inspect worker account/ }).evaluate((element) => element.focus({ preventScroll: true })); await page.keyboard.press("Enter");
+  await cache.getByRole("region", { name: "auth receipt unknown" }).waitFor();
+  assert.equal(await cache.getByRole("button", { name: "Send identical request" }).count(), 0);
+  assert.equal(cacheClears, 1);
+  await page.setViewportSize({ width: 390, height: 844 }); await inspector.screenshot({ path: join(evidence, "cache-unknown-narrow.png") });
   assert.deepEqual(externalRequests, [], "no external HTTP or navigation requests");
   assert.deepEqual(errors, [], "no uncaught application errors");
   console.log(JSON.stringify({ ok: true, mode, evidence, assertions: "exact Worker/Bot URL and code copies; no opens/popups/navigation/external requests; empty/busy/error/retry/approval/cancel/restart/complete states; independent Claude create/submit/re-sign-in/disable/enable/remove; attempt draft reset; timer and focus; light/dark/narrow" }, null, 2));
@@ -322,5 +368,6 @@ try {
   if (next && next.exitCode === null) { next.kill("SIGTERM"); await new Promise((resolve) => next.once("exit", resolve)); }
   await websocket?.close();
   await Promise.all([...served.values()].map((socket) => socket.close()));
+  cacheJournal.close();
   if (process.env.AUTH_EVIDENCE_DIR) await rm(dir, { recursive: true, force: true });
 }

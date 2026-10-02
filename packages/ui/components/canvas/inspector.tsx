@@ -16,6 +16,7 @@ import type { StackState } from "@/lib/stack/store";
 import { nodeKey, type Account, type Bot, type Login, type NodeRef, type OperationDoc, type PackageDoc, type StackEvent, type WorkerAccount } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { useAuthActions } from "./auth-actions";
+import { WorkerAccountCache } from "./account-cache-maintenance";
 import { CopyButton, Orb } from "./primitives";
 import { BotLifecycleControls } from "./bot-actions";
 import { CatalogRefresh, CatalogStatus } from "./catalog-window";
@@ -752,6 +753,7 @@ function ContentRecordControls({ target }: { target: { kind: "document"; slug: s
 const accountControls = new Set(["account_set_enabled", "account_remove", "account_login_replace"]);
 const loginControls = new Set(["account_login_cancel", "account_login_status"]);
 const workerControls = new Set(["worker_account_set_enabled", "worker_account_remove",
+  "worker_account_cache_plan", "worker_account_cache_clear", "auth_state_receipt_get",
   "worker_account_login_start", "worker_account_login_status", "worker_account_login_current", "worker_account_login_submit", "worker_account_login_cancel"]);
 
 /** Field notes for Role records, which nest inside role_snapshot's categories. */
@@ -917,6 +919,7 @@ function WorkerAccountControls({ account }: { account: WorkerAccount }) {
       {account.removing ? (
         <p className="text-[0.72rem] text-muted-foreground">Removal started. {worker.removing === account.id ? "Removing…" : "Remove again to finish it."}</p>
       ) : null}
+      <WorkerAccountCache account={account} />
     </div>
   );
 }

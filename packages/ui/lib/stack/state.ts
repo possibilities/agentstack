@@ -136,7 +136,7 @@ export const ownerGaps: Record<string, string> = {
   brain: "Terminal jobs without documents, source removal or checkpoint reset and stranded-Artifact collection are not supported.",
   scrape: "Queue cancel/retry/discard and corpus or session-state maintenance are not supported.",
   roles: "Live launches, missing/legacy locks and interrupted native teardown block launch-directory clearing. External native histories and credentials and Bot/Worker materializations remain separate.",
-  auth: "Cache-only clearing is not supported; account removal is the control.",
+  auth: "Only Codex OpenCode cache/opencode/models.json is supported after disabled account, idle sign-in and verified drained runtime/catalog/teardown. Devin/Claude and other profile files are unsupported; credentials and native sessions remain.",
   access: "History and session-specific retirement are not supported; revocation is the control.",
   hud: "Physical media and backup erasure, and other owners' copies such as Worker-captured Work context, are out of scope.",
   bots: "Native Codex queue and history copies and backups are out of scope. Queue entries without a recorded generation can be cleared by exact ID only.",
