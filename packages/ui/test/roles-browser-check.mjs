@@ -646,6 +646,23 @@ try {
   await until(() => codexForm.getByLabel("Allow codex").isChecked(), (on) => on === true, "the restored filter to show");
   assert.equal(await codexForm.getByLabel("Allow claude").isChecked(), false);
 
+  // Duplicating with an unsaved "Any harness" draft makes an unrestricted copy; the original keeps its filter.
+  await filterGroup(codexForm).getByRole("radio", { name: "Any harness" }).click();
+  await editor.getByText("Unsaved changes · ⌘S to save", { exact: true }).waitFor();
+  await editor.getByRole("button", { name: "codex-skill actions" }).click();
+  await page.getByRole("menuitem", { name: "Duplicate" }).click();
+  await editor.getByRole("form", { name: "Edit skill codex-skill-copy" }).waitFor();
+  assert.equal(await harnessesOf("skill", "codex-skill-copy"), null, "an unsaved Any draft is a null filter, not the saved one");
+  assert.deepEqual(await harnessesOf("skill", "codex-skill"), ["codex"], "the original keeps its restriction");
+  await editor.getByRole("button", { name: "codex-skill-copy actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  await tap(skillRow("codex-skill").getByRole("button", { name: /^codex-skill(?!-| actions)/ }));
+  await codexForm.waitFor();
+  await editor.getByRole("button", { name: "Revert", exact: true }).click();
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+
   // The same control edits an additional MCP connection; create takes the chosen list.
   await servers.getByRole("button", { name: "New MCP server", exact: true }).click();
   const newHarnessServer = editor.getByRole("form", { name: "New MCP server" });

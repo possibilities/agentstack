@@ -193,8 +193,10 @@ function useDuplicate<T extends { id: string; enabled: boolean; name: string; ha
     const current = findResource(items, id)?.item;
     if (!current) return `This ${spec.noun} was deleted elsewhere.`;
     const fields = { ...spec.text(current), ...edits };
+    // An unsaved filter edit wins, including "Any harness" (null); only a pending/unreadable draft falls back.
+    const harnesses = readHarnessDraft(fields.harnesses).value;
     return { ...spec.args(fields), name: uniqueName(fields.name || current.name, items.map((item) => item.name)), enabled: current.enabled,
-      harnesses: readHarnessDraft(fields.harnesses).value ?? current.harnesses ?? null };
+      harnesses: harnesses !== undefined ? harnesses : (current.harnesses ?? null) };
   }, `duplicate:${id}`).then((snapshot) => {
     const created = addedIds(spec.list(role.data) ?? [], spec.list(snapshot) ?? [])[0];
     if (created) actions.open({ kind: spec.kind, id: created });
