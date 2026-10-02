@@ -652,7 +652,7 @@ function TurnObservation({ receipts, signature }: { receipts: ServeCompletionRec
       <div className="flex flex-col gap-1 rounded-lg bg-muted/40 px-2 py-1.5">
         <span className="text-[0.66rem] font-medium tracking-[0.06em] text-muted-foreground uppercase">Completion</span>
         <dl className="flex flex-col">
-          <Row label="Outcome">{workerObservationPhaseLabels[result.phase] ?? result.phase}{result.stopReason ? ` · ${result.stopReason}` : ""}</Row>
+          <Row label="Outcome">{workerObservationPhaseLabels[result.phase].label}{result.stopReason ? ` · ${result.stopReason}` : ""}</Row>
           {result.issue ? <Row label="Issue" className="text-warning"><span className="whitespace-normal break-words">{result.issue}</span></Row> : null}
           {result.workContext ? <Row label="Work"><WorkContextLink context={result.workContext} className="max-w-full justify-end" /></Row> : null}
         </dl>
@@ -668,7 +668,7 @@ function TurnObservation({ receipts, signature }: { receipts: ServeCompletionRec
       <div className="flex flex-col gap-1 rounded-lg bg-muted/40 px-2 py-1.5">
         <span className="text-[0.66rem] font-medium tracking-[0.06em] text-muted-foreground uppercase">Attention</span>
         <dl className="flex flex-col">
-          <Row label="Phase">{workerObservationPhaseLabels[update.phase] ?? update.phase}</Row>
+          <Row label="Phase">{workerObservationPhaseLabels[update.phase].label}</Row>
           <Row label="Pending permissions">{update.pendingCount ? `${update.pendingCount} pending permission${update.pendingCount === 1 ? "" : "s"}` : "none"}</Row>
         </dl>
         {shown.length ? (

@@ -10,12 +10,15 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { shortId } from "@/lib/stack/derive";
-import { errorCopy, formatLimitBytes, isActiveRun, joinPartials, lineGaps, ownerLabel, ownerOf, runTitle, runView, scheduleTitle, stripAnsi, type OutputGap, type ProcDisplayLine } from "@/lib/stack/proc";
-import type { ProcOutputLine, ProcOutputPage, ProcRun, ProcRunDetail } from "@/lib/stack/types";
+import { procExitLabels, procExitParts } from "@/lib/stack/completion";
+import { errorCopy, formatLimitBytes, isActiveRun, joinPartials, lineGaps, ownerLabel, ownerOf, runTitle, runView, scheduleTitle, stripAnsi, type OutputGap, type ProcDisplayLine, type ProcOwner } from "@/lib/stack/proc";
+import { localOperation } from "@/lib/stack/state";
+import type { ProcOutputLine, ProcOutputPage, ProcRun, ProcRunDetail, ProcRunObservation } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { CopyButton, NodeLink, Row, StatusDot } from "./primitives";
 import { OwnerChip, ProcPlaceholder, procUnavailable, useProcSnapshot } from "./proc-shared";
 import { useNow, useProcWindows, useStack, useStore, useWorkbench } from "./provider";
+import { BotWatch, useObservedRead } from "./watch-receipts";
 import { Window } from "./window";
 
 const pageSize = 100;
@@ -71,7 +74,7 @@ export function ProcRunWindow({ id }: { id: string }) {
         : !run ? <ProcPlaceholder title="Reading run…" />
         : (
           <>
-            <RunHeader run={run} processes={resources.data?.processes ?? []} />
+            <RunHeader run={run} processes={resources.data?.processes ?? []} generation={generation} />
             {isActiveRun(run) ? null : <div className="flex flex-col px-3 pb-1"><ProcClear key={run.id} kind="run_output" id={run.id} onReceipt={() => setOutputEpoch((value) => value + 1)} /></div>}
             <OutputLog key={`${run.id}:${run.retainOutput}:${outputEpoch}`} run={run} generation={generation} />
           </>
@@ -80,7 +83,7 @@ export function ProcRunWindow({ id }: { id: string }) {
   );
 }
 
-function RunHeader({ run, processes }: { run: ProcRunDetail; processes: Array<{ id: string; pid: number }> }) {
+function RunHeader({ run, processes, generation }: { run: ProcRunDetail; processes: Array<{ id: string; pid: number }>; generation: number }) {
   const { procSchedules } = useStack();
   const { procWindows } = useProcWindows();
   const { goTo } = useWorkbench();
@@ -119,8 +122,9 @@ function RunHeader({ run, processes }: { run: ProcRunDetail; processes: Array<{ 
             ? observed ? <NodeLink node={{ kind: "process", id: observed.id }} label={`pid ${run.pid}`}>pid {run.pid}</NodeLink> : `pid ${run.pid}`
             : "—"}
         </Row>
-        {run.exitCode !== null || run.signal ? (
-          <Row label="Exit">{[run.exitCode !== null ? `code ${run.exitCode}` : null, run.signal ? `signal ${run.signal}` : null].filter(Boolean).join(" · ")}</Row>
+        {run.exitCode !== null || run.signal || run.state === "unknown" ? (
+          <Row label="Exit">{[run.exitCode !== null ? `code ${run.exitCode}` : null, run.signal ? `signal ${run.signal}` : null,
+            run.state === "unknown" ? "Unknown (not a proven failure)" : null].filter(Boolean).join(" · ")}</Row>
         ) : null}
         <Row label="Started">{new Date(Date.parse(run.startedAt)).toLocaleString()}</Row>
         {run.finishedAt ? <Row label="Finished">{new Date(Date.parse(run.finishedAt)).toLocaleString()}</Row> : null}
@@ -136,7 +140,57 @@ function RunHeader({ run, processes }: { run: ProcRunDetail; processes: Array<{ 
           ) : "direct"}
         </Row>
       </dl>
+      {isActiveRun(run) ? null : <p className="text-[0.68rem] text-pretty text-muted-foreground">Process exit isn't Work completion.</p>}
       {run.error ? <p className="text-[0.72rem] text-pretty text-warning">{errorCopy(run.error)}</p> : null}
+      <ExitWatch run={run} owner={owner} generation={generation} />
+    </div>
+  );
+}
+
+/**
+ * A Bot-started run's exit watch: the retained receipt for this exact run, then its
+ * `proc_run_completion` exit observation. Collapsed until asked for; absent for
+ * operator-started runs, which never request a watch.
+ */
+function ExitWatch({ run, owner, generation }: { run: ProcRunDetail; owner: ProcOwner; generation: number }) {
+  const { remote } = useStack();
+  const [open, setOpen] = useState(false);
+  if (owner.kind !== "bot" || remote) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Button type="button" variant="ghost" size="xs" className="self-start" aria-expanded={open} onClick={() => setOpen(!open)}>
+        Bot watch
+      </Button>
+      {open ? (
+        <BotWatch pkg="proc" recordId={run.id} origin={{ botId: owner.botId, threadId: owner.threadId ?? undefined }} observe={`${generation}:${run.state}`}>
+          {() => <ExitObservation run={run} owner={owner} generation={generation} />}
+        </BotWatch>
+      ) : null}
+    </div>
+  );
+}
+
+/** The exact run's compact exit observation — exit facts only, never output or Work claims. */
+function ExitObservation({ run, owner, generation }: { run: ProcRunDetail; owner: ProcOwner & { kind: "bot" }; generation: number }) {
+  const state = useStack();
+  const store = useStore();
+  const access = localOperation(state, "proc", "proc_run_completion");
+  const usable = access.available && Boolean(owner.threadId);
+  const read = useObservedRead<ProcRunObservation>(usable ? `run-completion:${run.id}` : null, `${generation}:${run.state}:${run.finishedAt ?? "running"}`,
+    () => store.call<ProcRunObservation>("proc", "proc_run_completion", { botId: owner.botId, threadId: owner.threadId, requestId: run.id }));
+  const result = read.data?.result ?? null;
+  if (!access.available) return <p className="text-[0.72rem] text-pretty text-muted-foreground">{access.reason}</p>;
+  if (read.error) return <p className="text-[0.72rem] text-pretty text-destructive">Observation unavailable: {read.error}</p>;
+  if (read.loading || !read.data) return <p className="text-[0.72rem] text-muted-foreground">Reading observation…</p>;
+  if (!result) return <p className="text-[0.72rem] text-pretty text-muted-foreground">Process still running — outcome not reported.</p>;
+  const view = procExitLabels[result.state as keyof typeof procExitLabels] ?? { label: result.state, description: "" };
+  return (
+    <div className="flex flex-col gap-1 rounded-lg bg-muted/40 px-2 py-1.5">
+      <dl className="flex flex-col">
+        <Row label="Observed exit" hint={view.description}>{view.label}</Row>
+        <Row label="Facts" mono>{procExitParts(result).join(" · ") || "—"}</Row>
+      </dl>
+      <p className="text-[0.68rem] text-pretty text-muted-foreground">Exit facts only — a terminal exit isn't Work completion.</p>
     </div>
   );
 }
