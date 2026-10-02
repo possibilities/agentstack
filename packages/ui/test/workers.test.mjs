@@ -153,3 +153,31 @@ test("WorkerWindowStore follows Workers like chat windows and restores a valid a
   restored.attach(storage);
   assert.deepEqual(restored.getWindows(), [{ id: "worker", workerId: null }, { id: "worker-3", workerId: "x" }]);
 });
+
+test("showTurn returns the revealed window, names the exact turn and never persists the focus", () => {
+  const saved = new Map();
+  const storage = { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const windows = new WorkerWindowStore();
+  windows.attach(storage);
+  assert.equal(windows.getTurnFocus(), null);
+
+  // An unseen Worker takes the primary window; an already-shown one keeps its own.
+  assert.equal(windows.showTurn("a", "turn-1"), primaryWorker);
+  assert.deepEqual(windows.getTurnFocus(), { windowId: primaryWorker, workerId: "a", turnId: "turn-1", seq: 1 });
+  windows.open("b");
+  assert.equal(windows.showTurn("b", "turn-2"), "worker-2");
+  assert.deepEqual(windows.getTurnFocus(), { windowId: "worker-2", workerId: "b", turnId: "turn-2", seq: 2 });
+
+  // A repeat focus is distinguishable by seq even when nothing else changes.
+  windows.showTurn("b", "turn-2");
+  assert.deepEqual(windows.getTurnFocus(), { windowId: "worker-2", workerId: "b", turnId: "turn-2", seq: 3 });
+
+  // A plain show() leaves the focus where it was; the window scopes it to its own Worker.
+  windows.show("a");
+  assert.equal(windows.getTurnFocus().workerId, "b");
+
+  // Transient: persistence holds only the window arrangement.
+  for (const value of saved.values()) {
+    for (const entry of JSON.parse(value)) assert.deepEqual(Object.keys(entry).sort(), ["id", "workerId"], `persisted entry ${JSON.stringify(entry)}`);
+  }
+});

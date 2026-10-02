@@ -162,11 +162,12 @@ export function WorkerWindow({ id }: { id: string }) {
   const worker = status?.worker.id === workerId ? status.worker : listed;
   const labels = workerAccountLabels(workerAccounts.data);
   const [tab, setTab] = useState<Tab>("conversation");
-  const [focusTurnId, setFocusTurnId] = useState<string | null>(null);
+  // The focus remembers which Worker it named, so a window that switched Workers drops it instead of warning.
+  const [focus, setFocus] = useState<{ workerId: string; turnId: string } | null>(null);
   const focusSeq = turnFocus?.seq ?? 0;
   useEffect(() => {
-    const match = turnFocus && turnFocus.windowId === id && turnFocus.workerId === workerId ? turnFocus.turnId : null;
-    setFocusTurnId(match);
+    const match = turnFocus && turnFocus.windowId === id && turnFocus.workerId === workerId ? { workerId: turnFocus.workerId, turnId: turnFocus.turnId } : null;
+    setFocus(match);
     if (match) setTab("turns");
   }, [focusSeq]);
   const primary = id === primaryWorker;
@@ -211,7 +212,7 @@ export function WorkerWindow({ id }: { id: string }) {
             {tab === "conversation" ? <ConversationTab key={`${worker.id}:${worker.contentClearedAt ?? "original"}`} worker={worker} generation={generation} />
               : tab === "changes" ? <ChangesTab key={worker.id} worker={worker} generation={generation} />
               : tab === "files" ? <WorkerFilesTab key={worker.id} worker={worker} generation={generation} />
-              : tab === "turns" ? <TurnsTab key={worker.id} worker={worker} generation={generation} focusTurnId={focusTurnId} />
+              : tab === "turns" ? <TurnsTab key={worker.id} worker={worker} generation={generation} focusTurnId={focus && focus.workerId === workerId ? focus.turnId : null} />
               : tab === "tools" ? <ToolsTab key={worker.id} worker={worker} generation={generation} />
               : tab === "records" ? <RecordsTab key={`${worker.id}:${worker.contentClearedAt ?? "original"}`} worker={worker} generation={generation} />
               : tab === "settings" ? <WorkerSettingsTab key={worker.id} worker={worker} status={status} />
