@@ -98,23 +98,35 @@ The future local action must show its exact origin and maintained allow-list.
 Clear only existing keys selected by scope, across other tabs under a shared
 generation fence so stale tabs cannot immediately rewrite them.
 
-- Layout/preferences: `stack.uix.bench.v1`; `stack.uix.bench.v2.<space>` for
+Every key below lives in one destination's namespace,
+`stack.destination.<serverId>.<authority>.<origin>.<name>` ([ADR 0167](adr/0167-canvas-destination-isolation.md)):
+the server's installation identity, `local` or `remote`, and the percent-encoded origin. A clear is
+scoped to one destination's prefix; it must never sweep `stack.destination.*` as a whole, and an unqualified
+`stack.*` key is not part of any destination (see the legacy note below).
+
+- Layout/preferences: `uix.bench.v2.<space>` for
   `hud`, `fleet`, `accounts`, `lab`, `system`, `roles`, `inbox`, `signal`, `content`,
-  `workers`, `scrape`, `browse`, `brain`, `proc`; `stack.uix.docks.v1`,
-  `stack.uix.inspector.v1`, `stack.uix.chats.v1`, `stack.uix.workers.v1`,
-  `stack.uix.proc.v1`, `stack.uix.browse-viewers.v1`, `stack.uix.roles.v1`,
-  `stack.ui.hud.v1`, `stack.uix.signal.author.v1`.
-- Recovery: `stack.state-flow.<key>` in localStorage and
-  `stack.uix.browse.intent.<handoffId>` in sessionStorage. **Refuse clearing while
+  `workers`, `scrape`, `browse`, `brain`, `proc`, `source`; `uix.docks.v1`,
+  `uix.inspector.v1`, `uix.chats.v1`, `uix.workers.v1`,
+  `uix.proc.v1`, `uix.browse-viewers.v1`, `uix.roles.v1`,
+  `ui.hud.v1`, `uix.signal.author.v1`.
+- Recovery: `state-flow.<key>`, `worker-catalog-held.v1`, `source-setup.create` and
+  `source-setup.requests.<receiver>` in localStorage, `uix.notify-compose.v1.<endpoint>` (a Compose draft and its
+  exact uncertain send) in localStorage and
+  `uix.browse.intent.<handoffId>` in sessionStorage. **Refuse clearing while
   any selected recovery record is pending, unknown, malformed or under human
   control.** Only an exact reconciled terminal receipt allows retiring that
   record. Preserve it if the owner is offline/unavailable. These are not ordinary
   drafts, and a prefix is not authorization for a storage-wide sweep.
+- Legacy: unqualified `stack.uix.*`, `stack.ui.*`, `stack.state-flow.*`, `stack.source-setup.*` and
+  `stack.worker-catalog-held.*` keys were written before isolation. They name no destination, so the Canvas
+  never reads, migrates, shows or clears them; only a deliberate device clear may retire them, and
+  the same refusal applies to any recovery record among them.
 - No durable generic editor-draft key is currently verified; enumerate new stores
   when implemented. Do not promise to clear a hypothetical persisted draft.
 
-Evidence: `packages/ui/components/canvas/bench.tsx`, `dock.tsx`, `role-actions.tsx`,
-`signal-windows.tsx`, `lib/stack/{chat-windows,worker-windows,proc-windows,browse-viewers,hud-view,browse,state}.ts`.
+Evidence: `packages/ui/lib/stack/destination.ts`, `packages/ui/components/canvas/bench.tsx`, `dock.tsx`, `role-actions.tsx`,
+`signal-windows.tsx`, `notify-compose.tsx`, `lib/stack/{chat-windows,worker-windows,proc-windows,browse-viewers,hud-view,browse,state,source-setup,store}.ts`.
 No UI action was added by this backend change.
 
 ## Current device stores (not new deletion capabilities)
