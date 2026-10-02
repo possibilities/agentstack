@@ -368,7 +368,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       return {
         eyebrow: `Bot event subscription · ${subscription.state}`, accent: "server", title: `${subscription.pkg}.${subscription.topic}`, record: { ...subscription },
         fields: new Map(fields?.children.map((field) => [field.name, field])), related,
-        events: state.events.filter((event) => event.pkg === "serve" && event.topic === "serve_state_changed"),
+        events: state.events.filter((event) => event.pkg === "serve" && (event.topic === "serve_state_changed" || event.topic === "serve_subscriptions_changed")),
       };
     }
     case "role-shim": {

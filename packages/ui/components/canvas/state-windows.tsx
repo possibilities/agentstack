@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { relativeTime } from "@/lib/stack/derive";
 import { formatBytes } from "@/lib/stack/resources";
 import { groupByOwner, linkNeedsSelection, localOperation, measured, operationNode, ownerGaps, ownerHomes, ownerStateRead, relationshipNode } from "@/lib/stack/state";
@@ -18,6 +19,7 @@ import { errorMessage } from "./auth-actions";
 import { CopyButton, Empty, NodeCard, NodeLink, NodeTitle, StatusDot, type Tone } from "./primitives";
 import { useNow, useStack, useStore, useWorkbench } from "./provider";
 import { MaintenanceDisclosure } from "./state-flow";
+import { BotSubscriptionFilter, HistoryView, OccurrencesView, PackageSubscriptionFilter } from "./subscription-views";
 import { Window } from "./window";
 
 const hintClass = "text-[0.72rem] text-pretty text-muted-foreground";
@@ -372,25 +374,19 @@ function SubscriptionRow({ subscription, onRemove, available }: { subscription: 
   );
 }
 
-/**
- * Durable Bot event subscriptions across originating threads (`serve_subscription_list`). Removal is exact:
- * one ID at the revision shown. Input already admitted to Codex cannot be recalled.
- */
-export function SubscriptionsWindow() {
+/** Durable Bot event subscriptions across originating threads (`serve_subscription_list`). Removal is exact: one ID at the revision shown. */
+function WatchesView({ run }: { run(work: Promise<void>): void }) {
   const state = useStack();
   const store = useStore();
-  const { subscriptions, subscriptionFilter, status, endpoints, catalog, bots, remote } = state;
+  const { subscriptions, subscriptionFilter, status } = state;
   const [thread, setThread] = useState(subscriptionFilter.threadId ?? "");
   const [removing, setRemoving] = useState<ServeSubscription | null>(null);
   const [pending, setPending] = useState(false);
   const [removeError, setRemoveError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   useEffect(() => setThread(subscriptionFilter.threadId ?? ""), [subscriptionFilter.threadId]);
-  if (remote) return <LocalOnly id="subscriptions" title="Subscriptions" icon={CableIcon} what="Bot event subscriptions are local operator state. Remote sessions cannot list or remove them." />;
   const listAccess = localOperation(state, "serve", "serve_subscription_list");
   const removeAccess = localOperation(state, "serve", "serve_subscription_remove");
   const data = subscriptions.data;
-  const run = (work: Promise<void>) => { setLoading(true); void work.finally(() => setLoading(false)); };
   const filter = (next: typeof subscriptionFilter) => run(store.filterSubscriptions(next));
   const listed = removing ? data?.subscriptions.find((row) => row.id === removing.id) ?? null : null;
   const changed = removing !== null && listed !== null && listed.revision !== removing.revision;
@@ -404,44 +400,25 @@ export function SubscriptionsWindow() {
     }, (error) => setRemoveError(errorMessage(error))).finally(() => setPending(false));
   };
   return (
-    <Window id="subscriptions" title="Subscriptions" subtitle="Bot event inputs" icon={CableIcon} accent="server" count={data?.subscriptions.length ?? null}
-      status={status.serve} endpoint={endpoints.serve} updatedAt={subscriptions.at} error={subscriptions.error} empty={!data}
-      actions={<Button variant="ghost" size="xs" disabled={!listAccess.available || loading} onClick={() => run(store.refreshSubscriptions())} aria-label="Refresh subscriptions">
-        {loading ? <Spinner /> : <RefreshCwIcon />}
-      </Button>}
-      footer={data?.nextOffset != null ? (
-        <Button size="sm" variant="ghost" className="w-full justify-center text-muted-foreground hover:text-foreground" disabled={loading} onClick={() => run(store.moreSubscriptions())}>
-          Load more (from {data.nextOffset})
-        </Button>
-      ) : undefined}>
-      <div className="flex flex-col gap-2">
-        <p className={hintClass}>Each subscription turns a package event into automatic input for the Bot thread that created it. Removing one aborts pending reads and fences input not yet admitted; input Codex already admitted cannot be recalled.</p>
-        <p className={hintClass}>Bot event subscriptions are server-owned and durable, limited to sanctioned Stack-managed Bot threads. Closing a stdio pipe does not remove a watch. Operators and Workers cannot subscribe Bot threads.</p>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <NativeSelect size="sm" aria-label="Bot" className="min-w-0 flex-1" value={subscriptionFilter.botId ?? ""} disabled={!listAccess.available}
-            onChange={(event) => filter({ ...subscriptionFilter, botId: event.target.value || undefined })}>
-            <NativeSelectOption value="">All Bots</NativeSelectOption>
-            {(bots.data ?? []).map((bot) => <NativeSelectOption key={bot.id} value={bot.id}>{bot.id}</NativeSelectOption>)}
-          </NativeSelect>
-          <NativeSelect size="sm" aria-label="Package" className="min-w-0 flex-1" value={subscriptionFilter.package ?? ""} disabled={!listAccess.available}
-            onChange={(event) => filter({ ...subscriptionFilter, package: event.target.value || undefined })}>
-            <NativeSelectOption value="">All packages</NativeSelectOption>
-            {(catalog.data ?? []).map((doc) => doc.name).sort().map((name) => <NativeSelectOption key={name} value={name}>{name}</NativeSelectOption>)}
-          </NativeSelect>
-          <form className="min-w-0 flex-1" onSubmit={(event) => { event.preventDefault(); filter({ ...subscriptionFilter, threadId: thread.trim() || undefined }); }}>
-            <Input aria-label="Thread ID" placeholder="Exact thread ID" className="h-7 text-xs" value={thread} disabled={!listAccess.available}
-              onChange={(event) => setThread(event.target.value)} onBlur={() => { if ((thread.trim() || undefined) !== subscriptionFilter.threadId) filter({ ...subscriptionFilter, threadId: thread.trim() || undefined }); }} />
-          </form>
-        </div>
-        {!listAccess.available ? <p className={hintClass}>{listAccess.reason}</p> : null}
-        {data?.restarted ? <p role="status" className="text-xs text-warning">Subscriptions changed while paging, so paging started again from the first page.</p> : null}
-        {data ? data.subscriptions.length ? (
-          <div className="-mx-1 flex flex-col">
-            {data.subscriptions.map((row) => <SubscriptionRow key={row.id} subscription={row} available={removeAccess.available} onRemove={(target) => { setRemoveError(null); setRemoving(target); }} />)}
-          </div>
-        ) : <Empty icon={CableIcon} title={Object.values(subscriptionFilter).some(Boolean) ? "No subscriptions match" : "No Bot event subscriptions"} />
-          : <Empty icon={CableIcon} title={subscriptions.error ? "Subscriptions unavailable" : status.serve === "closed" ? "Server reconnecting" : "Reading subscriptions…"} />}
+    <>
+      <p className={hintClass}>Each subscription turns a package event into automatic input for the Bot thread that created it. Removing one aborts pending reads and fences input not yet admitted; input Codex already admitted cannot be recalled.</p>
+      <p className={hintClass}>Bot event subscriptions are server-owned and durable, limited to sanctioned Stack-managed Bot threads. Closing a stdio pipe does not remove a watch. Operators and Workers cannot subscribe Bot threads.</p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <BotSubscriptionFilter botId={subscriptionFilter.botId} disabled={!listAccess.available} />
+        <PackageSubscriptionFilter package={subscriptionFilter.package} disabled={!listAccess.available} onChange={(next) => filter({ ...subscriptionFilter, package: next })} />
+        <form className="min-w-0 flex-1" onSubmit={(event) => { event.preventDefault(); filter({ ...subscriptionFilter, threadId: thread.trim() || undefined }); }}>
+          <Input aria-label="Thread ID" placeholder="Exact thread ID" className="h-7 text-xs" value={thread} disabled={!listAccess.available}
+            onChange={(event) => setThread(event.target.value)} onBlur={() => { if ((thread.trim() || undefined) !== subscriptionFilter.threadId) filter({ ...subscriptionFilter, threadId: thread.trim() || undefined }); }} />
+        </form>
       </div>
+      {!listAccess.available ? <p className={hintClass}>{listAccess.reason}</p> : null}
+      {data?.restarted ? <p role="status" className="text-xs text-warning">Subscriptions changed while paging, so paging started again from the first page.</p> : null}
+      {data ? data.subscriptions.length ? (
+        <div className="-mx-1 flex flex-col">
+          {data.subscriptions.map((row) => <SubscriptionRow key={row.id} subscription={row} available={removeAccess.available} onRemove={(target) => { setRemoveError(null); setRemoving(target); }} />)}
+        </div>
+      ) : <Empty icon={CableIcon} title={Object.values(subscriptionFilter).some(Boolean) ? "No subscriptions match" : "No Bot event subscriptions"} />
+        : <Empty icon={CableIcon} title={subscriptions.error ? "Subscriptions unavailable" : status.serve === "closed" ? "Server reconnecting" : "Reading subscriptions…"} />}
       <AlertDialog open={removing !== null} onOpenChange={(open) => { if (!open && !pending) setRemoving(null); }}>
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
@@ -464,6 +441,55 @@ export function SubscriptionsWindow() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </>
+  );
+}
+
+type SubscriptionView = "watches" | "occurrences" | "history";
+
+const subscriptionViews: Array<{ id: SubscriptionView; title: string }> = [
+  { id: "watches", title: "Watches" }, { id: "occurrences", title: "Occurrences" }, { id: "history", title: "History" },
+];
+
+/**
+ * Durable Bot event subscriptions, typed occurrence subscriptions and retained completion history, each
+ * paged with its own filters. Removal is exact: one ID at the revision shown. Input already admitted to
+ * Codex cannot be recalled; acknowledged admission is never consumption.
+ */
+export function SubscriptionsWindow() {
+  const state = useStack();
+  const store = useStore();
+  const { subscriptions, occurrences, completions, status, endpoints, remote } = state;
+  const [view, setView] = useState<SubscriptionView>("watches");
+  const [loading, setLoading] = useState(false);
+  const run = (work: Promise<void>) => { setLoading(true); void work.finally(() => setLoading(false)); };
+  if (remote) return <LocalOnly id="subscriptions" title="Subscriptions" icon={CableIcon}
+    what="Bot event subscriptions, occurrence subscriptions and completion history are local operator state. Remote sessions cannot list, inspect or remove them." />;
+  const listOperation = view === "watches" ? "serve_subscription_list" : view === "occurrences" ? "serve_occurrence_list" : "serve_completion_list";
+  const listAccess = localOperation(state, "serve", listOperation);
+  const resource = view === "watches" ? subscriptions : view === "occurrences" ? occurrences : completions;
+  const data = resource.data;
+  const count = view === "history" ? completions.data?.completions.length ?? null
+    : view === "occurrences" ? occurrences.data?.subscriptions.length ?? null : subscriptions.data?.subscriptions.length ?? null;
+  const refresh = () => run(view === "watches" ? store.refreshSubscriptions() : view === "occurrences" ? store.refreshOccurrences() : store.refreshCompletions());
+  const more = () => run(view === "watches" ? store.moreSubscriptions() : view === "occurrences" ? store.moreOccurrences() : store.moreCompletions());
+  return (
+    <Window id="subscriptions" title="Subscriptions" subtitle="Watches, occurrences and history" icon={CableIcon} accent="server" count={count}
+      status={status.serve} endpoint={endpoints.serve} updatedAt={resource.at} error={resource.error} empty={!data}
+      actions={<Button variant="ghost" size="xs" disabled={!listAccess.available || loading} onClick={refresh} aria-label="Refresh subscriptions">
+        {loading ? <Spinner /> : <RefreshCwIcon />}
+      </Button>}
+      footer={data?.nextOffset != null ? (
+        <Button size="sm" variant="ghost" className="w-full justify-center text-muted-foreground hover:text-foreground" disabled={loading} onClick={more}>
+          Load more (from {data.nextOffset})
+        </Button>
+      ) : undefined}>
+      <div className="flex flex-col gap-2">
+        <ToggleGroup value={[view]} onValueChange={(next: string[]) => { if (next.length) setView(next[0] as SubscriptionView); }} spacing={0} size="sm" variant="outline" aria-label="Subscription view" className="flex-wrap">
+          {subscriptionViews.map((item) => <ToggleGroupItem key={item.id} value={item.id}>{item.title}</ToggleGroupItem>)}
+        </ToggleGroup>
+        {view === "watches" ? <WatchesView run={run} /> : view === "occurrences" ? <OccurrencesView run={run} /> : <HistoryView run={run} />}
+      </div>
     </Window>
   );
 }
