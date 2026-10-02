@@ -76,3 +76,18 @@ identity helpers under `ui:view` and `ui:view+ui:control` alike, and
 subscription-set data. The occurrence inspection reads `serve_occurrence_list`
 and `serve_occurrence_get` — which can disclose source arguments and error text —
 are likewise local-only under any remote grant.
+
+## Operator UI
+
+The System Subscriptions window splits local operator state into Watches,
+Occurrences and History views. Occurrences pages `serve_occurrence_list` and
+keeps arguments, errors, the cursor value and delivery receipts behind an
+explicit per-row `serve_occurrence_get` inspection that an intent-revision
+change drops; removal is the same exact revision-fenced call and fences future
+intake only. History pages `serve_completion_list` with restart-on-revision
+paging, totals and truncation, and each receipt's `serve_completion_get`
+detail resolves a link status plus exact domain links — a Worker target opens
+the exact turn, never the latest. Both views re-read on
+`serve_subscriptions_changed` (Occurrences also on `serve_state_changed`) and
+on reconnect, and an `unknown` receipt is presented as frozen with no retry,
+redelivery or approval control.
