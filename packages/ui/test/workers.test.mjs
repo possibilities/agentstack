@@ -12,7 +12,7 @@ registerHooks({
   },
 });
 
-const { appendBySeq, conversation, filterWorkers, groupWorkers, parsePlan, parseToolLine, settingsMismatch, workerAttention, workerLabel, workerNote, workerOrigin } = await import("../lib/stack/workers.ts");
+const { appendBySeq, conversation, eventReceiptFor, eventTurns, filterWorkers, groupWorkers, parsePlan, parseToolLine, settingsMismatch, workerAttention, workerLabel, workerNote, workerOrigin } = await import("../lib/stack/workers.ts");
 const { WorkerWindowStore, primaryWorker } = await import("../lib/stack/worker-windows.ts");
 const { workerBranchSelection, workerNativeDisclosure, workerNativePreconditions } = await import("../lib/stack/worker-maintenance.ts");
 
@@ -114,6 +114,32 @@ test("conversation joins text chunks and collapses tool and plan updates per tur
   assert.deepEqual(first.items[3].entries, [{ content: "Read", status: "completed", priority: null }, { content: "Edit", status: "pending", priority: "high" }]);
   assert.deepEqual(second.items.map((item) => item.kind), ["user", "notice"]);
   assert.equal(parsePlan('[{"content":"cut'), null);
+});
+
+test("conversation renders an event entry as its own kind and joins its chunks", () => {
+  const turns = conversation([
+    entry(1, "t1", "event", "A subscription delivered "), entry(2, "t1", "event", "this event"),
+    entry(3, "t1", "agent", "On it."), entry(4, "t2", "event", "Next event"),
+  ]);
+  assert.equal(turns.length, 2);
+  assert.deepEqual(turns[0].items.map((item) => item.kind), ["event", "agent"]);
+  assert.equal(turns[0].items[0].text, "A subscription delivered this event");
+  assert.equal(turns[1].items[0].kind, "event");
+});
+
+const receipt = (deliveryId, turnId = null, state = "dispatched") => ({ deliveryId, workerId: "w", sessionId: null, state, turnId, issue: null, createdAt: 1, updatedAt: 1 });
+
+test("eventTurns marks a turn by its receipt turnId or its deliveryId requestId", () => {
+  const receipts = [receipt("d1", "t1"), receipt("d2"), receipt("d3", null, "queued")];
+  const marks = eventTurns(receipts);
+  assert.ok(marks.turnIds.has("t1"));
+  assert.ok(marks.deliveryIds.has("d2"));
+  assert.equal(marks.turnIds.size, 1);
+  // An event turn's requestId is the receipt's deliveryId.
+  assert.equal(eventReceiptFor({ id: "any", requestId: "d2" }, receipts)?.deliveryId, "d2");
+  assert.equal(eventReceiptFor({ id: "t1", requestId: "other" }, receipts)?.deliveryId, "d1");
+  assert.equal(eventReceiptFor({ id: "other", requestId: "none" }, receipts), null);
+  assert.equal(eventReceiptFor({ id: "t1", requestId: "d2" }, []) === null, true);
 });
 
 test("appendBySeq ignores overlap and keeps identity when nothing is new", () => {

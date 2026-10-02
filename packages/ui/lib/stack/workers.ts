@@ -1,5 +1,5 @@
 import { shortId } from "./derive";
-import type { WorkerListItem, WorkerSession, WorkerTool, WorkerTranscriptEntry } from "./types";
+import type { WorkerEventReceipt, WorkerListItem, WorkerSession, WorkerTool, WorkerTranscriptEntry, WorkerTurn } from "./types";
 
 /** worker_list's `botId` for Workers the local operator started rather than a Bot. */
 export const localOperator = "_local_operator";
@@ -69,7 +69,7 @@ export function groupWorkers<T extends WorkerSession>(workers: T[]): Map<WorkerG
 export type PlanEntry = { content: string; status: string | null; priority: string | null };
 
 export type ConversationItem =
-  | { kind: "user" | "agent" | "turn" | "notice" | "other"; key: string; text: string; at: number }
+  | { kind: "user" | "agent" | "event" | "turn" | "notice" | "other"; key: string; text: string; at: number }
   | { kind: "tool"; key: string; title: string; status: string | null; updates: number; at: number }
   | { kind: "plan"; key: string; entries: PlanEntry[] | null; text: string; at: number };
 
@@ -116,7 +116,7 @@ export function conversation(entries: readonly WorkerTranscriptEntry[], tools?: 
     if (!turn || turn.turnId !== entry.turnId) turns.push(turn = { turnId: entry.turnId, items: [] });
     const last = turn.items.at(-1);
     const key = `${entry.seq}`;
-    if (entry.kind === "agent" || entry.kind === "user") {
+    if (entry.kind === "agent" || entry.kind === "user" || entry.kind === "event") {
       if (last?.kind === entry.kind) turn.items[turn.items.length - 1] = { ...last, text: last.text + entry.text, at: entry.at };
       else turn.items.push({ kind: entry.kind, key, text: entry.text, at: entry.at });
     } else if (entry.kind === "tool") {
@@ -146,6 +146,22 @@ export function settingsMismatch(requested: { model: string | null; effort: stri
   if (!observed) return false;
   return Boolean((observed.model && requested.model && observed.model !== requested.model)
     || (observed.effort && requested.effort && observed.effort !== requested.effort));
+}
+
+/**
+ * The identity sets that mark a turn as an event turn: receipt `turnId`s, plus `deliveryId`s —
+ * an event turn's requestId is its receipt's deliveryId.
+ */
+export function eventTurns(receipts: readonly WorkerEventReceipt[]): { turnIds: ReadonlySet<string>; deliveryIds: ReadonlySet<string> } {
+  return {
+    turnIds: new Set(receipts.flatMap((receipt) => receipt.turnId ? [receipt.turnId] : [])),
+    deliveryIds: new Set(receipts.map((receipt) => receipt.deliveryId)),
+  };
+}
+
+/** The delivery receipt that dispatched an event turn, if one is recorded for it. */
+export function eventReceiptFor(turn: Pick<WorkerTurn, "id" | "requestId">, receipts: readonly WorkerEventReceipt[]): WorkerEventReceipt | null {
+  return receipts.find((receipt) => receipt.turnId === turn.id || receipt.deliveryId === turn.requestId) ?? null;
 }
 
 /** Milliseconds as a short span: 45s, 3m 12s, 2h 5m. */

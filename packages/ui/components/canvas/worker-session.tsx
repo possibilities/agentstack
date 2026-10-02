@@ -10,11 +10,12 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
 import { classifyWorkerRole, workerRoleHint, workerRoleLabel, type WorkerRole } from "@/lib/stack/roles";
+import { workerEventFence, workerEventReceiptLabels, workerObservationPhaseLabels } from "@/lib/stack/completion";
 import { primaryWorker } from "@/lib/stack/worker-windows";
 import type { StackStore } from "@/lib/stack/store";
-import { localOperations } from "@/lib/stack/state";
-import type { RoleCatalog, WorkerDiff, WorkerDiffFile, WorkerDetail, WorkerPermission, WorkerRecord, WorkerRecordChunk, WorkerRecordPage, WorkerSession, WorkerStatus, WorkerTool, WorkerToolPage, WorkerTranscriptEntry, WorkerTranscriptPage, WorkerTurn, WorkerTurnPage } from "@/lib/stack/types";
-import { appendBySeq, conversation, localOperator, settingsMismatch, span, workerAttention, workerLabel, workerOrigin, type ConversationItem, type PlanEntry } from "@/lib/stack/workers";
+import { localOperation, localOperations } from "@/lib/stack/state";
+import type { RoleCatalog, ServeCompletionReceipt, WorkerDiff, WorkerDiffFile, WorkerDetail, WorkerEventPage, WorkerEventReceipt, WorkerPermission, WorkerRecord, WorkerRecordChunk, WorkerRecordPage, WorkerSession, WorkerStatus, WorkerTool, WorkerToolPage, WorkerTranscriptEntry, WorkerTranscriptPage, WorkerTurn, WorkerTurnObservation, WorkerTurnPage } from "@/lib/stack/types";
+import { appendBySeq, conversation, eventReceiptFor, eventTurns, localOperator, settingsMismatch, span, workerAttention, workerLabel, workerOrigin, type ConversationItem, type PlanEntry } from "@/lib/stack/workers";
 import { cn } from "@/lib/utils";
 import { Markdown } from "./chat-window";
 import { ContentCleared, CopyButton, NodeLink, Row, StatusDot, Time } from "./primitives";
@@ -25,6 +26,7 @@ import { Window } from "./window";
 import { WorkerSettingsTab } from "./worker-settings";
 import { WorkContextLink } from "./hud-shared";
 import { WorkerMaintenance, WorkerSessionMaintenance, workerStateOperations } from "./worker-maintenance";
+import { BotWatch, useObservedRead } from "./watch-receipts";
 
 type Tab = "conversation" | "changes" | "files" | "turns" | "tools" | "records" | "session" | "settings";
 const tabs: Array<[Tab, string]> = [["conversation", "Conversation"], ["changes", "Changes"], ["files", "Files"], ["turns", "Turns"], ["tools", "Tools"], ["records", "Records"], ["session", "Session"], ["settings", "Settings"]];
@@ -434,6 +436,13 @@ function ConversationRow({ item, streaming }: { item: ConversationItem; streamin
           <p className="break-words whitespace-pre-wrap">{item.text}</p>
         </div>
       );
+    case "event":
+      return (
+        <div className="ml-6 rounded-xl border border-dashed bg-muted/40 px-3 py-2 text-[0.8rem]">
+          <p className="mb-0.5 text-[0.62rem] font-medium tracking-[0.08em] text-muted-foreground uppercase" title="An event a subscription delivered to this Worker — an untrusted observation, not a human task">Event</p>
+          <p className="break-words whitespace-pre-wrap">{item.text}</p>
+        </div>
+      );
     case "agent":
       return <div className="text-[0.8rem]"><Markdown text={item.text} streaming={streaming} /></div>;
     case "tool":
@@ -567,11 +576,131 @@ function Patch({ diff }: { diff: WorkerDiff }) {
   );
 }
 
+/**
+ * Durable event delivery receipts for this Worker (`worker_event_list`, local operator only). Receipts
+ * carry no payload — the delivered input shows in the transcript. A truncated page may hide an older
+ * receipt, so an unlinked turn can still be an event turn; unknown is not a proven failure.
+ */
+function EventReceipts({ page, error, onFocus }: { page: WorkerEventPage | null; error: string | null; onFocus(turnId: string): void }) {
+  const receipts = page?.receipts ?? [];
+  return (
+    <section aria-label="Event receipts" className="flex flex-col gap-1.5">
+      <h3 className="text-[0.68rem] font-medium tracking-[0.08em] text-muted-foreground uppercase">Event receipts</h3>
+      {error ? <p className="text-[0.72rem] text-pretty text-destructive">Event receipts unavailable: {error}</p>
+        : !page ? <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground"><Spinner className="size-3" />Reading event receipts…</p>
+        : !receipts.length ? <p className="text-[0.72rem] text-muted-foreground">No event deliveries recorded.</p>
+        : (
+          <>
+            <p className="text-[0.68rem] text-pretty text-muted-foreground">
+              {page.total} receipt{page.total === 1 ? "" : "s"}. Receipts carry no payload — the delivered input shows in the Conversation and Records tabs.
+              {page.truncated ? ` Only the latest ${page.limit} of ${page.total} are inspectable — an unlinked older turn may still be an event turn.` : ""}
+            </p>
+            <ul className="flex flex-col gap-1.5">
+              {receipts.map((receipt) => {
+                const view = workerEventReceiptLabels[receipt.state];
+                return (
+                  <li key={receipt.deliveryId} data-event-receipt={receipt.deliveryId} className="flex flex-col gap-0.5 rounded-lg border border-dashed px-2 py-1.5">
+                    <div className="flex min-w-0 items-center gap-2 text-xs">
+                      <span className="shrink-0 font-medium" title={view.description}>{view.label}</span>
+                      <span className="group/row inline-flex min-w-0 items-center gap-0.5 font-mono text-[0.68rem] text-muted-foreground" title={`Delivery ${receipt.deliveryId}`}>
+                        {shortId(receipt.deliveryId, 12)}<CopyButton value={receipt.deliveryId} label="delivery ID" className="size-5" />
+                      </span>
+                      <Time at={receipt.updatedAt} className="ml-auto shrink-0 text-[0.64rem] text-muted-foreground" />
+                    </div>
+                    <p className="pl-3.5 text-[0.68rem] text-muted-foreground">{view.description}</p>
+                    <p className="flex items-center gap-2 pl-3.5 text-[0.68rem] text-muted-foreground">
+                      <span className="flex items-center gap-1">created <Time at={receipt.createdAt} /></span>
+                      {receipt.turnId ? (
+                        <button type="button" title="Show this exact turn below" onClick={() => onFocus(receipt.turnId!)}
+                          className="rounded-sm font-mono hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+                          turn {shortId(receipt.turnId)}
+                        </button>
+                      ) : null}
+                    </p>
+                    {receipt.issue ? <p className="pl-3.5 text-[0.68rem] text-pretty text-warning">{receipt.issue}</p> : null}
+                  </li>
+                );
+              })}
+            </ul>
+            {receipts.some((receipt) => receipt.state === "unknown") ? <p role="note" className="text-[0.7rem] text-pretty text-warning">{workerEventFence}</p> : null}
+          </>
+        )}
+    </section>
+  );
+}
+
+/**
+ * The exact-request observation for this turn's first watch receipt, read on the latest signature.
+ * The result is this exact request's outcome — never a latest-turn claim. Active turns show bounded
+ * pending permission metadata only; nothing here answers a permission.
+ */
+function TurnObservation({ receipts, signature }: { receipts: ServeCompletionReceipt[]; signature: string }) {
+  const state = useStack();
+  const store = useStore();
+  const receipt = receipts[0];
+  const access = localOperation(state, "worker", "worker_turn_observation");
+  const usable = access.available && Boolean(receipt?.botId && receipt?.threadId && receipt?.recordId);
+  const read = useObservedRead<WorkerTurnObservation>(usable ? `turn-observation:${receipt!.recordId}` : null, signature,
+    () => store.call<WorkerTurnObservation>("worker", "worker_turn_observation", { botId: receipt!.botId, threadId: receipt!.threadId, requestId: receipt!.recordId }));
+  const observation = read.data;
+  if (!access.available) return <p className="text-[0.72rem] text-pretty text-muted-foreground">{access.reason}</p>;
+  if (read.error) return <p className="text-[0.72rem] text-pretty text-destructive">Observation unavailable: {read.error}</p>;
+  if (read.loading || !observation) return <p className="text-[0.72rem] text-muted-foreground">Reading observation…</p>;
+  if (observation.result) {
+    const result = observation.result;
+    return (
+      <div className="flex flex-col gap-1 rounded-lg bg-muted/40 px-2 py-1.5">
+        <span className="text-[0.66rem] font-medium tracking-[0.06em] text-muted-foreground uppercase">Completion</span>
+        <dl className="flex flex-col">
+          <Row label="Outcome">{workerObservationPhaseLabels[result.phase] ?? result.phase}{result.stopReason ? ` · ${result.stopReason}` : ""}</Row>
+          {result.issue ? <Row label="Issue" className="text-warning"><span className="whitespace-normal break-words">{result.issue}</span></Row> : null}
+          {result.workContext ? <Row label="Work"><WorkContextLink context={result.workContext} className="max-w-full justify-end" /></Row> : null}
+        </dl>
+        {result.contentClearedAt ? <ContentCleared at={result.contentClearedAt} label="Turn content cleared" className="text-[0.68rem]" /> : null}
+        <p className="text-[0.68rem] text-pretty text-muted-foreground">Full evidence for this turn: Conversation and Records tabs. Observation covers the request's outcome only, not broader Work.</p>
+      </div>
+    );
+  }
+  if (observation.update) {
+    const update = observation.update;
+    const shown = update.pending.slice(0, 8);
+    return (
+      <div className="flex flex-col gap-1 rounded-lg bg-muted/40 px-2 py-1.5">
+        <span className="text-[0.66rem] font-medium tracking-[0.06em] text-muted-foreground uppercase">Attention</span>
+        <dl className="flex flex-col">
+          <Row label="Phase">{workerObservationPhaseLabels[update.phase] ?? update.phase}</Row>
+          <Row label="Pending permissions">{update.pendingCount ? `${update.pendingCount} pending permission${update.pendingCount === 1 ? "" : "s"}` : "none"}</Row>
+        </dl>
+        {shown.length ? (
+          <ul className="flex flex-col gap-0.5 pl-1 text-[0.68rem] text-muted-foreground">
+            {shown.map((permission) => (
+              <li key={permission.permissionId} className="font-mono">permission {shortId(permission.permissionId, 12)} · {permission.optionCount} option{permission.optionCount === 1 ? "" : "s"}</li>
+            ))}
+          </ul>
+        ) : null}
+        {update.pendingTruncated ? <p className="text-[0.68rem] text-pretty text-muted-foreground">More pending permissions than the inspectable bound.</p> : null}
+      </div>
+    );
+  }
+  return <p className="text-[0.72rem] text-muted-foreground">Not admitted yet.</p>;
+}
+
 function TurnsTab({ worker, generation, focusTurnId }: { worker: WorkerSession; generation: number; focusTurnId?: string | null }) {
   const store = useStore();
+  const state = useStack();
   const turns = useSnapshot(worker.id, generation, () => readTurns(store, worker.id));
   const list = turns.data ?? [];
-  const focused = focusTurnId && list.some((turn) => turn.id === focusTurnId) ? focusTurnId : null;
+  const eventsAccess = state.remote ? { available: false, reason: null } : localOperation(state, "worker", "worker_event_list");
+  const events = useSnapshot(eventsAccess.available ? `${worker.id}:events` : null, generation,
+    () => store.call<WorkerEventPage>("worker", "worker_event_list", { id: worker.id }));
+  const receipts = events.data?.receipts ?? [];
+  const eventsById = useMemo(() => eventTurns(receipts), [receipts]);
+  const [eventFocus, setEventFocus] = useState<string | null>(null);
+  const [watchOpen, setWatchOpen] = useState<string | null>(null);
+  const pending = state.workerStatuses[worker.id]?.data?.pending ?? [];
+  const linked = focusTurnId && list.some((turn) => turn.id === focusTurnId) ? focusTurnId : null;
+  const local = eventFocus && list.some((turn) => turn.id === eventFocus) ? eventFocus : null;
+  const focused = linked ?? local;
   const scrolled = useRef<string | null>(null);
   // Set scrollTop on the tab's own scroll container only; scrollIntoView could move bench ancestors.
   const focusRef = useCallback((element: HTMLElement | null) => {
@@ -582,20 +711,27 @@ function TurnsTab({ worker, generation, focusTurnId }: { worker: WorkerSession; 
   }, [worker.id, focused]);
   return (
     <Scroller>
-      {focusTurnId && turns.data && !focused ? <p role="status" className="text-xs text-warning">The linked turn {shortId(focusTurnId)} is not in this Worker&rsquo;s turn list.</p> : null}
+      {focusTurnId && turns.data && !linked ? <p role="status" className="text-xs text-warning">The linked turn {shortId(focusTurnId)} is not in this Worker&rsquo;s turn list.</p> : null}
+      {eventsAccess.available ? <EventReceipts page={events.data} error={events.error} onFocus={setEventFocus} /> : null}
       {list.map((turn, index) => {
         const mismatch = settingsMismatch({ model: turn.requestedModel, effort: turn.requestedEffort }, turn.observedSettings);
+        const event = eventsById.turnIds.has(turn.id) || eventsById.deliveryIds.has(turn.requestId);
+        const delivery = event ? eventReceiptFor(turn, receipts) : null;
+        // The observation re-reads when the turn's outcome or its pending permission set moves.
+        const signature = `${turn.phase}:${turn.updatedAt}:${pending.filter((request) => request.turnId === turn.id).map((request) => request.id).sort().join(",")}`;
         return (
           <article key={turn.id} ref={focused === turn.id ? focusRef : undefined} data-turn-id={turn.id} aria-current={focused === turn.id ? "true" : undefined}
             className={cn("flex flex-col gap-1.5 rounded-xl border px-2.5 py-2", focused === turn.id && "ring-2 ring-foreground/30")}>
             <div className="flex items-center gap-2 text-[0.78rem]">
               <span className="font-medium">Turn {index + 1}</span>
+              {event ? <span className="shrink-0 rounded bg-muted px-1.5 py-px text-[0.64rem] font-medium text-muted-foreground">Event turn</span> : null}
               {focused === turn.id ? <span className="shrink-0 rounded bg-muted px-1.5 py-px text-[0.64rem] font-medium text-muted-foreground">Linked turn · {shortId(turn.id)}</span> : null}
               <span className={cn("text-[0.7rem]", turn.phase === "failed" ? "text-destructive" : turn.phase === "unknown" ? "text-warning" : turn.phase === "completed" ? "text-success" : "text-muted-foreground")}>
                 {turn.phase}{turn.stopReason ? ` · ${turn.stopReason}` : ""}
               </span>
               <Time at={turn.createdAt} className="ml-auto text-[0.65rem] text-muted-foreground" />
             </div>
+            {event ? <p className="text-[0.68rem] text-muted-foreground italic">Event input · untrusted observation, not a human task</p> : null}
             {turn.prompt !== null ? <p className="line-clamp-4 text-[0.75rem] break-words whitespace-pre-wrap text-foreground/90">{turn.prompt}</p>
               : <p className="text-[0.72rem] text-muted-foreground italic">{turn.contentClearedAt != null ? "Prompt cleared" : "Prompt not recorded"}</p>}
             <dl className="flex flex-col">
@@ -607,6 +743,24 @@ function TurnsTab({ worker, generation, focusTurnId }: { worker: WorkerSession; 
               <Row label="Work" hint="The HUD Work item this turn was admitted for, captured with its scope revision.">{turn.workContext ? <WorkContextLink context={turn.workContext} className="max-w-full justify-end" /> : "not associated"}</Row>
             </dl>
             {turn.issue ? <p className="text-[0.72rem] text-pretty text-warning">{turn.issue}</p> : null}
+            {event ? (
+              <p className="text-[0.68rem] text-muted-foreground" title={delivery ? workerEventReceiptLabels[delivery.state].description : "No retained delivery receipt links to this turn"}>
+                {delivery ? `Delivery ${workerEventReceiptLabels[delivery.state].label} — ${workerEventReceiptLabels[delivery.state].description}` : "Delivered event input; its delivery receipt isn't in the inspectable page"}
+              </p>
+            ) : state.remote ? null : (
+              <div>
+                <Button type="button" variant="ghost" size="xs" aria-expanded={watchOpen === turn.id} onClick={() => setWatchOpen(watchOpen === turn.id ? null : turn.id)}>
+                  Bot watch
+                </Button>
+                {watchOpen === turn.id ? (
+                  <div className="mt-1.5">
+                    <BotWatch pkg="worker" recordId={turn.requestId} origin={{ botId: worker.botId }} observe={signature}>
+                      {(list) => <TurnObservation receipts={list} signature={signature} />}
+                    </BotWatch>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </article>
         );
       })}
