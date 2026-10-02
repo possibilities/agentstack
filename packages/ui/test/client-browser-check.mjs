@@ -15,7 +15,7 @@ import { LocalAuth, serveSocket, socketCall } from "@stack/api";
 import { startClientHost } from "@stack/client";
 import { startClientUi } from "../bin/launcher.mjs";
 import { freePort, ui, z } from "./browser-fixture.mjs";
-import { checkLocalWorkflow, checkNoTrustedRelease } from "./client-local-workflow.mjs";
+import { checkLocalWorkflow, checkNoTrustedRelease, settleForCapture } from "./client-local-workflow.mjs";
 
 const evidence = process.env.CLIENT_EVIDENCE_DIR;
 const base = await mkdtemp("/private/tmp/s8-"); // macOS Unix socket paths must stay short.
@@ -310,6 +310,7 @@ try {
         await page.evaluate(() => scrollTo(0, 0));
         await checkHeader(page);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "home reflows without overflow");
+        await settleForCapture(page);
         await page.screenshot({ path: join(evidence, `home-${label}.png`), fullPage: true });
         await checkHeader(page);
       }
@@ -327,7 +328,7 @@ try {
     await page.getByText("Client session expired.", { exact: false }).waitFor();
     await page.getByText("Phone setup pending", { exact: true }).waitFor();
     await checkHeader(page);
-    if (evidence) await page.screenshot({ path: join(evidence, "home-last-good-expired.png"), fullPage: true });
+    if (evidence) { await settleForCapture(page); await page.screenshot({ path: join(evidence, "home-last-good-expired.png"), fullPage: true }); }
     pass("real fragment exchange, CSP hydration, no browser secrets, retained states, single unoccluding header, separate URL/status, light/dark/narrow/short/keyboard and last-good expiry");
     await browser.close(); browser = null;
   }

@@ -23,6 +23,24 @@ const exists = file => access(file).then(() => true, () => false);
 // The recorded stage a job is at (or last reached) is the current step of its sequence.
 const currentStage = (scope, label) => scope.locator('li[aria-current="step"]').getByText(label, { exact: true });
 
+/** Full-page capture paints fixed elements at the scroll offset and tiles a still-growing page; settle first. */
+export async function settleForCapture(page) {
+  await page.evaluate(() => scrollTo(0, 0));
+  await page.waitForFunction(() => new Promise(resolve => { const height = document.documentElement.scrollHeight; setTimeout(() => resolve(document.documentElement.scrollHeight === height), 150); }));
+}
+
+/** Evidence only: one full-page capture per appearance, then the prior viewport and media. */
+export async function captureVariants(page, evidence, name) {
+  if (!evidence) return;
+  const viewport = page.viewportSize();
+  for (const [variant, colorScheme, width] of [["light", "light", 1200], ["dark", "dark", 1200], ["narrow", "light", 390]]) {
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" }); await page.setViewportSize({ width, height: 900 });
+    await settleForCapture(page);
+    await page.screenshot({ path: join(evidence, `${name}-${variant}.png`), fullPage: true });
+  }
+  await page.emulateMedia({ colorScheme: null, reducedMotion: null }); await page.setViewportSize(viewport);
+}
+
 export async function checkNoTrustedRelease(page, client, pass, evidence) {
   await page.goto(`${client.origin}/client/local`);
   await page.getByRole("heading", { name: "Run locally", exact: true }).waitFor();
@@ -36,7 +54,7 @@ export async function checkNoTrustedRelease(page, client, pass, evidence) {
   }, { version: "untrusted", platform: process.platform, architecture: process.arch, url: "https://untrusted.example/bundle.tgz", sha256: "a".repeat(64), bytes: 1, unpackedBytes: 1 });
   assert.equal(result.status, 502); assert.equal(result.body.error, "trusted_release_required"); assert.equal(result.body.uncertain, false);
   assert.deepEqual((await client.host.call("client_snapshot", {})).jobs, before);
-  if (evidence) await page.screenshot({ path: join(evidence, "local-no-trusted-release.png"), fullPage: true });
+  await captureVariants(page, evidence, "local-no-trusted-release");
   await page.getByRole("link", { name: "Connections", exact: true }).click();
   await page.getByRole("heading", { name: "Connections", exact: true }).waitFor();
   pass("no trusted release explains exact launcher flag and HTTP cannot install a browser descriptor");
@@ -120,13 +138,15 @@ fs.writeFileSync(file,JSON.stringify(state));\n`;
       return await response.json();
     }, release);
     assert.equal(changed.error, "trusted_release_changed");
+    if (evidence) await page.getByText("No local platform installed.", { exact: true }).waitFor();
+    await captureVariants(page, evidence, "local-not-installed");
     pass("reviewed release schema, immutable parent pin and browser release substitution refusal");
 
     await writeFile(join(fixtures, "fail-gh"), "missing");
     await page.getByRole("button", { name: "Check prerequisites" }).click();
     await page.getByText("gh: missing executable", { exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Review install plan" }).isDisabled(), true);
-    if (evidence) await page.screenshot({ path: join(evidence, "local-prerequisite-missing.png"), fullPage: true });
+    await captureVariants(page, evidence, "local-prerequisite-missing");
     await rm(join(fixtures, "fail-gh"));
     await page.getByRole("button", { name: "Check prerequisites" }).click();
     await page.getByText("gh: executable available", { exact: true }).waitFor();
@@ -156,13 +176,14 @@ fs.writeFileSync(file,JSON.stringify(state));\n`;
     await page.getByRole("heading", { name: "Saved exact request" }).waitFor();
     assert.equal(actionCalls().length, beforeReload, "reload does not dispatch");
     assert.equal(await page.getByRole("button", { name: "Retry identical request" }).isDisabled(), true);
+    await captureVariants(page, evidence, "local-admission-unresolved");
     await page.getByRole("button", { name: "Inspect job and snapshot" }).click();
     await page.getByRole("button", { name: "Retry identical request" }).click();
     const savedRequest = page.getByRole("region", { name: "Saved exact request" });
     await currentStage(savedRequest, "Downloading").waitFor();
     const installs = actionCalls().filter(call => call.operation === "client_install");
     assert.deepEqual(installs[1], installs[0]); assert.equal(downloads, 1);
-    if (evidence) await page.screenshot({ path: join(evidence, "local-install-downloading.png"), fullPage: true });
+    await captureVariants(page, evidence, "local-install-downloading");
     await page.unroute("**/api/client/rpc");
     pass("storage failure blocks dispatch; lost admission survives reload and only explicit identical UUID/input retry installs");
     releaseDownload();
@@ -189,7 +210,7 @@ fs.writeFileSync(file,JSON.stringify(state));\n`;
     await page.evaluate(({ key, unknown }) => localStorage.setItem(key, JSON.stringify({ version: 1, operation: "client_platform_start", input: { requestId: unknown } })), { key, unknown });
     const beforeUnknown = actionCalls().length; await page.reload();
     await savedRequest.getByText("Outcome unknown", { exact: true }).waitFor();
-    if (evidence) await page.screenshot({ path: join(evidence, "local-unknown-recovery.png"), fullPage: true });
+    await captureVariants(page, evidence, "local-unknown-recovery");
     assert.equal(actionCalls().length, beforeUnknown); assert.equal(await page.getByRole("button", { name: "Retry identical request" }).count(), 0);
     for (const item of renderedStages) {
       await page.getByRole("button", { name: `Install · unknown · ${item.id.slice(0, 8)}`, exact: true }).click();
@@ -225,6 +246,7 @@ fs.writeFileSync(file,JSON.stringify(state));\n`;
     assert.equal((await client.host.call("client_snapshot", {})).service.ready, false);
     await page.getByText("Observing unresolved service state", { exact: false }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Open platform", exact: true }).count(), 0);
+    await captureVariants(page, evidence, "local-starting");
     await page.clock.runFor(31_000);
     await page.getByText("Bounded observation ended", { exact: false }).waitFor();
     await page.getByRole("button", { name: "Inspect job and snapshot" }).click();
@@ -245,6 +267,7 @@ fs.writeFileSync(file,JSON.stringify(state));\n`;
     await page.getByRole("button", { name: "Inspect job and snapshot" }).click();
     await page.getByText("Ready means a serve_status answer was observed", { exact: false }).waitFor();
     await acknowledge();
+    await captureVariants(page, evidence, "local-ready");
     const popupPromise = page.waitForEvent("popup"); await page.getByRole("button", { name: "Open platform", exact: true }).click();
     const popup = await popupPromise; await popup.waitForURL(`${platformOrigin}/connect/local#*`); await popup.close();
     assert.equal(openCount, 1);
@@ -260,7 +283,7 @@ fs.writeFileSync(file,JSON.stringify(state));\n`;
 
     await page.getByRole("button", { name: "Enable platform login" }).click();
     await page.getByText("Saved: on · Applied: off · Application pending", { exact: true }).waitFor();
-    if (evidence) await page.screenshot({ path: join(evidence, "local-login-pending.png"), fullPage: true });
+    await captureVariants(page, evidence, "local-login-pending");
     assert.equal((await client.host.call("client_snapshot", {})).service.running, true); await acknowledge();
     await page.getByText("Edit ports and Access/TLS", { exact: true }).click();
     for (const label of ["Local UI", "WebSocket", "MCP", "Inspector", "Documents", "Artifacts", "Brain"]) assert.equal(await page.getByLabel(`${label} port`, { exact: true }).inputValue(), "");
@@ -307,7 +330,7 @@ fs.writeFileSync(file,JSON.stringify(state));\n`;
       await page.emulateMedia({ colorScheme, reducedMotion: "reduce" }); await page.setViewportSize({ width, height: 900 }); await page.evaluate(() => scrollTo(0, 0));
       await checkHeader(page); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "local form reflows without overflow");
       layouts.push({ colorScheme, width, overflow: false, headerOcclusion: false });
-      if (evidence) await page.screenshot({ path: join(evidence, `local-${label}.png`), fullPage: true });
+      if (evidence) { await settleForCapture(page); await page.screenshot({ path: join(evidence, `local-${label}.png`), fullPage: true }); }
     }
     await page.reload(); await page.keyboard.press("Tab"); assert.equal(await page.evaluate(() => document.activeElement.textContent), "Skip to local platform");
     await page.keyboard.press("Enter");
