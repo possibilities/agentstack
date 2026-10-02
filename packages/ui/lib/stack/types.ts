@@ -1049,6 +1049,29 @@ export type ServeSubscription = {
 export type ServeSubscriptionDetail = ServeSubscription & { readArguments: Record<string, unknown>; lastError: string | null };
 export type ServeSubscriptionPage = { subscriptions: ServeSubscription[]; revision: string; nextOffset: number | null };
 
+/** A retained completion receipt as `serve_completion_list` pages it: fixed diagnostic codes only, never error text, arguments or content. */
+export type ServeCompletionReceipt = {
+  id: string; botId: string; threadId: string; pkg: string; operation: string; recordId: string;
+  state: "pending" | "error" | "observed" | "delivered" | "unknown" | "cancelled";
+  lastDeliveredAt: number | null; lastDeliveryKind: "update" | "terminal" | null;
+  lastError: "diagnostic_withheld" | "native_admission_unknown" | null;
+  nativeAdmissionUncertain: boolean; subscriptionPresent: boolean;
+};
+/** A revision-fenced page of retained completion receipts. */
+export type ServeCompletionPage = { completions: ServeCompletionReceipt[]; revision: string; total: number; nextOffset: number | null; truncated: boolean };
+/** An exact domain navigation link resolved at read time through identity-only owner reads; never fabricated or stored content. */
+export type ServeCompletionLink =
+  | { kind: "notify"; notificationId: string }
+  | { kind: "browse"; requestId: string; handoffId: string }
+  | { kind: "worker"; requestId: string; workerId: string; turnId: string }
+  | { kind: "proc"; runId: string }
+  | { kind: "brain-submit"; requestId: string; jobId: number | null; documentId: number | null }
+  | { kind: "brain-sources"; requestId: string; runIds: number[] };
+/** Why a completion detail carries no link; `resolved` means `link` is present. */
+export type ServeCompletionLinkStatus = "resolved" | "missing" | "unavailable" | "unsupported" | "not_found";
+/** `serve_completion_get`'s exact receipt lookup plus its bounded owner identity link. */
+export type ServeCompletionDetail = { receipt: ServeCompletionReceipt | null; link: ServeCompletionLink | null; linkStatus: ServeCompletionLinkStatus };
+
 export type ChannelStatus = "idle" | "connecting" | "open" | "closed";
 
 export type StackEvent = {
