@@ -657,7 +657,7 @@ function TurnObservation({ receipts, signature }: { receipts: ServeCompletionRec
           {result.workContext ? <Row label="Work"><WorkContextLink context={result.workContext} className="max-w-full justify-end" /></Row> : null}
         </dl>
         {result.contentClearedAt ? <ContentCleared at={result.contentClearedAt} label="Turn content cleared" className="text-[0.68rem]" /> : null}
-        <p className="text-[0.68rem] text-pretty text-muted-foreground">Full evidence for this turn: Conversation and Records tabs. Observation covers the request's outcome only, not broader Work.</p>
+        <p className="text-[0.68rem] text-pretty text-muted-foreground">Evidence: Conversation and Records tabs.</p>
       </div>
     );
   }
@@ -678,7 +678,7 @@ function TurnObservation({ receipts, signature }: { receipts: ServeCompletionRec
             ))}
           </ul>
         ) : null}
-        {update.pendingTruncated ? <p className="text-[0.68rem] text-pretty text-muted-foreground">More pending permissions than the inspectable bound.</p> : null}
+        {update.pendingTruncated ? <p className="text-[0.68rem] text-pretty text-muted-foreground">Showing {shown.length} of {update.pendingCount}. Full options are in the Worker summary; only the originating Bot answers.</p> : null}
       </div>
     );
   }

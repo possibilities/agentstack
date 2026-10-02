@@ -11,7 +11,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { shortId } from "@/lib/stack/derive";
 import { procExitLabels, procExitParts } from "@/lib/stack/completion";
-import { errorCopy, formatLimitBytes, isActiveRun, joinPartials, lineGaps, ownerLabel, ownerOf, runTitle, runView, scheduleTitle, stripAnsi, type OutputGap, type ProcDisplayLine, type ProcOwner } from "@/lib/stack/proc";
+import { errorCopy, formatLimitBytes, isActiveRun, joinPartials, lineGaps, ownerLabel, ownerOf, runTitle, runView, scheduleTitle, stripAnsi, type OutputGap, type ProcDisplayLine } from "@/lib/stack/proc";
 import { localOperation } from "@/lib/stack/state";
 import type { ProcOutputLine, ProcOutputPage, ProcRun, ProcRunDetail, ProcRunObservation } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
@@ -75,6 +75,7 @@ export function ProcRunWindow({ id }: { id: string }) {
         : (
           <>
             <RunHeader run={run} processes={resources.data?.processes ?? []} generation={generation} />
+            <ExitWatch run={run} generation={generation} />
             {isActiveRun(run) ? null : <div className="flex flex-col px-3 pb-1"><ProcClear key={run.id} kind="run_output" id={run.id} onReceipt={() => setOutputEpoch((value) => value + 1)} /></div>}
             <OutputLog key={`${run.id}:${run.retainOutput}:${outputEpoch}`} run={run} generation={generation} />
           </>
@@ -142,56 +143,47 @@ function RunHeader({ run, processes, generation }: { run: ProcRunDetail; process
       </dl>
       {isActiveRun(run) ? null : <p className="text-[0.68rem] text-pretty text-muted-foreground">Process exit isn't Work completion.</p>}
       {run.error ? <p className="text-[0.72rem] text-pretty text-warning">{errorCopy(run.error)}</p> : null}
-      <ExitWatch run={run} owner={owner} generation={generation} />
     </div>
   );
 }
 
 /**
- * A Bot-started run's exit watch: the retained receipt for this exact run, then its
- * `proc_run_completion` exit observation. Collapsed until asked for; absent for
- * operator-started runs, which never request a watch.
+ * The exact run's exit observation and its Bot watch, separate from output: `proc_run_completion({id})`
+ * is the compact exit projection — exited, failed, cancelled or unknown with code/signal and timing.
+ * Unknown is not a proven failure. A retained receipt exists only when the Bot asked for a watch;
+ * operator admissions show "No Bot watch requested".
  */
-function ExitWatch({ run, owner, generation }: { run: ProcRunDetail; owner: ProcOwner; generation: number }) {
-  const { remote } = useStack();
-  const [open, setOpen] = useState(false);
-  if (owner.kind !== "bot" || remote) return null;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Button type="button" variant="ghost" size="xs" className="self-start" aria-expanded={open} onClick={() => setOpen(!open)}>
-        Bot watch
-      </Button>
-      {open ? (
-        <BotWatch pkg="proc" recordId={run.id} origin={{ botId: owner.botId, threadId: owner.threadId ?? undefined }} observe={`${generation}:${run.state}`}>
-          {() => <ExitObservation run={run} owner={owner} generation={generation} />}
-        </BotWatch>
-      ) : null}
-    </div>
-  );
-}
-
-/** The exact run's compact exit observation — exit facts only, never output or Work claims. */
-function ExitObservation({ run, owner, generation }: { run: ProcRunDetail; owner: ProcOwner & { kind: "bot" }; generation: number }) {
+function ExitWatch({ run, generation }: { run: ProcRunDetail; generation: number }) {
   const state = useStack();
   const store = useStore();
   const access = localOperation(state, "proc", "proc_run_completion");
-  const usable = access.available && Boolean(owner.threadId);
-  const read = useObservedRead<ProcRunObservation>(usable ? `run-completion:${run.id}` : null, `${generation}:${run.state}:${run.finishedAt ?? "running"}`,
-    () => store.call<ProcRunObservation>("proc", "proc_run_completion", { botId: owner.botId, threadId: owner.threadId, requestId: run.id }));
+  const read = useObservedRead<ProcRunObservation>(access.available ? `run-completion:${run.id}` : null, `${generation}:${run.state}`,
+    () => store.call<ProcRunObservation>("proc", "proc_run_completion", { id: run.id }));
   const result = read.data?.result ?? null;
-  if (!access.available) return <p className="text-[0.72rem] text-pretty text-muted-foreground">{access.reason}</p>;
-  if (read.error) return <p className="text-[0.72rem] text-pretty text-destructive">Observation unavailable: {read.error}</p>;
-  if (read.loading || !read.data) return <p className="text-[0.72rem] text-muted-foreground">Reading observation…</p>;
-  if (!result) return <p className="text-[0.72rem] text-pretty text-muted-foreground">Process still running — outcome not reported.</p>;
-  const view = procExitLabels[result.state as keyof typeof procExitLabels] ?? { label: result.state, description: "" };
+  const view = result ? procExitLabels[result.state as keyof typeof procExitLabels] ?? { label: result.state, description: "" } : null;
   return (
-    <div className="flex flex-col gap-1 rounded-lg bg-muted/40 px-2 py-1.5">
-      <dl className="flex flex-col">
-        <Row label="Observed exit" hint={view.description}>{view.label}</Row>
-        <Row label="Facts" mono>{procExitParts(result).join(" · ") || "—"}</Row>
-      </dl>
-      <p className="text-[0.68rem] text-pretty text-muted-foreground">Exit facts only — a terminal exit isn't Work completion.</p>
-    </div>
+    <section aria-label="Exit watch" className="flex shrink-0 flex-col gap-1.5 border-b border-border/60 px-3.5 py-2.5">
+      <h3 className="text-[0.66rem] font-medium tracking-[0.06em] text-muted-foreground uppercase">Exit watch</h3>
+      {!access.available ? <p className="text-[0.72rem] text-pretty text-muted-foreground">{access.reason}</p>
+        : read.error ? <p className="text-[0.72rem] text-pretty text-destructive">Exit observation unavailable: {read.error}</p>
+        : read.loading || !read.data ? <p className="flex items-center gap-1.5 text-[0.72rem] text-muted-foreground"><Spinner className="size-3" />Reading exit…</p>
+        : !result || !view ? <p className="text-[0.72rem] text-pretty text-muted-foreground">No exit observed yet — the run is starting or running.</p>
+        : (
+          <>
+            <div className="flex items-center gap-2 text-[0.75rem]">
+              <StatusDot tone={result.state === "exited" ? "success" : result.state === "cancelled" ? "muted" : result.state === "unknown" ? "warning" : "destructive"} label={view.label} />
+              <span className="font-medium" title={view.description}>{view.label}</span>
+            </div>
+            <dl className="flex flex-col">
+              <Row label="Facts" mono>{procExitParts(result).join(" · ") || "—"}</Row>
+              <Row label="Started">{new Date(Date.parse(result.startedAt)).toLocaleString()}</Row>
+              {result.finishedAt ? <Row label="Finished">{new Date(Date.parse(result.finishedAt)).toLocaleString()}</Row> : null}
+            </dl>
+            <p className="text-[0.68rem] text-pretty text-muted-foreground">Exit facts only — a terminal exit isn't Work completion.</p>
+          </>
+        )}
+      <BotWatch pkg="proc" recordId={run.id} observe={`${generation}:${run.state}`} />
+    </section>
   );
 }
 
