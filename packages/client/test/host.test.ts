@@ -90,6 +90,7 @@ test("configuration preserves unset defaults and revisions; private control reje
     await host.call("client_platform_configure", { expectedRevision: 1, configuration: {} });
     assert.deepEqual((await host.call("client_snapshot", {})).configuration.saved, {});
     await assert.rejects(socketCall(host.path, "tools/call", { name: "client_login_set", arguments: { requestId: randomUUID(), enabled: true, runNow: true } }), /Unrecognized key/);
+    await Promise.all([host.close(), host.close()]);
     await host.close(); host = undefined;
     await chmod(root, 0o755);
     await assert.rejects(startClientHost({ root }), /client_state_permissions/);

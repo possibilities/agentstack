@@ -21,6 +21,7 @@ export async function startClientHost(options: { root?: string; uiOrigin?: strin
   const pending = new Set<Promise<void>>();
   const controller = new AbortController();
   let notify = () => {}, closed = false, serial: Promise<unknown> = Promise.resolve();
+  let closing: Promise<void> | undefined;
   const job = (name: string, input: { requestId: string }, execute: (stage: (name: string) => void) => Promise<void>) => {
     const admitted = state.transaction(() => state.admit(input.requestId, name, input));
     if (!admitted.duplicate) {
@@ -126,9 +127,11 @@ export async function startClientHost(options: { root?: string; uiOrigin?: strin
     notify = () => served.publish?.("client_changed");
     return { path, call, catalog: () => operations.map(op => ({ name: op.name, description: op.description,
       inputSchema: publishedJsonSchema(op.input), outputSchema: publishedJsonSchema(op.output) })),
-      async close() {
+      close() {
         closed = true; controller.abort();
-        await serial; await Promise.allSettled(pending); await served.close(); state.close();
+        return closing ??= (async () => {
+          await serial; await Promise.allSettled(pending); await served.close(); state.close();
+        })();
       } };
   } catch (error) { await socket?.close(); state.close(); throw error; }
   finally { if (locked) await rmdir(lock); }
