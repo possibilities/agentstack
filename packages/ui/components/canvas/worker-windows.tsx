@@ -11,6 +11,7 @@ import { Empty, Flash, NodeLink, Orb, StatusDot, Time, type Tone } from "./primi
 import { useStack, useWorkbench, useWorkerWindows } from "./provider";
 import { Window } from "./window";
 import { WorkerDefaultsButton } from "./worker-settings";
+import { RetainedWorkerBranches } from "./worker-maintenance";
 
 export const phaseTone: Record<WorkerSession["phase"], Tone> = {
   preparing: "info", running: "success", cancelling: "info", awaiting_input: "warning",
@@ -32,7 +33,7 @@ export function useShowWorker(): (id: string) => void {
 /**
  * Every Worker in worker_list, grouped by what it needs. Choosing one shows it
  * in the Worker window. Bots start and steer Workers; this space reads them and
- * edits only managed model and effort settings, including provider defaults.
+ * edits managed settings and performs explicit local owner-state maintenance.
  */
 export function WorkersWindow() {
   const { workerSessions, workerAccounts, bots, status, endpoints } = useStack();
@@ -108,8 +109,9 @@ export function WorkersWindow() {
               </div>
             )}
           </>
-        )}
-    </Window>
+         )}
+      {endpoints.worker ? <RetainedWorkerBranches /> : null}
+     </Window>
   );
 }
 

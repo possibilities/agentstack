@@ -131,7 +131,7 @@ export const ownerHomes: Record<string, { space: SpaceId; title: string }> = {
 
 /** Maintained backend gaps (docs/state-control.md): shown as unsupported, never offered as controls. */
 export const ownerGaps: Record<string, string> = {
-  worker: "In-place Git reset, native-session reset or purge, transcript-only purge and retained-branch collection are not supported.",
+  worker: "Native purge requires disabled/drained accounts, idle sign-in and verified macOS scope on OpenCode 2.0.16, Devin 3000.11.3 or Claude SDK 0.3.283. Unknown versions, unsafe scope and external writers block it. No session reset/reopening, profile erasure, remote branch or retained-ref collection; native logs/caches/shared blobs, shares and backups remain independent.",
   browse: "Default-profile reset, per-site data clearing, resolved handoff redaction and orphan-volume collection are not supported.",
   brain: "Terminal jobs without documents, source removal or checkpoint reset and stranded-Artifact collection are not supported.",
   scrape: "Queue cancel/retry/discard and corpus or session-state maintenance are not supported.",
