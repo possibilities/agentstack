@@ -5,7 +5,7 @@ import { StateFlowView, useStateFlow } from "./state-flow";
 import { memo, useEffect, useId, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { BellIcon, BellOffIcon, CircleCheckIcon, CircleHelpIcon, ExternalLinkIcon, InboxIcon, RepeatIcon, ReplyIcon, SendIcon, XIcon } from "lucide-react";
+import { BellIcon, BellOffIcon, CircleCheckIcon, CircleHelpIcon, ExternalLinkIcon, InboxIcon, PlusIcon, RepeatIcon, ReplyIcon, SendIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
@@ -15,7 +15,8 @@ import type { Notification, NotificationFilter, NotificationOutcome } from "@/li
 import { cn } from "@/lib/utils";
 import { useNotifyActions } from "./notify-actions";
 import { CopyButton, Empty, Row, Time } from "./primitives";
-import { useStack, useStore } from "./provider";
+import { useStack, useStore, useWorkbench } from "./provider";
+import { notificationSendAccess } from "@/lib/stack/notify-compose";
 import { footerButton, Section, Window } from "./window";
 
 type View = "open" | "dismissed" | "all";
@@ -43,6 +44,8 @@ export function InboxWindow() {
   const stack = useStack();
   const { status, endpoints, notifications, notificationFilter, notifyCounts, remote } = stack;
   const actions = useNotifyActions();
+  const { goTo } = useWorkbench();
+  const sendAccess = notificationSendAccess(stack);
   const list = useRef<HTMLUListElement>(null);
   const loaded = notifications.data?.filter === notificationFilter ? notifications.data : null;
   const entries = loaded?.entries ?? [];
@@ -84,6 +87,7 @@ export function InboxWindow() {
 
   return (
     <Window id="notify-inbox" title="Inbox" subtitle="notifications" icon={InboxIcon} accent="notify" count={notifyCounts.data?.open ?? null}
+      actions={sendAccess.exposed && !sendAccess.reason ? <Button variant="ghost" size="icon-sm" aria-label="New notification" title="New notification" onClick={() => goTo({ kind: "notification-compose" })}><PlusIcon /></Button> : undefined}
       status={endpoints.notify ? status.notify : undefined} endpoint={endpoints.notify} updatedAt={notifications.at} error={notifications.error ?? notifyCounts.error}
       empty={!endpoints.notify}
       footer={endpoints.notify ? (

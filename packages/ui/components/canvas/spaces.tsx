@@ -42,6 +42,9 @@ import { RoleMcpServersWindow, RoleProjectsWindow, RoleSkillsWindow } from "./ro
 import { RoleShimsWindow } from "./role-shims";
 import { AccessWindow } from "./access-window";
 import { InboxWindow, NotificationWindow } from "./notify-windows";
+import { ComposeWindow } from "./notify-compose";
+import { notificationSendAccess } from "@/lib/stack/notify-compose";
+import { SendIcon } from "lucide-react";
 import { AttentionChangesWindow, AttentionMessagesWindow, AttentionRunsWindow, AttentionWindow, SignalWindow } from "./signal-windows";
 import { ContentArtifactsWindow } from "./content-artifacts";
 import { ContentStorageWindow } from "./content-storage";
@@ -161,9 +164,12 @@ export const spaceViews: Record<SpaceId, {
   inbox: {
     icon: InboxIcon,
     accent: "notify",
-    windows: () => [
+    windows: (state) => [
       { id: "notify-inbox", title: "Inbox", icon: InboxIcon, accent: "notify", width: 440, height: 720, column: 0, fixed: true, element: <InboxWindow /> },
       { id: "notify-detail", title: "Notification", icon: BellIcon, accent: "notify", width: 480, height: 640, column: 1, element: <NotificationWindow /> },
+      ...(!state.remote || (notificationSendAccess(state).exposed && !notificationSendAccess(state).reason) ? [
+        { id: "notify-compose", title: "Compose", icon: SendIcon, accent: "notify" as const, width: 440, height: 920, column: 2, element: <ComposeWindow /> },
+      ] : []),
     ],
   },
   signal: {

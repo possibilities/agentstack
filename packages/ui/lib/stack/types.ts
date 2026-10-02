@@ -1134,6 +1134,8 @@ export type NodeRef =
   | { kind: "category"; id: string }
   | { kind: "fragment"; id: string }
   | { kind: "notification"; id: string }
+  /** Inbox's operator compose window; it has no inspectable record. */
+  | { kind: "notification-compose" }
   | { kind: "skill"; id: string }
   | { kind: "mcp-server"; id: string }
   | { kind: "trusted-project"; id: string }

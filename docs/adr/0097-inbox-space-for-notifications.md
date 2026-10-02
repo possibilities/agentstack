@@ -7,9 +7,9 @@ Notifications of [ADR 0095](0095-one-dismissal-with-an-outcome.md) their first U
 
 ## Decision
 
-**Inbox** (`/x/inbox`, key 6) is where people read, answer and dismiss
+**Inbox** (`/inbox`, key 6) is where people send, read, answer and dismiss
 Notifications. It uses a new `notify` accent (sky; amber already belongs to
-auth) and has two windows:
+auth) and has three windows:
 
 - **Inbox** (`notify-inbox`) lists notifications newest first, 25 per page with
   Load older. Open, Dismissed and All map to `notification_list`'s `dismissed`
@@ -23,6 +23,22 @@ auth) and has two windows:
   and either its outcome or the ways to answer it. Each action is a button, a
   reply prompt is a text field sent with ⌘Enter, **Open link** is a real link
   that also records `opened`, and **Dismiss** records `closed`.
+- **Compose** (`notify-compose`, added 2026-10-02) sends operator Notifications
+  from the live `notification_send` schema: Notice, Question with bounded unique
+  choices, or Reply prompt, plus declared optional content fields. The Inbox's
+  **New notification** header action reveals it. Its window destination is
+  `notification-compose`; window geometry remains in the space registration.
+  A versioned localStorage draft is pinned to the UI origin and Notify endpoint.
+  The first edit allocates a UUID; dispatch first persists that ID and exact input.
+  Lost acknowledgements and reload keep the intent frozen for an explicit identical
+  retry. Changing uncertain intent requires explicit local discard, which cannot
+  recall an already stored Notification. Failed draft persistence prevents sending.
+  Sends omit `subscribe` and show **No Bot watch (operator send)**, following
+  [ADR 0154](0154-notification-send-and-watch.md). **Sent — stored** confirms only
+  storage, then selects the returned record in Notification. Group replacement is
+  disclosed before sending; closed/opened/replaced/read/silence are never approval.
+  Remote Compose is hidden unless live WebSocket exposure and `ui:control` allow
+  sending; disconnection disables sends without losing the draft.
 
 **Choosing never dismisses.** Selecting, focusing or inspecting a notification
 changes nothing; only the explicit controls above dismiss it, once. A refused

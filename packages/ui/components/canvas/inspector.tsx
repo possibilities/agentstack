@@ -218,6 +218,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       };
     }
     case "chat":
+    case "notification-compose":
     case "worker-window":
     case "browser-viewer":
       return null; // Chat, Worker and viewer windows are views onto a record, not records.

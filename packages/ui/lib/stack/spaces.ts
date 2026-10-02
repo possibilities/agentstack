@@ -17,7 +17,7 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "lab", title: "Lab", description: "Experimental windows for tinkering", key: "3" },
   { id: "system", title: "System", description: "Server and Stack settings, processes, packages, host resources, owner state, Bot event subscriptions and activity", key: "4" },
   { id: "roles", title: "Roles", description: "Named Roles and the default new launches use, with each Role's instructions, skills, MCP servers and trusted projects, and the commands that launch them", key: "5" },
-  { id: "inbox", title: "Inbox", description: "Notifications to read, answer and dismiss", key: "6" },
+  { id: "inbox", title: "Inbox", description: "Notifications to send, read, answer and dismiss", key: "6" },
   { id: "signal", title: "Signal", description: "What conversations ask of you, and how it was interpreted", key: "7" },
   { id: "content", title: "Content", description: "Vault documents, collections, files and Artifacts", key: "8" },
   { id: "workers", title: "Workers", description: "What Workers started by Bots are doing, and their saved model settings", key: "9" },
@@ -89,6 +89,8 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "roles", window: "role-instructions" };
     case "notification":
       return { kind: "space", space: "inbox", window: "notify-inbox" };
+    case "notification-compose":
+      return { kind: "space", space: "inbox", window: "notify-compose" };
     case "skill":
       return { kind: "space", space: "roles", window: "role-skills" };
     case "mcp-server":
@@ -232,6 +234,7 @@ export function spaceAttention(state: Pick<StackState, "status" | "server" | "re
 /** Exact inverse of nodeKey(); malformed keys return null. */
 export function parseNodeKey(key: string): NodeRef | null {
   if (key === "server") return { kind: "server" };
+  if (key === "notification-compose") return { kind: "notification-compose" };
   if (key === "signal") return { kind: "signal" };
   if (key === "login") return { kind: "login" };
   if (key === "usage") return { kind: "usage" };

@@ -1003,7 +1003,7 @@ export class StackStore {
   reloadRoleCatalog = (): Promise<RoleCatalog> => this.call<RoleCatalog>("roles", "roles_snapshot");
 
   /** Notify writes. Lists and counts are re-read after each attempt, since a lost acknowledgement may still have dismissed. */
-  notify = <T>(name: "notification_dismiss" | "notification_dismiss_all", args: Record<string, unknown>): Promise<T> =>
+  notify = <T>(name: "notification_send" | "notification_dismiss" | "notification_dismiss_all", args: Record<string, unknown>): Promise<T> =>
     this.call<T>("notify", name, args).finally(() => { this.refresh("notifications"); this.refresh("notifyCounts"); });
 
   /** Show a different slice of the ledger; its first page replaces the loaded pages when it arrives. */
