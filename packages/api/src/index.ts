@@ -50,6 +50,11 @@ export { serveWebSocket, type ServedWebSocket, type RemoteWebSocketAdmission } f
 export { serveHttp, type HttpPeer } from "./http.js";
 export { configuredMcpPackages, configuredMcpServers, serveMcp, type ServedMcp } from "./mcp.js";
 export { McpEventSubscriptions, type EventTarget, type EventValue, type EventSubscription } from "./mcp-subscriptions.js";
+export { completionHistoryRevision, completionHistoryState, completionHistoryReceipt, notifyCompletionLink, browseCompletionLink, workerCompletionLink,
+  procCompletionLink, brainSubmitCompletionLink, brainSourcesCompletionLink, completionDomainLink, completionHistoryListInput, completionHistoryPage,
+  completionHistoryGetInput, completionHistoryDetail, completionIdentityInput,
+  type CompletionHistoryReceipt, type CompletionHistoryPage, type CompletionHistoryListInput, type CompletionHistoryGetInput, type CompletionHistoryDetail,
+  type CompletionDomainLink, type CompletionIdentityInput } from "./completion-history.js";
 export { occurrenceSubscriptionView, type OccurrenceTarget, type OccurrenceRuntime, type EventPolicy } from "./occurrence-subscriptions.js";
 export { runMcp } from "./run-mcp.js";
 export { runMcpStdio } from "./stdio.js";

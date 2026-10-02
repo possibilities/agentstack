@@ -11,6 +11,7 @@ import { forwardTimeout } from "./forward-timeout.js";
 import { stateHash } from "./state.js";
 import { mcpEventCatalog } from "./mcp-events.js";
 import { completionWatchSchema, McpDeliveryRejected, resolveCompletionRead, wantsCompletion, type CompletionReceipt } from "./completion-watch.js";
+import { completionHistoryReceipt, type CompletionHistoryListInput, type CompletionHistoryPage, type CompletionHistoryReceipt } from "./completion-history.js";
 import type { CompletionWatch } from "./operation.js";
 import { OccurrenceSubscriptions, type OccurrenceRuntime } from "./occurrence-subscriptions.js";
 
@@ -32,6 +33,11 @@ type RecordState = EventSubscription & {
 
 const maxValueChars = 16_000;
 const maxSubscriptions = 128;
+type CompletionHistoryRow = { id: string; bot_id: string; thread_id: string; pkg: string; operation: string; record_id: string;
+  state: CompletionHistoryReceipt["state"]; last_delivered_at: number | null; delivery_kind: CompletionHistoryReceipt["lastDeliveryKind"];
+  has_error: number | boolean; present: number | boolean };
+const completionHistoryColumns = `c.id, c.bot_id, c.thread_id, c.pkg, c.operation, c.record_id, c.state, c.last_delivered_at, c.delivery_kind,
+  c.last_error IS NOT NULL AS has_error, EXISTS (SELECT 1 FROM subscriptions s WHERE s.id = c.id) AS present`;
 const valueHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const turnTopics = new Set(["threads_changed", "chats_changed", "chat_live_changed", "chat_queue_changed"]);
 
@@ -58,7 +64,9 @@ export class McpEventSubscriptions {
   private closed = false;
   private readonly admissions = new Map<string, Promise<Record<string, unknown>>>();
   private readonly setups = new Set<RecordState>();
+  private announced: number | null = null;
   onChange?: () => void;
+  onSubscriptionsChange?: () => void;
   readonly occurrences?: OccurrenceSubscriptions;
 
   constructor(private readonly env: NodeJS.ProcessEnv, private readonly validate: (target: EventTarget) => Promise<void>,
@@ -92,6 +100,34 @@ export class McpEventSubscriptions {
     )`);
     const receiptColumns = this.db.prepare("PRAGMA table_info(completion_receipts)").all() as Array<{ name: string }>;
     if (!receiptColumns.some(({ name }) => name === "delivery_kind")) this.db.exec("ALTER TABLE completion_receipts ADD COLUMN delivery_kind TEXT");
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS completion_history_meta (id INTEGER PRIMARY KEY CHECK (id = 1), generation TEXT NOT NULL, counter INTEGER NOT NULL);
+      CREATE TRIGGER IF NOT EXISTS completion_history_receipt_insert AFTER INSERT ON completion_receipts BEGIN
+        UPDATE completion_history_meta SET counter = counter + 1 WHERE id = 1;
+      END;
+      CREATE TRIGGER IF NOT EXISTS completion_history_receipt_delete AFTER DELETE ON completion_receipts BEGIN
+        UPDATE completion_history_meta SET counter = counter + 1 WHERE id = 1;
+      END;
+      CREATE TRIGGER IF NOT EXISTS completion_history_receipt_update AFTER UPDATE ON completion_receipts
+        WHEN OLD.id IS NOT NEW.id OR OLD.bot_id IS NOT NEW.bot_id OR OLD.thread_id IS NOT NEW.thread_id OR OLD.pkg IS NOT NEW.pkg
+          OR OLD.operation IS NOT NEW.operation OR OLD.record_id IS NOT NEW.record_id OR OLD.state IS NOT NEW.state
+          OR OLD.last_delivered_at IS NOT NEW.last_delivered_at OR OLD.delivery_kind IS NOT NEW.delivery_kind
+          OR (OLD.last_error IS NULL) <> (NEW.last_error IS NULL)
+      BEGIN
+        UPDATE completion_history_meta SET counter = counter + 1 WHERE id = 1;
+      END;
+      CREATE TRIGGER IF NOT EXISTS completion_history_subscription_insert AFTER INSERT ON subscriptions
+        WHEN EXISTS (SELECT 1 FROM completion_receipts WHERE id = NEW.id)
+      BEGIN
+        UPDATE completion_history_meta SET counter = counter + 1 WHERE id = 1;
+      END;
+      CREATE TRIGGER IF NOT EXISTS completion_history_subscription_delete AFTER DELETE ON subscriptions
+        WHEN EXISTS (SELECT 1 FROM completion_receipts WHERE id = OLD.id)
+      BEGIN
+        UPDATE completion_history_meta SET counter = counter + 1 WHERE id = 1;
+      END;
+    `);
+    this.db.prepare("INSERT OR IGNORE INTO completion_history_meta (id, generation, counter) VALUES (1, ?, 0)").run(randomUUID());
     // These are durable Bot watches, not historical provenance. Rebind their
     // package selectors before reconnecting; the old sockets are no longer served.
     this.db.exec(`UPDATE subscriptions SET pkg = CASE pkg
@@ -117,7 +153,7 @@ export class McpEventSubscriptions {
       });
     }
     if (occurrenceRuntime) this.occurrences = new OccurrenceSubscriptions(this.db, workspace, env, occurrenceRuntime,
-      () => this.records.size + this.setups.size + (this.occurrences?.size ?? 0), () => this.onChange?.());
+      () => this.records.size + this.setups.size + (this.occurrences?.size ?? 0), () => this.changed());
   }
 
   /** Called once after owner children start; each record retries until its Bot thread is loaded. */
@@ -208,7 +244,7 @@ export class McpEventSubscriptions {
       state.state = "active";
       this.setups.delete(state);
       this.records.set(state.id, state);
-      this.onChange?.();
+      this.changed();
       this.watchClosed(state);
       if (state.pending) void this.flush(state);
       return { subscription: publicView(state), value };
@@ -232,6 +268,61 @@ export class McpEventSubscriptions {
     const row = this.db.prepare("SELECT id, state, last_delivered_at, last_error, delivery_kind FROM completion_receipts WHERE id = ?").get(id) as
       { id: string; state: CompletionReceipt["state"]; last_delivered_at: number | null; last_error: string | null; delivery_kind: CompletionReceipt["lastDeliveryKind"] } | undefined;
     return row ? { id: row.id, state: row.state, lastDeliveredAt: row.last_delivered_at, lastError: row.last_error, lastDeliveryKind: row.delivery_kind } : null;
+  }
+
+  private changed(): void {
+    this.onChange?.();
+    this.announce(true);
+  }
+
+  private announce(force = false): void {
+    if (this.closed || !this.db.isOpen) return;
+    const { counter } = this.db.prepare("SELECT counter FROM completion_history_meta WHERE id = 1").get() as { counter: number };
+    if (!force && counter === this.announced) return;
+    this.announced = counter;
+    this.onSubscriptionsChange?.();
+  }
+
+  private historyReceipt(row: CompletionHistoryRow): CompletionHistoryReceipt {
+    const uncertain = row.state === "unknown" || row.state === "cancelled" && !!row.has_error;
+    return completionHistoryReceipt.parse({
+      id: row.id, botId: row.bot_id, threadId: row.thread_id, pkg: row.pkg, operation: row.operation, recordId: row.record_id,
+      state: row.state, lastDeliveredAt: row.last_delivered_at, lastDeliveryKind: row.delivery_kind ?? null,
+      lastError: uncertain ? "native_admission_unknown" : row.has_error ? "diagnostic_withheld" : null,
+      nativeAdmissionUncertain: uncertain, subscriptionPresent: !!row.present,
+    });
+  }
+
+  /** Operator receipt history: retained completions outlive their watches. Fixed
+   * diagnostic codes only; never the stored error text or read arguments. */
+  completionHistory(input: CompletionHistoryListInput): CompletionHistoryPage {
+    if (this.closed) throw new Error("subscription owner is closing");
+    if (input.offset > 0 && !input.revision) throw new Error("completion paging requires the revision from offset 0");
+    this.db.exec("BEGIN");
+    try {
+      const meta = this.db.prepare("SELECT generation, counter FROM completion_history_meta WHERE id = 1").get() as { generation: string; counter: number };
+      const filters = [input.botId ?? null, input.threadId ?? null, input.package ?? null, input.operation ?? null, input.recordId ?? null, input.state ?? null];
+      const revision = stateHash([meta.generation, meta.counter, filters]);
+      if (input.revision && input.revision !== revision) throw new Error("completion observation changed; restart paging");
+      const where: string[] = [], params: Array<string | number> = [];
+      for (const [column, value] of [["bot_id", input.botId], ["thread_id", input.threadId], ["pkg", input.package], ["operation", input.operation], ["record_id", input.recordId], ["state", input.state]] as const)
+        if (value !== undefined) { where.push(`c.${column} = ?`); params.push(value); }
+      const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM completion_receipts c${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`)
+        .get(...params) as { n: number }).n;
+      const rows = this.db.prepare(`SELECT ${completionHistoryColumns}
+        FROM completion_receipts c${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY c.id ASC LIMIT ? OFFSET ?`)
+        .all(...params, input.limit, input.offset) as CompletionHistoryRow[];
+      this.db.exec("COMMIT");
+      const nextOffset = input.offset + input.limit < total ? input.offset + input.limit : null;
+      return { completions: rows.map(row => this.historyReceipt(row)), revision, total, nextOffset, truncated: nextOffset !== null };
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+
+  /** One exact retained receipt regardless of Bot, filters or watch presence. */
+  completionHistoryGet(id: string): CompletionHistoryReceipt | null {
+    if (this.closed) throw new Error("subscription owner is closing");
+    const row = this.db.prepare(`SELECT ${completionHistoryColumns} FROM completion_receipts c WHERE c.id = ?`).get(id) as CompletionHistoryRow | undefined;
+    return row ? this.historyReceipt(row) : null;
   }
 
   /** Persist intent before mutation. This owner, not a stdio child, closes the send/watch crash gap. */
@@ -307,7 +398,7 @@ export class McpEventSubscriptions {
         this.setups.delete(state);
         this.records.set(state.id, state);
         this.watchClosed(state);
-        this.onChange?.();
+        this.changed();
       } catch (error) { state.abort.abort(); await state.socket?.close(); throw error; }
       finally { this.setups.delete(state); }
     }
@@ -347,6 +438,7 @@ export class McpEventSubscriptions {
       this.db.prepare("UPDATE completion_receipts SET state = 'pending', last_error = NULL WHERE id = ?").run(state.id);
       state.state = "active";
       state.admitting = false;
+      this.announce();
       if (state.pending) void this.flush(state);
       return response(initial);
     } catch (error) {
@@ -394,7 +486,7 @@ export class McpEventSubscriptions {
     state.abort.abort();
     if (state.retry) clearTimeout(state.retry);
     await state.socket?.close();
-    if (!this.closed) this.onChange?.();
+    if (!this.closed) this.changed();
   }
 
   private async finishCompletion(state: RecordState, outcome: "observed" | "delivered" | "cancelled"): Promise<void> {
@@ -412,7 +504,7 @@ export class McpEventSubscriptions {
     state.abort.abort();
     if (state.retry) clearTimeout(state.retry);
     await state.socket?.close();
-    this.onChange?.();
+    this.changed();
   }
 
   private fail(state: RecordState, error: unknown): void {
@@ -422,7 +514,7 @@ export class McpEventSubscriptions {
     this.db.prepare("UPDATE subscriptions SET last_error = ? WHERE id = ?").run(state.lastError, state.id);
     if (state.completion) this.db.prepare("UPDATE completion_receipts SET state = ?, last_error = ? WHERE id = ?")
       .run(state.submissionUnknown ? "unknown" : "error", state.lastError, state.id);
-    if (state.completion) this.onChange?.();
+    if (state.completion) this.changed();
   }
 
   private retryCompletion(state: RecordState): void {
@@ -460,7 +552,7 @@ export class McpEventSubscriptions {
     state.abort.abort();
     if (state.retry) clearTimeout(state.retry);
     await state.socket?.close();
-    this.onChange?.();
+    this.changed();
     return { id, removed: true };
   }
 
@@ -560,6 +652,7 @@ export class McpEventSubscriptions {
         this.db.prepare("DELETE FROM subscriptions WHERE id = ?").run(state.id);
         this.records.delete(state.id);
         state.abort.abort();
+        this.changed();
         return;
       }
       await this.validate(target);
@@ -607,6 +700,7 @@ export class McpEventSubscriptions {
             state.state = "active"; state.lastError = null;
             this.db.prepare("UPDATE subscriptions SET last_error = NULL WHERE id = ?").run(state.id);
             this.db.prepare("UPDATE completion_receipts SET state = 'pending', last_error = NULL WHERE id = ?").run(state.id);
+            this.announce();
             continue;
           }
           const encoded = JSON.stringify(value);
@@ -626,6 +720,7 @@ export class McpEventSubscriptions {
                // Persist before the native send. Crash or a lost ACK is ambiguous, never a safe replay.
                this.db.prepare("UPDATE completion_receipts SET state = 'unknown', delivery_kind = ? WHERE id = ?").run(terminal ? "terminal" : "update", state.id);
                state.submissionUnknown = true;
+               this.announce();
              } : undefined);
           // Admission ACK only: later snapshots must not wait for the agent's turn to finish.
           state.lastDeliveredAt = Date.now();
@@ -638,7 +733,7 @@ export class McpEventSubscriptions {
           if (state.completion && !this.closed && !state.abort.signal.aborted) {
             this.db.prepare("UPDATE completion_receipts SET state = 'pending', last_delivered_at = ?, last_error = NULL WHERE id = ?").run(state.lastDeliveredAt, state.id);
             state.submissionUnknown = false;
-            this.onChange?.();
+            this.changed();
           }
         } catch (error) {
           if (state.completion && error instanceof McpDeliveryRejected) state.submissionUnknown = false;

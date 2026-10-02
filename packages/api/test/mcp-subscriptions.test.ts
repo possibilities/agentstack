@@ -8,6 +8,8 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { z } from "zod";
 import { operation, type CompletionWatch, type InvocationContext } from "../src/operation.js";
+import { OperationRejected } from "../src/execute.js";
+import { completionHistoryListInput } from "../src/completion-history.js";
 import { McpEventSubscriptions, type EventValue } from "../src/mcp-subscriptions.js";
 import { serveSocket } from "../src/socket.js";
 import { socketPath } from "../src/workspace.js";
@@ -449,4 +451,241 @@ test("mapped admission watches retain exact identity, acknowledge attention with
     assert.equal(delivered.length, 3, "ambiguous intermediate admission freezes subsequent delivery and ID retries");
     assert.equal(service.status(caller, unknownReceipt).completions[0]?.state, "unknown");
   } finally { await service.close(); await socket.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("operator completion history pages retained receipts across all states without leaking arguments or error text", { timeout: 30_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "as-history-"));
+  await manifest(root, "sample");
+  const env = { STACK_STATE_DIR: root };
+  const watch: CompletionWatch = { topic: "changed", readOperation: "observation", idArgument: "requestId", terminalField: "result", defaultWhen: [],
+    defaultOnForBot: true, updateField: "update", initialValueField: "observation", scope: { input: "requestId", prefix: "request:" },
+    readArguments: { requestId: { input: "requestId" }, botId: { invocation: "botId" }, threadId: { invocation: "threadId" }, tag: { input: "tag" } } };
+  const values = new Map<string, { result: Record<string, unknown> | null; update: Record<string, unknown> | null }>();
+  const failReads = new Set<string>();
+  const failDeliveries = new Set<string>();
+  const refuseAdmissions = new Set<string>();
+  const socket = await serveSocket({
+    info: { name: "sample", description: "Test.", transportDescription: "Test.", path: socketPath("sample", env) }, context: {},
+    operations: [
+      operation({ name: "admit", description: "Admit.", input: z.strictObject({ requestId: z.uuid(), tag: z.string() }), output: z.object({ admitted: z.string() }), completionWatch: watch,
+        async call(_ctx, { requestId }) {
+          if (refuseAdmissions.has(requestId)) throw new OperationRejected("CANARY-ERROR-refused");
+          if (!values.has(requestId)) values.set(requestId, { result: null, update: null });
+          return { admitted: requestId };
+        } }),
+      operation({ name: "observation", description: "Read.", input: z.strictObject({ requestId: z.uuid(), botId: z.string(), threadId: z.string(), tag: z.string() }),
+        output: z.object({ result: z.object({}).passthrough().nullable(), update: z.object({}).passthrough().nullable() }), annotations: { readOnlyHint: true },
+        async call(_ctx, { requestId }) {
+          if (failReads.has(requestId)) throw new Error("CANARY-ERROR-read-failed");
+          return values.get(requestId) ?? { result: null, update: null };
+        } }),
+    ], events: { topics: { changed: "Changed." }, scope: { description: "Exact request.", example: "request:UUID", required: true, valid: (_ctx, scope) => /^request:[0-9a-f-]{36}$/.test(scope) } },
+  });
+  const delivered: EventValue[] = [];
+  let announcements = 0, announcedBeforeSend = -1;
+  let service = new McpEventSubscriptions(env, async () => undefined, async (event, _signal, authorize, submitting) => {
+    await authorize(); submitting?.(); announcedBeforeSend = announcements; delivered.push(event);
+    const requestId = (event.subscription.readArguments as { requestId?: string }).requestId;
+    if (requestId && failDeliveries.has(requestId)) throw new Error("CANARY-ERROR-delivery-lost");
+  }, undefined, undefined, root);
+  service.onSubscriptionsChange = () => { announcements++; };
+  const history = (input: Record<string, unknown> = {}) => service.completionHistory(completionHistoryListInput.parse(input));
+  const get = (id: string) => service.completionHistoryGet(id)!;
+  const admit = async (requestId: string) => (await service.callAndWatch("sample", "admit", { requestId, tag: `CANARY-READARG-${requestId}` }, caller)).subscription as { id: string };
+  try {
+    let revision = history().revision;
+    let before = announcements;
+    const pendingId = randomUUID();
+    const pendingReceipt = (await admit(pendingId)).id;
+    assert.ok(announcements > before, "watch creation announces a subscription change");
+    assert.notEqual(history().revision, revision);
+    assert.deepEqual(get(pendingReceipt), {
+      id: pendingReceipt, botId: caller.botId, threadId: caller.threadId, pkg: "sample", operation: "admit", recordId: pendingId,
+      state: "pending", lastDeliveredAt: null, lastDeliveryKind: null, lastError: null, nativeAdmissionUncertain: false, subscriptionPresent: true,
+    });
+
+    const observedId = randomUUID();
+    values.set(observedId, { result: { done: true }, update: null });
+    before = announcements;
+    const observed = await service.callAndWatch("sample", "admit", { requestId: observedId, tag: "CANARY-READARG-o" }, caller);
+    assert.equal((observed.subscription as { state: string }).state, "observed");
+    const observedReceipt = (observed.subscription as { id: string }).id;
+    assert.ok(announcements > before);
+    assert.equal(get(observedReceipt).subscriptionPresent, false, "a watch that observes terminal on its first read retires immediately");
+
+    const errorId = randomUUID();
+    failReads.add(errorId);
+    const errorReceipt = (await admit(errorId)).id;
+    await until(() => service.completionHistoryGet(errorReceipt)?.state === "error");
+    assert.equal(get(errorReceipt).lastError, "diagnostic_withheld");
+    assert.equal(get(errorReceipt).nativeAdmissionUncertain, false);
+    assert.equal(get(errorReceipt).subscriptionPresent, true);
+
+    before = announcements;
+    revision = history().revision;
+    values.set(pendingId, { result: null, update: { phase: "awaiting_input" } });
+    socket.publish?.("changed", `request:${pendingId}`);
+    await until(() => service.completionHistoryGet(pendingReceipt)?.lastDeliveryKind === "update" && service.completionHistoryGet(pendingReceipt)?.state === "pending");
+    assert.ok(announcedBeforeSend > before, "the pre-dispatch unknown write is announced before the native send returns");
+    assert.ok(announcements > announcedBeforeSend, "the pending acknowledgement is announced");
+    assert.notEqual(history().revision, revision);
+    assert.equal(get(pendingReceipt).state, "pending");
+    assert.equal(get(pendingReceipt).lastDeliveryKind, "update");
+    assert.ok(get(pendingReceipt).lastDeliveredAt !== null);
+
+    const doneId = randomUUID();
+    const doneReceipt = (await admit(doneId)).id;
+    before = announcements;
+    values.set(doneId, { result: { finished: true }, update: null });
+    socket.publish?.("changed", `request:${doneId}`);
+    await until(() => service.completionHistoryGet(doneReceipt)?.state === "delivered");
+    assert.ok(announcements > before);
+    assert.equal(get(doneReceipt).lastDeliveryKind, "terminal");
+    assert.equal(get(doneReceipt).subscriptionPresent, false, "a retired watch keeps its receipt");
+
+    const unknownId = randomUUID();
+    const unknownReceipt = (await admit(unknownId)).id;
+    failDeliveries.add(unknownId);
+    values.set(unknownId, { result: null, update: { phase: "awaiting_input" } });
+    socket.publish?.("changed", `request:${unknownId}`);
+    await until(() => service.completionHistoryGet(unknownReceipt)?.state === "unknown");
+    assert.equal(get(unknownReceipt).lastError, "native_admission_unknown");
+    assert.equal(get(unknownReceipt).nativeAdmissionUncertain, true);
+    assert.equal(get(unknownReceipt).lastDeliveryKind, "update");
+    assert.equal(get(unknownReceipt).subscriptionPresent, true);
+
+    const cancelReceipt = (await admit(randomUUID())).id;
+    before = announcements;
+    await service.operatorRemove(cancelReceipt, service.operatorList().find(row => row.id === cancelReceipt)!.revision);
+    assert.ok(announcements > before);
+    const cancelled = get(cancelReceipt);
+    assert.equal(cancelled.state, "cancelled");
+    assert.equal(cancelled.subscriptionPresent, false);
+    assert.equal(cancelled.lastError, null);
+    assert.equal(cancelled.nativeAdmissionUncertain, false);
+
+    const errorCancelId = randomUUID();
+    failReads.add(errorCancelId);
+    const errorCancelReceipt = (await admit(errorCancelId)).id;
+    await until(() => service.completionHistoryGet(errorCancelReceipt)?.state === "error");
+    await service.operatorRemove(errorCancelReceipt, service.operatorList().find(row => row.id === errorCancelReceipt)!.revision);
+    const cancelledError = get(errorCancelReceipt);
+    assert.equal(cancelledError.state, "cancelled");
+    assert.equal(cancelledError.lastError, null, "cancellation of a known-failed watch withholds nothing uncertain");
+    assert.equal(cancelledError.nativeAdmissionUncertain, false);
+
+    const refusedId = randomUUID();
+    refuseAdmissions.add(refusedId);
+    before = announcements;
+    const total = history().total;
+    await assert.rejects(service.callAndWatch("sample", "admit", { requestId: refusedId, tag: "CANARY-READARG-r" }, caller), /send refused before mutation/);
+    assert.ok(announcements > before, "discarding a proven-unsent reservation announces");
+    assert.equal(history().total, total, "a refused fresh send retains no receipt");
+
+    const file = join(root, "event-subscriptions.sqlite");
+    const reads = new DatabaseSync(file);
+    try {
+      const snapshot = () => JSON.stringify([db_all(reads, "subscriptions"), db_all(reads, "completion_receipts"), db_all(reads, "completion_history_meta")]);
+      const beforeReads = snapshot();
+      for (let n = 0; n < 20; n++) { history(); history({ limit: 3, state: "pending" }); service.completionHistoryGet(pendingReceipt); service.completionHistoryGet(randomUUID()); }
+      assert.equal(snapshot(), beforeReads, "reads never write");
+    } finally { reads.close(); }
+
+    for (const output of [history(), history({ state: "error" }), service.completionHistoryGet(errorReceipt), service.completionHistoryGet(unknownReceipt)])
+      assert.ok(!JSON.stringify(output).includes("CANARY"), "history projections withhold arguments and error text");
+
+    assert.throws(() => service.completionHistory(completionHistoryListInput.parse({ offset: 100 })), /requires the revision from offset 0/);
+    for (const bad of [{ limit: 0 }, { limit: 101 }, { recordId: "not-a-uuid" }, { state: "bogus" }, { revision: "shallow" }])
+      assert.equal(completionHistoryListInput.safeParse(bad).success, false, JSON.stringify(bad));
+
+    const revisionBefore = history().revision;
+    const receiptsBefore = history({ limit: 100 }).completions;
+    await service.close();
+    service = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
+    service.onSubscriptionsChange = () => { announcements++; };
+    assert.equal(history().revision, revisionBefore, "restart without receipt changes keeps the paging revision");
+    assert.deepEqual(history({ limit: 100 }).completions, receiptsBefore);
+    assert.equal(get(unknownReceipt).state, "unknown", "an uncertain admission stays frozen across restart");
+    assert.equal(get(doneReceipt).subscriptionPresent, false, "retired watches remain listed");
+
+    const unknownRow = service.operatorList().find(row => row.id === unknownReceipt)!;
+    await service.operatorRemove(unknownReceipt, unknownRow.revision);
+    const cancelledUnknown = get(unknownReceipt);
+    assert.equal(cancelledUnknown.state, "cancelled");
+    assert.equal(cancelledUnknown.lastError, "native_admission_unknown", "cancellation preserves uncertainty only for an ambiguous admission");
+    assert.equal(cancelledUnknown.nativeAdmissionUncertain, true);
+    assert.equal(cancelledUnknown.subscriptionPresent, false);
+  } finally {
+    await service.close();
+    await socket.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const db_all = (db: DatabaseSync, table: string) => db.prepare(`SELECT * FROM ${table} ORDER BY 1`).all();
+
+test("operator completion history pages beyond the 128-receipt conversation cap with exact filters and revision fencing", async () => {
+  const root = await mkdtemp(join(tmpdir(), "as-history-pages-"));
+  const env = { STACK_STATE_DIR: root };
+  const file = join(root, "event-subscriptions.sqlite");
+  let service = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
+  await service.close();
+  const states = ["delivered", "pending", "error", "cancelled"] as const;
+  const receiptIds = Array.from({ length: 300 }, () => randomUUID());
+  const requestIds = Array.from({ length: 300 }, () => randomUUID());
+  const db = new DatabaseSync(file);
+  try {
+    const insert = db.prepare("INSERT INTO completion_receipts (id, bot_id, thread_id, pkg, operation, record_id, state, last_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    receiptIds.forEach((id, n) => insert.run(id, n % 5 === 0 ? "bot-2" : "bot-1", "main", n % 3 === 0 ? "probe" : "sample", n % 3 === 0 ? "sync" : "send", requestIds[n],
+      states[n % 4], n % 4 === 2 ? `CANARY-ERROR-${n}` : null));
+  } finally { db.close(); }
+  const sortedIds = [...receiptIds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  service = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
+  try {
+    const parse = completionHistoryListInput.parse;
+    const first = service.completionHistory(parse({ limit: 100 }));
+    assert.equal(first.total, 300);
+    assert.equal(first.completions.length, 100);
+    assert.equal(first.truncated, true);
+    assert.equal(first.nextOffset, 100);
+    const second = service.completionHistory(parse({ limit: 100, offset: 100, revision: first.revision }));
+    const third = service.completionHistory(parse({ limit: 100, offset: 200, revision: first.revision }));
+    assert.equal(third.completions.length, 100);
+    assert.equal(third.nextOffset, null);
+    assert.equal(third.truncated, false);
+    const ids = [...first.completions, ...second.completions, ...third.completions].map(row => row.id);
+    assert.equal(new Set(ids).size, 300, "pages are disjoint");
+    assert.deepEqual(ids, sortedIds, "pages order by receipt ID, never by time");
+    const deep = service.completionHistoryGet(sortedIds[250]!);
+    assert.equal(deep?.id, sortedIds[250], "exact get reads outside paged windows");
+
+    const status = service.status(caller);
+    assert.equal(status.completions.length, 128, "the conversation status view stays capped");
+    assert.equal(status.completionsTruncated, true);
+
+    assert.equal(service.completionHistory(parse({ state: "error" })).total, 75);
+    assert.equal(service.completionHistory(parse({ botId: "bot-2" })).total, 60);
+    assert.equal(service.completionHistory(parse({ package: "probe" })).total, 100);
+    assert.equal(service.completionHistory(parse({ operation: "send" })).total, 200);
+    assert.equal(service.completionHistory(parse({ recordId: requestIds[7] })).total, 1);
+    assert.equal(service.completionHistory(parse({ state: "error", package: "probe" })).total, 25);
+
+    const filtered = service.completionHistory(parse({ state: "error" }));
+    assert.throws(() => service.completionHistory(parse({ state: "delivered", revision: filtered.revision })), /restart paging/, "a revision binds its filter set");
+    assert.throws(() => service.completionHistory(parse({ offset: 50 })), /requires the revision/);
+
+    const writes = new DatabaseSync(file);
+    try { writes.prepare("UPDATE completion_receipts SET state = 'delivered' WHERE id = ?").run(receiptIds[1]!); } finally { writes.close(); }
+    assert.throws(() => service.completionHistory(parse({ limit: 100, offset: 100, revision: first.revision })), /restart paging/, "a receipt change between pages fences stale paging");
+
+    const fresh = service.completionHistory(parse({}));
+    const noise = new DatabaseSync(file);
+    try { noise.prepare("UPDATE completion_receipts SET last_error = 'CANARY-ERROR-rewritten' WHERE id = ? AND last_error IS NOT NULL").run(receiptIds[2]!); } finally { noise.close(); }
+    assert.equal(service.completionHistory(parse({})).revision, fresh.revision, "projection-irrelevant error text churn must not bump the revision");
+
+    for (const page of [first, second, third]) assert.ok(!JSON.stringify(page).includes("CANARY"));
+  } finally {
+    await service.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
