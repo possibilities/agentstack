@@ -40,6 +40,26 @@ const rawStatus = (url, headers) => new Promise((resolve, reject) => {
   const request = httpRequest(url, { headers }, response => { response.resume(); response.once("end", () => resolve(response.statusCode)); });
   request.once("error", reject); request.end();
 });
+async function checkHeader(page) {
+  assert.equal(await page.getByRole("banner", { includeHidden: true }).count(), 1, "exactly one banner landmark");
+  assert.equal(await page.locator("header").count(), 1, "exactly one header element");
+  const geometry = await page.evaluate(() => {
+    const header = document.querySelector("header"), main = document.querySelector("main");
+    const banner = header.getBoundingClientRect();
+    const overlaps = [];
+    const texts = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+    while (texts.nextNode()) {
+      if (!texts.currentNode.textContent.trim()) continue;
+      const range = document.createRange(); range.selectNodeContents(texts.currentNode);
+      for (const rect of range.getClientRects()) {
+        if (rect.width && rect.height && rect.top < banner.bottom && rect.bottom > banner.top && rect.left < banner.right && rect.right > banner.left)
+          overlaps.push(texts.currentNode.textContent.trim().slice(0, 80));
+      }
+    }
+    return { scrollY, width: innerWidth, height: innerHeight, headerPosition: getComputedStyle(header).position, overlaps: overlaps.slice(0, 10) };
+  });
+  assert.deepEqual(geometry.overlaps, [], `header must not cover content: ${JSON.stringify(geometry)}`);
+}
 async function nextPlatform(port) {
   const require = createRequire(import.meta.url);
   const child = spawn(process.execPath, [require.resolve("next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(port)], {
@@ -254,13 +274,39 @@ try {
     await page.getByText("Second saved connection", { exact: true }).waitFor();
     await page.getByText("Outcome unknown", { exact: true }).waitFor();
     assert.ok(!(await page.content()).match(/refreshToken|redemptionSecret|privateKey/));
+    // Exercise scrolling even without capture output; a full-page capture alone
+    // cannot detect sticky header occlusion on short viewports.
+    const layouts = [];
+    for (const colorScheme of ["light", "dark"]) for (const width of [1200, 390]) for (const height of [900, 360]) {
+      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await page.setViewportSize({ width, height });
+      const bottom = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
+      for (let y = 0; y < bottom + height / 2; y += height / 2) {
+        await page.evaluate(y => scrollTo(0, y), Math.min(y, bottom));
+        await checkHeader(page);
+      }
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "home reflows without overflow");
+      layouts.push({ colorScheme, width, height, singleBanner: true, headerOcclusion: false, overflow: false });
+      for (const label of ["Saved laptop platform", "Second saved connection"]) {
+        const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: label, exact: true }) });
+        const url = card.getByText(remoteUiOrigin, { exact: true });
+        const note = card.getByText("Saved — not a live connection.", { exact: true });
+        assert.equal(await url.count(), 1, "Platform UI URL has its own text element");
+        assert.equal(await note.count(), 1, "saved status is separate from the URL");
+        const urlBox = await url.boundingBox(), noteBox = await note.boundingBox();
+        assert.ok(noteBox.y >= urlBox.y + urlBox.height, "saved status appears below the Platform UI URL");
+      }
+    }
     if (evidence) {
       await mkdir(evidence, { recursive: true });
       for (const [label, colorScheme, width] of [["light", "light", 1200], ["dark", "dark", 1200], ["narrow", "light", 390]]) {
         await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
         await page.setViewportSize({ width, height: 900 });
+        await page.evaluate(() => scrollTo(0, 0));
+        await checkHeader(page);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "home reflows without overflow");
         await page.screenshot({ path: join(evidence, `home-${label}.png`), fullPage: true });
+        await checkHeader(page);
       }
       await page.reload();
       await page.getByText("Phone setup pending", { exact: true }).waitFor();
@@ -268,13 +314,14 @@ try {
       assert.equal(await page.evaluate(() => document.activeElement.textContent), "Skip to connections");
       await page.keyboard.press("Enter");
       await page.keyboard.press("Tab");
-      await writeFile(join(evidence, "render-check.json"), JSON.stringify({ pageErrors: errors, cspViolations: violations, localStorageEntries: 0, fragmentErased: true, keyboardSkipLink: true, narrowOverflow: false }, null, 2));
+      await writeFile(join(evidence, "render-check.json"), JSON.stringify({ pageErrors: errors, cspViolations: violations, localStorageEntries: 0, fragmentErased: true, keyboardSkipLink: true, narrowOverflow: false, layouts }, null, 2));
     }
     auth.rotate();
     await page.getByText("Client session expired.", { exact: false }).waitFor();
     await page.getByText("Phone setup pending", { exact: true }).waitFor();
+    await checkHeader(page);
     if (evidence) await page.screenshot({ path: join(evidence, "home-last-good-expired.png"), fullPage: true });
-    pass("real fragment exchange, CSP hydration, no browser secrets, retained peers/pending/unknown states, light/dark/narrow/keyboard and last-good expiry");
+    pass("real fragment exchange, CSP hydration, no browser secrets, retained states, single unoccluding header, separate URL/status, light/dark/narrow/short/keyboard and last-good expiry");
     await browser.close(); browser = null;
   }
 

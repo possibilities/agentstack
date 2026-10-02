@@ -77,7 +77,8 @@ export function ConnectionsHome() {
           {peers?.connections.map(peer => <li key={peer.id} className="client-peer">
             <div className="client-peer-title"><h3 className="font-medium">{peer.label}</h3><Badge variant="outline">{peer.pendingOpen ? "Open unresolved" : peer.expiresAt <= Date.now() ? "Credential expired" : "Saved remote"}</Badge></div>
             <p className="break-words font-mono text-sm">{peer.connection.deviceOrigin}</p>
-            <p className="text-sm text-muted-foreground">{peer.connection.uiOrigin ? `Platform UI: ${peer.connection.uiOrigin}` : "This platform does not advertise a UI."} Saved is not a live connection.</p>
+            <p className="text-sm text-muted-foreground">{peer.connection.uiOrigin ? <>Platform UI:<span className="block break-words font-mono">{peer.connection.uiOrigin}</span></> : "This platform does not advertise a UI."}</p>
+            <p className="text-sm text-muted-foreground">Saved — not a live connection.</p>
           </li>)}
         </ul>
         {peers && !peers.connections.length ? <p className="text-sm text-muted-foreground">No saved remote connections.</p> : null}
