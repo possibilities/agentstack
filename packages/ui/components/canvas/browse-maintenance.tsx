@@ -30,7 +30,8 @@ export function ProfileMaintenanceDialog({ profile, kind, onClose }: { profile: 
   const origins = siteDataOrigins(text);
   const controls = useStateFlow({ operations: stateOperations(store.call, "browse", browseMaintenanceOperations[kind],
     kind === "reset" ? { profileId: profile.id } : { profileId: profile.id, origins: origins.origins, categories }),
-    recoveryKey: `browse:${kind}:${profile.id}`, observe: state.browserProfiles.at, onReceipt: store.refreshBrowse });
+    recoveryKey: `browse:${kind}:${profile.id}`, observe: state.browserProfiles.at,
+    onReceipt: (receipt) => { if (receipt.status !== "running") store.refreshBrowse(); } });
   const locked = controls.flow.phase !== "idle";
   const busy = ["preparing", "applying", "checking"].includes(controls.flow.phase);
   const access = localOperations(state, "browse", Object.values(browseMaintenanceOperations[kind]));
@@ -41,7 +42,7 @@ export function ProfileMaintenanceDialog({ profile, kind, onClose }: { profile: 
     : kind === "site" ? origins.error ?? (!categories.length ? "Select cookies, storage and/or cache explicitly." : null) : null;
   const title = kind === "reset" ? "Reset profile" : "Clear site data";
   return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
-    <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl" showCloseButton={!busy}>
+    <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-xl [&>*]:min-w-0" showCloseButton={!busy}>
       <DialogHeader><DialogTitle>{title} · {profileName(profile)}</DialogTitle>
         <DialogDescription>{kind === "reset" ? "Old sign-ins, tabs and all old volume data are lost. The profile ID, default and assignment stay; generation advances and a fresh exact provider volume/instance is explicitly created." : "Clear only the selected origins and categories in this exact running profile."}</DialogDescription>
       </DialogHeader>
@@ -108,7 +109,7 @@ function ProfileFence({ profile, requestId }: { profile: BrowserProfile; request
     {access.available ? <Button size="xs" variant="outline" disabled={disabled} onClick={() => { setError(null); setConfirming(true); }}>Release fence…</Button> : null}
     {state.status.browse !== "open" ? <p className={hint}>The Browse connection is not open.</p> : null}
     <Dialog open={confirming} onOpenChange={(open) => { if (!pending) setConfirming(open); }}>
-      <DialogContent><DialogHeader><DialogTitle>Release profile fence?</DialogTitle><DialogDescription>Confirm you inspected request {requestId}, its receipt and exact native resources. This only acknowledges inspection for generation {profile.generation}; partial and unknown results stay that way.</DialogDescription></DialogHeader>
+      <DialogContent className="[&>*]:min-w-0"><DialogHeader><DialogTitle>Release profile fence?</DialogTitle><DialogDescription>Confirm you inspected request {requestId}, its receipt and exact native resources. This only acknowledges inspection for generation {profile.generation}; partial and unknown results stay that way.</DialogDescription></DialogHeader>
         {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
         <DialogFooter><Button variant="ghost" disabled={pending} onClick={() => setConfirming(false)}>Cancel</Button><Button disabled={disabled || !access.available} onClick={() => void release()}>Release fence</Button></DialogFooter>
       </DialogContent>

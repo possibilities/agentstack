@@ -10,22 +10,59 @@ import { createRequire } from "node:module";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { api as botsApi } from "../../bots/dist/api.js";
-import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@stack/api";
+import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath, StateJournal } from "@stack/api";
 import { anyObject, fixtureDoc, freePort as port, gatewayRoot, ui, z, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
-const dir = await mkdtemp(join("/tmp", "as-browse-ui-"));
+const dir = await mkdtemp(join("/private/var/folders/9g/l0rgs8rs2_9__kqn0smr9tnh0000gp/T/opencode", "browse-"));
 const evidence = process.env.BROWSE_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
-const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
+const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("STACK_"))), STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 const { api: browseApi } = await import("../../browse/dist/api.js");
 const served = new Map(), calls = [];
 let websocket, next, browser, neko, page, log = "";
 
 const uuid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const iso = (offset = 0) => new Date(Date.now() + offset).toISOString();
+const journal = new StateJournal(join(dir, "browse-maintenance.sqlite"), "browse");
+let volumeRevision = 1, changeVolumePage = false, volumeUnavailable = false;
+let volumes = Array.from({ length: 101 }, (_, n) => ({ id: `volume-${n}`, name: `stack-profile-fixture-${n}`, providerRevision: "fixture-provider",
+  tags: { "dev.stack.role": "durable-profile", "dev.stack.session": `fixture-${n}`, "dev.stack.lease": "a".repeat(32) },
+  blockedBy: n === 1 ? ["Volume is referenced by a Browser session receipt (including incomplete/disposable leases)"] : n === 2 ? ["Volume is mounted by a provider instance"] : [] }));
+const maintenancePlan = (kind, input) => {
+  const resources = input.ids ?? input.volumeIds ?? [input.profileId];
+  assert.ok(resources.length && resources.length <= 100, "no empty maintenance selection");
+  const profile = state.profiles.find((row) => row.id === input.profileId);
+  return journal.plan({ subject: profile ? { kind: "profile", id: profile.id } : null, action: `browser_${kind}`, revision: JSON.stringify([kind, input, volumeRevision, profile?.generation]),
+    resources: [...resources, ...(profile ? ["provider-instance-exact-123", "provider-volume-exact-456"] : [])],
+    blockedBy: profile?.id === uuid(1) ? ["Stop and verify the assigned Bot before profile maintenance", "Close all selected/uncertain controllers before profile maintenance"] : [],
+    retained: ["Other profiles, foreign/occupied volumes, external copies/backups and other owners' history remain", "Minimal plan/receipt and handoff admission digests remain; unknown effects never retry",
+      "Scoped cache means CacheStorage only; HTTP browser cache and persisted navigation history are unsupported and never silently widened"],
+    regeneration: [kind === "reset" ? "Fresh exact provider volume/instance; explicit later sign-in required" : "Later browser activity may recreate data; no navigation or sign-in admitted"] }, { kind, ...input });
+};
+const maintenanceClear = (input) => {
+  const old = journal.existing(input); if (old) return old;
+  const { plan, payload } = journal.getPlan(input.planId);
+  assert.equal(input.expectedRevision, plan.revision); assert.deepEqual(plan.blockedBy, []);
+  journal.begin(input, plan);
+  if (payload.kind === "handoff") {
+    for (const id of payload.ids) Object.assign(handoff(id), { message: "", note: null, issue: null, contentClearedAt: iso(), requestDigest: "retained-digest", revision: handoff(id).revision + 1 });
+    publish("browser_handoffs_changed");
+  } else if (payload.kind === "reset") {
+    state.profiles.find((row) => row.id === payload.profileId).generation++;
+    publish("browser_profiles_changed");
+  } else if (payload.kind === "volume") { volumes = volumes.filter((row) => !payload.volumeIds.includes(row.id)); volumeRevision++; }
+  return journal.finish(input.requestId, "completed", plan.resources.map((resource) => ({ resource, outcome: "removed", detail: "Fixture owner effect recorded" })));
+};
+const seedUnknown = (kind, input) => {
+  const plan = maintenancePlan(kind, input);
+  const apply = { planId: plan.id, expectedRevision: plan.revision, requestId: crypto.randomUUID() };
+  journal.begin(apply, plan);
+  journal.finish(apply.requestId, "unknown", [{ resource: "provider-volume-leftover-exact-789", outcome: "retained", detail: "Provider resource remains; inspect before release" }, { resource: "provider-instance-uncertain-exact-012", outcome: "unknown", detail: "Absence not verified" }]);
+  return apply;
+};
 let nekoBase = "";
 const state = {
   profiles: [],
@@ -66,12 +103,32 @@ const handlers = {
   browser_handoff_take: (input) => act("take", input),
   browser_handoff_finish: (input) => act("finish", input),
   browser_profile_create: (input) => {
-    const profile = { id: uuid(100 + state.profiles.length), botId: input.botId, label: input.label, default: false, createdAt: iso(), state: "starting", error: null, observedAt: null, cdpUrl: null, observation: null };
+    const profile = { id: uuid(100 + state.profiles.length), botId: input.botId, label: input.label, default: false, generation: 0, maintenanceRequestId: null, createdAt: iso(), state: "starting", error: null, observedAt: null, cdpUrl: null, observation: null };
     state.profiles.push(profile); publish("browser_profiles_changed"); return profile;
   },
   browser_profile_delete: (input) => {
     assert.equal(input.confirm, "delete");
     state.profiles = state.profiles.filter((item) => item.id !== input.profileId); publish("browser_profiles_changed"); return { deleted: true };
+  },
+  browser_profile_reset_plan: (input) => maintenancePlan("reset", input),
+  browser_site_data_plan: (input) => { assert.ok(input.origins.length); assert.ok(input.categories.length); assert.ok(input.categories.every((category) => ["cookies", "storage", "cache"].includes(category))); return maintenancePlan("site", input); },
+  browser_handoff_history_plan: (input) => maintenancePlan("handoff", input),
+  browser_volume_plan: (input) => maintenancePlan("volume", input),
+  browser_profile_reset_clear: maintenanceClear, browser_site_data_clear: maintenanceClear,
+  browser_handoff_history_clear: maintenanceClear, browser_volume_clear: maintenanceClear,
+  browse_state_receipt_get: ({ requestId }) => ({ receipt: journal.receipt(requestId) }),
+  browse_state_read: () => { throw new Error("Browse state inventory is not observed in this fixture"); },
+  browse_state_fence_release: ({ profileId, requestId, expectedGeneration }) => {
+    const profile = state.profiles.find((row) => row.id === profileId);
+    assert.equal(profile.maintenanceRequestId, requestId); assert.equal(profile.generation, expectedGeneration);
+    assert.ok(["unknown", "partial", "completed"].includes(journal.receipt(requestId).status));
+    profile.maintenanceRequestId = null; publish("browser_profiles_changed"); return { released: true };
+  },
+  browser_volume_list: ({ offset = 0, limit = 100, revision }) => {
+    if (volumeUnavailable) throw new Error("Provider inventory unavailable");
+    if (offset && changeVolumePage) { volumeRevision++; changeVolumePage = false; }
+    if (revision && revision !== String(volumeRevision)) throw new Error("Volume inventory changed; restart paging");
+    return { volumes: volumes.slice(offset, offset + limit), revision: String(volumeRevision), nextOffset: offset + limit < volumes.length ? offset + limit : null };
   },
   agent_browser_status: () => state.tool,
   agent_browser_detect: () => ({ installations: [{ location: "/fixture/agent-browser", version: "0.38.1", source: "stack" }] }),
@@ -102,6 +159,7 @@ try {
     { id: uuid(2), botId: "bot-1", label: "research", default: false, createdAt: iso(-1_800_000), state: "failed", error: "CDP readiness exceeded 35s", observedAt: iso(-5_000), cdpUrl: null, observation: null },
     { id: uuid(3), botId: null, label: "retired", default: false, createdAt: iso(-86_400_000), state: "ready", error: null, observedAt: iso(-5_000), cdpUrl: null, observation: { url: `${nekoBase}/observe/?readOnly=1`, udpPort: 1, follows: "visible-tab", verified: false } },
   ];
+  state.profiles.forEach((row) => Object.assign(row, { generation: 0, maintenanceRequestId: null }));
   state.controllers = [
     { botId: "bot-1", instance: "launch-a", session: "default", profileId: uuid(1), actualProfileId: uuid(1), targetId: "T1", cdpUrl: null, state: "connected", revision: 2, observedAt: iso(-10_000), error: null },
     { botId: "bot-1", instance: "launch-a", session: "research", profileId: uuid(2), actualProfileId: uuid(1), targetId: null, cdpUrl: null, state: "unknown", revision: 3, observedAt: iso(-10_000), error: "reconnect result unknown" },
@@ -112,13 +170,14 @@ try {
     { id: uuid(51), profileId: uuid(3), botId: "bot-2", threadId: "thread-2", instance: "launch-b", requestId: uuid(61), targetId: null, targetStatus: "unspecified", message: "Accept cookies",
       state: "resolved", outcome: "skipped", note: "Not needed", revision: 5, createdAt: iso(-7_200_000), resolvedAt: iso(-7_000_000), issue: null, quiesced: true },
   ];
+  state.handoffs.forEach((row) => Object.assign(row, { contentClearedAt: null, requestDigest: null }));
 
   const serve = await serveFixture(handlers);
   Object.assign(handlers, serve.handlers);
-  const definitions = { browse: Object.keys(handlers).filter((name) => name.startsWith("browser_") || name.startsWith("agent_browser_") || name.startsWith("hypeman_")),
+  const definitions = { browse: Object.keys(handlers).filter((name) => name.startsWith("browser_") || name.startsWith("browse_state_") || name.startsWith("agent_browser_") || name.startsWith("hypeman_")),
     serve: serve.names, bots: ["bot_list", "bot_defaults_get", "voice_status"], api: ["docs_snapshot"] };
   const topics = { browse: browseApi.events.topics, serve: serve.topics, bots: botsApi.events.topics, api: {} };
-  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, Object.keys(definitions)), port: 0 });
+  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, Object.keys(definitions), ["bots"]), port: 0 });
   const catalog = [fixtureDoc("browse", browseApi, websocket.url, publishedJsonSchema), ...["serve", "bots", "api"].map((name) => ({ ...fixtureDoc(name, null, websocket.url, publishedJsonSchema), events: topics[name],
     transports: [{ type: "websocket", description: "Fixture", supported: true, subscriptions: true, endpoint: websocket.url, operations: definitions[name], events: Object.keys(topics[name]), routes: [] }] }))];
   handlers.docs_snapshot = () => ({ packages: catalog });
@@ -135,7 +194,7 @@ try {
   const origin = `http://127.0.0.1:${nextPort}`;
   for (let attempt = 0; ; attempt++) {
     try { if ((await fetch(`${origin}/connect/local`)).ok) break; } catch { /* bounded readiness check */ }
-    if (attempt > 1200 || next.exitCode !== null) throw new Error(log);
+    if (attempt > 1200 || next.exitCode !== null) throw new Error(log.slice(-4000));
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
@@ -218,6 +277,146 @@ try {
   await profiles.getByRole("button", { name: "More for default" }).click();
   await page.getByRole("menuitem", { name: "A Bot's default profile can't be deleted" }).waitFor();
   await page.keyboard.press("Escape");
+  // Profile plans disclose blockers and retained copies without taking lifecycle actions.
+  await profiles.getByRole("button", { name: "More for default" }).click();
+  await page.getByRole("menuitem", { name: "Reset profile…" }).click();
+  let maintenance = page.getByRole("dialog");
+  await maintenance.getByRole("button", { name: "Prepare reset profile", exact: true }).click();
+  await maintenance.getByText("Stop and verify the assigned Bot before profile maintenance", { exact: true }).waitFor();
+  assert.equal(await maintenance.getByRole("button", { name: "Reset profile", exact: true }).isDisabled(), true);
+  await maintenance.getByText("Other profiles, foreign/occupied volumes, external copies/backups and other owners' history remain", { exact: true }).waitFor();
+  await page.screenshot({ path: join(evidence, "browse-reset-blocked-light.png"), animations: "disabled" });
+  await maintenance.getByRole("button", { name: "Close dialog" }).click();
+
+  await profiles.getByRole("button", { name: "More for retired" }).click();
+  await page.getByRole("menuitem", { name: "Clear site data…" }).click();
+  maintenance = page.getByRole("dialog");
+  const prepareSite = maintenance.getByRole("button", { name: "Prepare clear site data", exact: true });
+  assert.equal(await prepareSite.isDisabled(), true);
+  await maintenance.getByLabel("Exact origins (one per line)").fill("https://name:secret@example.com/path");
+  await maintenance.getByLabel("cookies", { exact: true }).check();
+  assert.equal(await prepareSite.isDisabled(), true);
+  assert.equal(calls.filter((call) => call.name === "browser_site_data_plan").length, 0);
+  await maintenance.getByLabel("Exact origins (one per line)").fill("https://example.com\nhttp://localhost:8080");
+  await maintenance.getByLabel("cache", { exact: true }).check();
+  assert.equal(await maintenance.getByRole("checkbox").count(), 3, "history is not an offered category");
+  await prepareSite.click();
+  await maintenance.getByRole("button", { name: "Clear site data", exact: true }).waitFor();
+  assert.equal(await maintenance.getByLabel("Exact origins (one per line)").isDisabled(), true);
+  assert.deepEqual(calls.find((call) => call.name === "browser_site_data_plan").input, { profileId: uuid(3), origins: ["http://localhost:8080", "https://example.com"], categories: ["cookies", "cache"] });
+  await page.screenshot({ path: join(evidence, "browse-site-plan-light.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({ path: join(evidence, "browse-site-plan-dark.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 430, height: 900 });
+  await page.screenshot({ path: join(evidence, "browse-site-plan-narrow.png"), animations: "disabled" });
+  assert.deepEqual(await maintenance.evaluate((element) => [...element.querySelectorAll("*")].filter((child) => child.getBoundingClientRect().right > element.getBoundingClientRect().right + 1).map((child) => ({ tag: child.tagName, text: child.textContent.slice(0, 100), width: child.getBoundingClientRect().width })).slice(0, 10)), [], "narrow dialog does not overflow");
+  await page.setViewportSize({ width: 2400, height: 1300 });
+  await page.emulateMedia({ colorScheme: "light" });
+  await maintenance.getByRole("button", { name: "Clear site data", exact: true }).click();
+  await maintenance.getByRole("region", { name: "browse receipt completed" }).waitFor();
+  await maintenance.getByRole("button", { name: "Close dialog" }).click();
+
+  await profiles.getByRole("button", { name: "More for retired" }).click();
+  await page.getByRole("menuitem", { name: "Reset profile…" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Prepare reset profile", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Reset profile", exact: true }).click();
+  await page.getByRole("dialog").getByRole("region", { name: "browse receipt completed" }).waitFor();
+  assert.equal(state.profiles.find((row) => row.id === uuid(3)).generation, 1);
+  await page.getByRole("dialog").getByRole("button", { name: "Close dialog" }).click();
+
+  // Recover from real owner journal receipts, not a fabricated UI state. No new plan or resend.
+  const resetUnknown = seedUnknown("reset", { profileId: uuid(2) });
+  state.profiles.find((row) => row.id === uuid(2)).maintenanceRequestId = resetUnknown.requestId;
+  const siteUnknown = seedUnknown("site", { profileId: uuid(3), origins: ["https://example.com"], categories: ["storage"] });
+  await page.evaluate(({ resetUnknown, siteUnknown, research, retired }) => {
+    localStorage.setItem(`stack.state-flow.browse:reset:${research}`, JSON.stringify({ input: resetUnknown, at: Date.now() }));
+    localStorage.setItem(`stack.state-flow.browse:site:${retired}`, JSON.stringify({ input: siteUnknown, at: Date.now() }));
+  }, { resetUnknown, siteUnknown, research: uuid(2), retired: uuid(3) });
+  const plansBeforeRecovery = calls.filter((call) => /_(plan|clear)$/.test(call.name)).length;
+  await page.reload();
+  const fence = profiles.getByRole("region", { name: "Maintenance fence research" });
+  await fence.getByRole("region", { name: "browse receipt unknown" }).waitFor();
+  await fence.getByRole("list", { name: "Exact remaining or uncertain resources" }).getByText(/provider-volume-leftover-exact-789/).waitFor();
+  await profiles.getByRole("button", { name: "More for research" }).click();
+  await page.getByRole("menuitem", { name: "Reset profile…" }).click();
+  maintenance = page.getByRole("dialog");
+  await maintenance.getByRole("region", { name: "browse receipt unknown" }).waitFor();
+  assert.equal(await maintenance.getByRole("button", { name: /Send identical|Prepare a new|Close receipt/ }).count(), 0);
+  await maintenance.getByRole("button", { name: "Read receipt again" }).click();
+  await maintenance.getByRole("region", { name: "browse receipt unknown" }).waitFor();
+  await page.screenshot({ path: join(evidence, "browse-reset-recovery-light.png"), animations: "disabled" });
+  await maintenance.getByRole("button", { name: "Close dialog" }).click();
+  await profiles.getByRole("button", { name: "More for retired" }).click();
+  await page.getByRole("menuitem", { name: "Clear site data…" }).click();
+  maintenance = page.getByRole("dialog");
+  await maintenance.getByRole("region", { name: "browse receipt unknown" }).waitFor();
+  assert.equal(await maintenance.getByRole("button", { name: /Send identical|Prepare a new|Close receipt/ }).count(), 0);
+  assert.equal(calls.filter((call) => /_(plan|clear)$/.test(call.name)).length, plansBeforeRecovery);
+  await maintenance.getByRole("button", { name: "Close dialog" }).click();
+  await fence.getByRole("button", { name: "Release fence…" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Release fence", exact: true }).click();
+  await fence.waitFor({ state: "detached" });
+  assert.deepEqual(calls.find((call) => call.name === "browse_state_fence_release").input, { profileId: uuid(2), requestId: resetUnknown.requestId, expectedGeneration: 0 });
+  assert.equal(journal.receipt(resetUnknown.requestId).status, "unknown");
+
+  // History only selects resolved retained content, and refreshes the existing reader on redaction.
+  await handoffs.getByRole("button", { name: "Show 2" }).click();
+  const historyMaintenance = handoffs.locator("details");
+  await historyMaintenance.locator("summary").click();
+  await historyMaintenance.getByLabel(`Select handoff ${uuid(51)}`).check();
+  await historyMaintenance.getByRole("button", { name: "Prepare clearing 1 handoff bodies" }).click();
+  assert.equal(await historyMaintenance.getByLabel(`Select handoff ${uuid(51)}`).isDisabled(), true);
+  await historyMaintenance.getByRole("button", { name: "Clear handoff content", exact: true }).click();
+  await historyMaintenance.getByRole("region", { name: "browse receipt completed" }).waitFor();
+  await historyMaintenance.getByText(/^Content cleared/).waitFor();
+  assert.equal(await historyMaintenance.getByText("Not needed", { exact: true }).count(), 0);
+  assert.equal(await historyMaintenance.getByLabel(`Select handoff ${uuid(51)}`).isDisabled(), true);
+  assert.equal(handoff(uuid(51)).outcome, "skipped");
+  await historyMaintenance.getByRole("button", { name: "Close receipt" }).click();
+  await historyMaintenance.locator("summary").click();
+
+  // Exact owned volumes page independently; provider failure is not an empty inventory.
+  const volumeMaintenance = toolchain.locator("details");
+  await volumeMaintenance.locator("summary").click();
+  assert.equal(await volumeMaintenance.getByLabel("Select volume volume-1", { exact: true }).isDisabled(), true);
+  assert.equal(await volumeMaintenance.getByLabel("Select volume volume-2", { exact: true }).isDisabled(), true);
+  changeVolumePage = true;
+  await volumeMaintenance.getByRole("button", { name: "Load more volumes" }).click();
+  await volumeMaintenance.getByText("The inventory changed while paging; showing the first page again.").waitFor();
+  await volumeMaintenance.getByRole("button", { name: "Load more volumes" }).click();
+  await volumeMaintenance.getByLabel("Select volume volume-100", { exact: true }).waitFor();
+  await volumeMaintenance.getByLabel("Select volume volume-100", { exact: true }).check();
+  await volumeMaintenance.getByRole("button", { name: "Prepare collecting 1 volumes" }).click();
+  await volumeMaintenance.getByRole("button", { name: "Collect these volumes" }).click();
+  await volumeMaintenance.getByRole("region", { name: "browse receipt completed" }).waitFor();
+  assert.equal(volumes.some((row) => row.id === "volume-100"), false);
+  await volumeMaintenance.getByRole("button", { name: "Close receipt" }).click();
+  volumeUnavailable = true;
+  await volumeMaintenance.getByRole("button", { name: "Refresh volumes" }).click();
+  await volumeMaintenance.getByRole("alert").getByText(/Provider inventory unavailable/).waitFor();
+  assert.equal(await volumeMaintenance.getByText("No verified owned volumes.", { exact: true }).count(), 0);
+  volumeUnavailable = false;
+  await volumeMaintenance.getByRole("button", { name: "Refresh volumes" }).click();
+  await volumeMaintenance.getByRole("alert").waitFor({ state: "detached" });
+  const volumeUnknown = seedUnknown("volume", { volumeIds: ["volume-0"] });
+  await page.evaluate((input) => localStorage.setItem("stack.state-flow.browse:volume:ids", JSON.stringify({ input, at: Date.now() })), volumeUnknown);
+  const volumeApplies = calls.filter((call) => call.name === "browser_volume_clear").length;
+  await page.reload();
+  await volumeMaintenance.getByRole("region", { name: "browse receipt unknown" }).waitFor();
+  assert.equal(await volumeMaintenance.getByRole("button", { name: /Send identical|Prepare a new|Close receipt/ }).count(), 0);
+  assert.equal(await volumeMaintenance.getByLabel("Select volume volume-0", { exact: true }).isDisabled(), true);
+  await volumeMaintenance.getByRole("button", { name: "Read receipt again" }).click();
+  await volumeMaintenance.getByRole("region", { name: "browse receipt unknown" }).waitFor();
+  assert.equal(calls.filter((call) => call.name === "browser_volume_clear").length, volumeApplies);
+  await page.screenshot({ path: join(evidence, "browse-maintenance-light.png"), animations: "disabled" });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({ path: join(evidence, "browse-maintenance-dark.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 430, height: 900 });
+  await page.screenshot({ path: join(evidence, "browse-maintenance-narrow.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 2400, height: 1300 });
+  await page.emulateMedia({ colorScheme: "light" });
+  await handoffs.getByRole("button", { name: "Show 2" }).click();
+  assert.equal(calls.some((call) => ["bot_stop", "bot_start", "browser_controller_close", "browser_controller_select", "browser_ensure"].includes(call.name)), false);
   await profiles.getByRole("button", { name: "More for retired" }).click();
   await page.getByRole("menuitem", { name: "Delete profile…" }).click();
   const confirm = page.getByRole("alertdialog");

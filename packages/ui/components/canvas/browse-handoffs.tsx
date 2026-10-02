@@ -252,7 +252,7 @@ function MaintainedHistory({ rows, profiles }: { rows: BrowserHandoff[]; profile
   const [maintenanceOpen, setMaintenanceOpen] = useState(false);
   const controls = useStateFlow({ operations: stateOperations(store.call, "browse", browseMaintenanceOperations.handoff, { ids: selected }),
     recoveryKey: "browse:handoff:ids", observe: state.browserHandoffs.at,
-    onReceipt: (receipt) => { store.refreshBrowse(); if (receipt.status === "completed") setSelected([]); } });
+    onReceipt: (receipt) => { if (receipt.status !== "running") store.refreshBrowse(); if (receipt.status === "completed") setSelected([]); } });
   const locked = controls.flow.phase !== "idle";
   const unavailable = state.status.browse !== "open" ? "The Browse connection is not open." : state.browserHandoffs.error ? "Refresh handoffs before preparing."
     : !handoffContentSelection(rows, selected) ? "Select up to 100 resolved handoffs with retained content; review any changed selection." : null;
@@ -260,7 +260,7 @@ function MaintainedHistory({ rows, profiles }: { rows: BrowserHandoff[]; profile
     {!maintenanceOpen && !locked ? <HistoryRows rows={rows} profiles={profiles} /> : null}
     <MaintenanceDisclosure active={locked} aside="resolved handoff content" onOpenChange={setMaintenanceOpen}>
       <p className="text-xs text-pretty text-muted-foreground">Redacts exact resolved messages, notes and issues in the Browse ledger. IDs, target/profile/controller identity, outcome, timing and permanent admission/action digests stay. Open handoffs cannot be selected. Screenshots and live control URLs were never persisted here; caller/upstream copies and backups remain independent.</p>
-      <HistoryRows rows={rows} profiles={profiles} selection={{ ids: selected, locked, select: (id) => setSelected((held) => held.includes(id) ? held.filter((value) => value !== id) : [...held, id]) }} />
+      {maintenanceOpen || locked ? <HistoryRows rows={rows} profiles={profiles} selection={{ ids: selected, locked, select: (id) => setSelected((held) => held.includes(id) ? held.filter((value) => value !== id) : [...held, id]) }} /> : null}
       <StateFlowView controls={controls} label={`Prepare clearing ${selected.length} handoff bodies`} applyLabel="Clear handoff content" unavailable={unavailable} />
     </MaintenanceDisclosure>
   </>;
