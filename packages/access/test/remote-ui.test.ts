@@ -46,6 +46,8 @@ test("browser pairing is locally approved, session cookies are scoped, and HTTP 
     assert.equal(page.status, 200);
     assert.equal((await f.send("/", "GET", undefined, { cookie: auth })).status, 200);
     assert.equal((await f.send("/fleet", "GET", undefined, { cookie: auth })).status, 200);
+    assert.equal((await f.send("/source", "GET", undefined, { cookie: auth })).status, 200);
+    assert.equal((await f.send("/source/x", "GET", undefined, { cookie: auth })).status, 404);
     assert.equal((await f.send("/fleet/x", "GET", undefined, { cookie: auth })).status, 404);
     assert.equal((await f.send("/x", "GET", undefined, { cookie: auth })).status, 404);
     assert.equal((await f.send("/x/content", "GET", undefined, { cookie: auth })).status, 404);
