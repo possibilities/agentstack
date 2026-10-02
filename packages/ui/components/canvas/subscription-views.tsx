@@ -100,7 +100,7 @@ function CompletionRow({ receipt, canInspect, unavailableReason }: { receipt: Se
   const delivery = completionDelivery(receipt);
   const link = detail?.data?.linkStatus === "resolved" ? detail.data.link : null;
   return (
-    <div className="flex flex-col gap-1.5 rounded-lg px-2 py-1.5 hover:bg-muted/70">
+    <div data-receipt={receipt.id} className="flex flex-col gap-1.5 rounded-lg px-2 py-1.5 hover:bg-muted/70">
       <div className="flex min-w-0 items-center gap-2 text-xs">
         <StatusDot tone={receiptTone[receipt.state]} label={stateLabel.label} />
         <span className="shrink-0 font-medium" title={stateLabel.description}>{stateLabel.label}</span>
@@ -254,7 +254,7 @@ function OccurrenceRow({ row, onRemove, canInspect, canRemove }: { row: ServeOcc
   }, [shown, receiptsSignature]);
   const detail = shown ? inspection!.value : null;
   return (
-    <div className="flex flex-col gap-1.5 rounded-lg px-2 py-1.5 hover:bg-muted/70">
+    <div data-occurrence={row.id} className="flex flex-col gap-1.5 rounded-lg px-2 py-1.5 hover:bg-muted/70">
       <div className="flex min-w-0 items-center gap-2 text-xs">
         <span className="shrink-0 rounded bg-muted px-1 py-px text-[0.64rem] font-medium text-muted-foreground">{row.target.kind === "bot" ? "Bot Chat" : "Worker"}</span>
         <span className="min-w-0 truncate font-medium">{row.pkg}.{row.name}</span>

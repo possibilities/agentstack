@@ -12,6 +12,7 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@stack/api";
 import { api as serveApi } from "../../serve/dist/api.js";
+import { api as workerApi } from "../../worker/dist/api.js";
 import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, serveFixture, ui } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
@@ -56,6 +57,65 @@ const subscription = (id, extra = {}) => ({ id, botId: "alpha", threadId: "019a5
 let subscriptions = [subscription("00000000-0000-4000-8000-0000000000a1"),
   subscription("00000000-0000-4000-8000-0000000000a2", { pkg: "brain", topic: "jobs_changed", readOperation: "jobs_list", state: "error", lastDeliveredAt: null, scope: "ingest" })];
 const removals = [];
+
+// Retained completion history: 105 receipts over two 100-row pages, all six states, both delivery kinds,
+// one unknown (uncertain) and one cancelled-after-uncertain receipt, active and retired watches.
+const startedAt = Date.now() - 3_600_000;
+const wid = (c) => `${c.repeat(8)}-0000-4000-8000-000000000000`;
+const workerId = wid("a"), turnOld = "10000000-0000-4000-8000-000000000001", turnLatest = "10000000-0000-4000-8000-000000000002";
+const receipt = (id, extra = {}) => ({ id, botId: "alpha", threadId: "019a5e6c-5a7e-7f00-9f3a-4c1d2b3a4f10", pkg: "usage", operation: "usage_snapshot",
+  recordId: `d0000000-0000-4000-8000-${id.slice(-12)}`, state: "pending", lastDeliveredAt: null, lastDeliveryKind: null, lastError: null,
+  nativeAdmissionUncertain: false, subscriptionPresent: true, ...extra });
+const workerReceipt = receipt("00000000-0000-4000-8000-0000000000f1", { pkg: "worker", operation: "worker_start",
+  recordId: "e0000000-0000-4000-8000-000000000011", state: "delivered", lastDeliveredAt: startedAt + 30_000, lastDeliveryKind: "terminal" });
+const notifyReceipt = receipt("00000000-0000-4000-8000-0000000000f2", { pkg: "notify", operation: "notification_send",
+  recordId: "e0000000-0000-4000-8000-000000000012", state: "delivered", lastDeliveredAt: startedAt + 60_000, lastDeliveryKind: "terminal", subscriptionPresent: false });
+const brainReceipt = receipt("00000000-0000-4000-8000-0000000000f3", { pkg: "brain", operation: "submit",
+  recordId: "e0000000-0000-4000-8000-000000000013", state: "delivered", lastDeliveredAt: startedAt + 90_000, lastDeliveryKind: "terminal" });
+const unsupportedReceipt = receipt("00000000-0000-4000-8000-0000000000f4", { pkg: "xcom", operation: "xcom_posts_refresh",
+  recordId: "e0000000-0000-4000-8000-000000000014", state: "error", lastDeliveryKind: "terminal" });
+const unknownReceipt = receipt("00000000-0000-4000-8000-0000000000f5", { pkg: "notify", operation: "notification_send",
+  recordId: "e0000000-0000-4000-8000-000000000015", state: "unknown", lastDeliveredAt: startedAt + 10_000, lastDeliveryKind: "update",
+  lastError: "native_admission_unknown", nativeAdmissionUncertain: true });
+const cancelledUncertainReceipt = receipt("00000000-0000-4000-8000-0000000000f6", { pkg: "notify", operation: "notification_send",
+  recordId: "e0000000-0000-4000-8000-000000000016", state: "cancelled", lastDeliveryKind: "terminal",
+  lastError: "native_admission_unknown", nativeAdmissionUncertain: true, subscriptionPresent: false });
+const bulkStates = ["pending", "error", "observed", "delivered", "cancelled"];
+const receipts = [
+  workerReceipt, notifyReceipt, brainReceipt, unsupportedReceipt, unknownReceipt, cancelledUncertainReceipt,
+  ...Array.from({ length: 99 }, (_, n) => receipt(`f0000000-0000-4000-8000-${String(n + 1).padStart(12, "0")}`, {
+    state: bulkStates[n % 5], lastDeliveredAt: n % 2 ? startedAt + n * 1_000 : null, lastDeliveryKind: n % 2 ? "update" : "terminal",
+    subscriptionPresent: n % 4 !== 0 })),
+];
+let historyRevision = 1, historyUnavailable = false;
+const historyCalls = [];
+
+// Typed occurrence subscriptions: one Bot Chat target, one Worker target, receipts across every delivery state.
+const delivery = (id, eventId, state, boundary, error = null) => ({ id, eventId, state, boundary, error });
+const botOccurrence = "00000000-0000-4000-8000-0000000000b1", workerOccurrence = "00000000-0000-4000-8000-0000000000b2";
+let occurrences = [
+  { id: botOccurrence, target: { kind: "bot", botId: "alpha", threadId: "019a5e6c-5a7e-7f00-9f3a-4c1d2b3a4f10", instance: "main" },
+    pkg: "xcom", name: "posts", policy: "native", cursor: "fixture-cursor-bot", truncated: false, revision: "o1", receiptCount: 3, receiptsTruncated: false,
+    arguments: { account: "fixture-args-bot" }, lastError: null,
+    deliveries: [delivery("00000000-0000-4000-8000-00000000d011", "evt-bot-3", "pending", null),
+      delivery("00000000-0000-4000-8000-00000000d012", "evt-bot-2", "admitted", "native_admission"),
+      delivery("00000000-0000-4000-8000-00000000d013", "evt-bot-1", "unknown", null, "fixture-delivery-error-bot")] },
+  { id: workerOccurrence, target: { kind: "worker", workerId, sessionId: "native-session-1", instance: "instance-1" },
+    pkg: "github", name: "pull_requests", policy: "interrupt", cursor: "fixture-cursor-worker", truncated: true, revision: "o1", receiptCount: 1, receiptsTruncated: false,
+    arguments: { repository: "fixture-args-marker-worker" }, lastError: "fixture-last-error-worker",
+    deliveries: [delivery("00000000-0000-4000-8000-00000000d021", "evt-worker-1", "admitted", "worker_inbox")] },
+];
+
+// One Worker with two turns; the linked admission targets the older turn, never the latest.
+const worker = { id: workerId, botId: "alpha", threadId: "019a5e6c-5a7e-7f00-9f3a-4c1d2b3a4f10", accountId: "00000000-0000-4000-8000-000000000003",
+  provider: "codex", model: "gpt-6-sol", effort: "high", repo: "/src/stack", cwd: `${dir}/worktrees/${workerId}`, branch: "stack-worker-check",
+  baseCommit: "025e608aa1b2", sourceDirty: false, roleRevision: 1, sessionId: "native-session-1", runtimeInstance: "00000000-0000-4000-8000-000000000090",
+  phase: "idle", contentClearedAt: null, currentTurnId: null, issue: null, createdAt: startedAt, updatedAt: startedAt + 500_000 };
+const workerTurn = (id, n) => ({ id, workerId, phase: "completed", stopReason: "end_turn", issue: null,
+  requestId: `20000000-0000-4000-8000-${String(n).padStart(12, "0")}`, prompt: `Turn ${n} prompt`, requestedModel: "gpt-6-sol", requestedEffort: "high",
+  observedSettings: null, dispatchedAt: startedAt + n * 100_000, dispatchedPromptSeq: n, createdAt: startedAt + n * 100_000, updatedAt: startedAt + n * 100_000 + 5_000 });
+const turns = [workerTurn(turnOld, 1), workerTurn(turnLatest, 2)];
+const turnSummary = ({ prompt, ...rest }) => ({ ...rest, promptChars: prompt?.length ?? null });
 
 // Developer mode (ADR 0138). Settings carry real revision fences; release reads and checks refuse while it is off.
 const started = Date.now();
@@ -112,6 +172,38 @@ const handlers = {
     const row = subscriptions.find((item) => item.id === id);
     return { subscription: row ? { ...row, readArguments: { limit: 20, filter: { source: "ci" } }, lastError: row.state === "error" ? "jobs_list: brain socket unavailable" : null } : null };
   },
+  serve_completion_list(args) {
+    historyCalls.push(args);
+    if (historyUnavailable) throw new Error("server subscription owner unavailable");
+    const revision = `history-${historyRevision}`;
+    if (args.revision && args.revision !== revision) throw new Error("completion observation changed; restart paging");
+    const rows = receipts.filter((row) => (!args.botId || row.botId === args.botId) && (!args.package || row.pkg === args.package) && (!args.state || row.state === args.state));
+    const nextOffset = args.offset + args.limit < rows.length ? args.offset + args.limit : null;
+    return { completions: rows.slice(args.offset, args.offset + args.limit), revision, total: rows.length, nextOffset, truncated: nextOffset !== null };
+  },
+  serve_completion_get({ id }) {
+    const found = receipts.find((row) => row.id === id) ?? null;
+    if (!found) return { receipt: null, link: null, linkStatus: "not_found" };
+    if (id === workerReceipt.id) return { receipt: found, link: { kind: "worker", requestId: found.recordId, workerId, turnId: turnOld }, linkStatus: "resolved" };
+    if (id === notifyReceipt.id) return { receipt: found, link: { kind: "notify", notificationId: found.recordId }, linkStatus: "resolved" };
+    if (id === brainReceipt.id) return { receipt: found, link: null, linkStatus: "unavailable" };
+    return { receipt: found, link: null, linkStatus: "unsupported" };
+  },
+  serve_occurrence_list(args) {
+    const rows = occurrences.map(({ arguments: _args, lastError: _error, deliveries: _deliveries, ...row }) => row)
+      .filter((row) => (!args.botId || row.target.kind === "bot" && row.target.botId === args.botId) && (!args.package || row.pkg === args.package));
+    const revision = JSON.stringify(occurrences.map((row) => [row.id, row.revision]));
+    if (args.revision && args.revision !== revision) throw new Error("occurrence inventory changed; restart paging");
+    return { subscriptions: rows.slice(args.offset, args.offset + args.limit), revision, nextOffset: args.offset + args.limit < rows.length ? args.offset + args.limit : null };
+  },
+  serve_occurrence_get({ id }) {
+    return { subscription: occurrences.find((row) => row.id === id) ?? null };
+  },
+  worker_list: () => ({ workers: [{ ...worker, turn: turnSummary(turns.at(-1)), pendingPermissions: 0 }] }),
+  worker_runtime_list: () => ({ runtimes: [] }),
+  worker_status: ({ id }) => ({ worker: id === workerId ? worker : null, turn: turnSummary(turns.at(-1)), pending: [] }),
+  worker_read: () => ({ entries: [], nextSeq: 0, hasMore: false }),
+  worker_turn_list: () => ({ turns, nextId: null, hasMore: false }),
   async serve_settings_read() {
     devCalls.push("serve_settings_read");
     await settingsGate?.promise;
@@ -144,28 +236,31 @@ const handlers = {
   },
   serve_subscription_remove({ id, expectedRevision }) {
     removals.push({ id, expectedRevision });
-    const row = subscriptions.find((item) => item.id === id);
+    const row = subscriptions.find((item) => item.id === id) ?? occurrences.find((item) => item.id === id);
     if (!row) return { id, removed: false };
     if (row.revision !== expectedRevision) throw new Error("subscription revision changed; inspect it again");
     subscriptions = subscriptions.filter((item) => item.id !== id);
+    occurrences = occurrences.filter((item) => item.id !== id);
     return { id, removed: true };
   },
 };
+// Every other Worker operation stays unobserved: the check exercises list, status, transcript and turn reads only.
+for (const name of workerApi.operations.map((operation) => operation.name)) handlers[name] ??= () => { throw new Error(`${name} is not observed in this fixture`); };
 
 const sockets = [];
 let websocket, next, browser, serveSock;
 let log = "";
 let failed = false;
 try {
-  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["serve", "api"]), port: 0 });
+  websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["serve", "api", "worker"]), port: 0 });
   const doc = (name, api) => fixtureDoc(name, api, websocket.url, publishedJsonSchema);
-  const catalog = [doc("serve", serveApi), doc("api")];
+  const catalog = [doc("serve", serveApi), doc("worker", workerApi), doc("api")];
   handlers.docs_snapshot = () => ({ packages: catalog });
   const serve = await serveFixture(handlers);
   Object.assign(handlers, serve.handlers);
-  for (const [name, names, topics] of [["serve", serve.names, serve.topics], ["api", ["docs_snapshot"], {}]]) {
+  for (const [name, names, topics] of [["serve", serve.names, serve.topics], ["worker", workerApi.operations.map((operation) => operation.name), workerApi.events.topics], ["api", ["docs_snapshot"], {}]]) {
     const socket = await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixtureOperations(names, handlers),
-      events: { topics } });
+      events: { topics, ...(name === "worker" ? { scope: { valid: () => true, description: "Fixture", example: "id" } } : {}) } });
     sockets.push(socket);
     if (name === "serve") serveSock = socket;
   }
@@ -186,10 +281,10 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   const shot = (name, locator) => (locator ?? page).screenshot({ path: join(evidence, `${name}.png`), animations: "disabled" });
   /** Pan the bench so a window is centered, then show it at 100% for a legible element screenshot. */
-  const frame = async (target, locator) => {
+  const frame = async (target, locator, space = "system") => {
     const box = await locator.boundingBox();
     const size = target.viewportSize();
-    await target.locator('[data-canvas="workbench"][data-space="system"]').evaluate((main, delta) => main.dispatchEvent(new WheelEvent("wheel", { deltaX: delta.x, deltaY: delta.y, bubbles: true, cancelable: true })),
+    await target.locator(`[data-canvas="workbench"][data-space="${space}"]`).evaluate((main, delta) => main.dispatchEvent(new WheelEvent("wheel", { deltaX: delta.x, deltaY: delta.y, bubbles: true, cancelable: true })),
       { x: box.x + box.width / 2 - size.width / 2, y: box.y + Math.min(box.height, size.height - 160) / 2 - size.height / 2 });
     await target.getByRole("button", { name: "Actual size" }).click();
   };
@@ -276,6 +371,150 @@ try {
   serveSock.publish("serve_state_changed");
   await subs.getByText("hud.hud_changed").waitFor();
   await shot("subscriptions", subs);
+
+  // History: an unreachable owner is an unavailable state, never an empty page.
+  historyUnavailable = true;
+  await subs.getByRole("button", { name: "History", exact: true }).click();
+  await subs.getByText("Completion history unavailable").waitFor();
+  await subs.getByText("server subscription owner unavailable", { exact: false }).waitFor();
+  assert.equal(await subs.getByText(/No retained|No receipts match/).count(), 0, "a failed read is never empty history");
+  await shot("subscriptions-history-unavailable", subs);
+  historyUnavailable = false;
+  await subs.getByRole("button", { name: "Refresh subscriptions" }).click();
+  await subs.getByText(/Showing 100 of 105 retained receipts · more on later pages/).waitFor();
+  assert.deepEqual(historyCalls.at(-1), { offset: 0, limit: 100 }, "the first page passes no filters and the contract's largest page");
+  await shot("subscriptions-history", subs);
+
+  // A changed observation mid-paging restarts instead of mixing revisions; the next page then lands.
+  historyRevision = 2;
+  await subs.getByRole("button", { name: /Load more \(from 100\)/ }).click();
+  await subs.getByText("History changed while paging", { exact: false }).waitFor();
+  assert.equal(historyCalls.at(-2).revision, "history-1", "the stale continuation was refused");
+  assert.equal(historyCalls.at(-1).offset, 0, "paging restarted from the first page");
+  await subs.getByRole("button", { name: /Load more \(from 100\)/ }).click();
+  await subs.getByText(/Showing 105 of 105 retained receipts/).waitFor();
+  assert.equal(await subs.getByRole("button", { name: /Load more/ }).count(), 0, "the last page ends paging");
+
+  // Filters are passed exactly.
+  await subs.getByLabel("State").selectOption("unknown");
+  await subs.getByText(/Showing 1 of 1 retained receipt/).waitFor();
+  assert.equal(historyCalls.at(-1).state, "unknown");
+  await subs.getByLabel("State").selectOption("");
+  await subs.getByText(/Showing 100 of 105 retained receipts/).waitFor();
+
+  // An uncertain receipt names the uncertainty and offers no unsafe action.
+  const completionRow = (id) => subs.locator(`[data-receipt="${id}"]`);
+  await completionRow(unknownReceipt.id).getByText(/Update admission outcome uncertain · Earlier admission acknowledged/).waitFor();
+  await completionRow(unknownReceipt.id).getByRole("note").getByText(/Delivery is frozen/).waitFor();
+  for (const button of await completionRow(unknownReceipt.id).getByRole("button").all()) {
+    const name = `${await button.innerText()} ${await button.getAttribute("aria-label") ?? ""}`;
+    assert.doesNotMatch(name, /retry|redeliver|resend|rearm|approve|acknowledge|mark/i, `unsafe action ${name}`);
+  }
+  await completionRow(cancelledUncertainReceipt.id).getByText(/Cancelled after an uncertain native admission/).waitFor();
+
+  // Exact detail: resolved links navigate, unavailable/unsupported owners say so plainly.
+  await completionRow(workerReceipt.id).getByRole("button", { name: "Details" }).click();
+  await completionRow(workerReceipt.id).getByText("Linked — Resolved to the exact domain record", { exact: false }).waitFor();
+  const workerTurnLink = completionRow(workerReceipt.id).getByRole("button", { name: `Worker aaaaaaaa · turn ${turnOld.slice(0, 8)}` });
+  await workerTurnLink.waitFor();
+  await shot("subscriptions-history-detail", subs);
+  await completionRow(notifyReceipt.id).getByRole("button", { name: "Details" }).click();
+  await completionRow(notifyReceipt.id).getByRole("link", { name: /Notification e0000000/ }).waitFor();
+  await completionRow(brainReceipt.id).getByRole("button", { name: "Details" }).click();
+  await completionRow(brainReceipt.id).getByText("Owner unavailable", { exact: false }).waitFor();
+  await completionRow(unsupportedReceipt.id).getByRole("button", { name: "Details" }).click();
+  await completionRow(unsupportedReceipt.id).getByText("Linking not supported", { exact: false }).waitFor();
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await shot("subscriptions-history-dark", subs);
+  await page.emulateMedia({ colorScheme: "light" });
+
+  // Occurrences: receipts count toward the row but arguments, errors and the cursor value stay hidden until Inspect.
+  await subs.getByRole("button", { name: "Occurrences", exact: true }).click();
+  await subs.getByText("xcom.posts").waitFor();
+  await subs.getByText("github.pull_requests").waitFor();
+  for (const marker of ["fixture-args-marker-worker", "fixture-last-error-worker", "fixture-cursor-worker", "fixture-args-bot", "fixture-cursor-bot", "fixture-delivery-error-bot"])
+    assert.equal(await subs.getByText(marker, { exact: false }).count(), 0, `${marker} hidden before inspection`);
+  const occurrenceRow = (id) => subs.locator(`[data-occurrence="${id}"]`);
+  await occurrenceRow(workerOccurrence).getByText("cursor held", { exact: true }).waitFor();
+  await occurrenceRow(workerOccurrence).getByText("source truncated").waitFor();
+  await occurrenceRow(workerOccurrence).getByText("interrupt · cancels before follow-up").waitFor();
+  await occurrenceRow(botOccurrence).getByText("native · start-or-steer").waitFor();
+  await shot("subscriptions-occurrences", subs);
+
+  await occurrenceRow(workerOccurrence).getByRole("button", { name: "Inspect…" }).click();
+  await occurrenceRow(workerOccurrence).getByText("fixture-args-marker-worker", { exact: false }).waitFor();
+  await occurrenceRow(workerOccurrence).getByText("fixture-last-error-worker").waitFor();
+  await occurrenceRow(workerOccurrence).getByText("fixture-cursor-worker").waitFor();
+  await occurrenceRow(workerOccurrence).getByText("Admitted · Worker inbox").waitFor();
+  await occurrenceRow(workerOccurrence).getByText("1 of 1 receipts shown").waitFor();
+  await occurrenceRow(botOccurrence).getByRole("button", { name: "Inspect…" }).click();
+  await occurrenceRow(botOccurrence).getByText("Admitted · native").waitFor();
+  await occurrenceRow(botOccurrence).getByText("fixture-delivery-error-bot").waitFor();
+  await occurrenceRow(botOccurrence).getByText("3 of 3 receipts shown").waitFor();
+  await shot("subscriptions-occurrences-inspected", subs);
+
+  // An intent-revision change drops the open inspection; the other row's stays open on its unchanged revision.
+  occurrences.find((row) => row.id === workerOccurrence).revision = "o2";
+  serveSock.publish("serve_state_changed");
+  await occurrenceRow(workerOccurrence).getByText("Source arguments", { exact: false }).waitFor({ state: "detached" });
+  assert.equal(await subs.getByText("fixture-args-marker-worker", { exact: false }).count(), 0, "dropped on revision change");
+  await occurrenceRow(botOccurrence).getByText("fixture-args-bot", { exact: false }).waitFor();
+
+  // Removal at the exact intent revision; a stale choice is refused and re-chosen at the current one.
+  await occurrenceRow(botOccurrence).getByRole("button", { name: "Remove…" }).click();
+  await dialog.getByText(/fences future intake only/).waitFor();
+  await dialog.getByText(/Bot Chat alpha/).waitFor();
+  await shot("subscriptions-occurrence-remove", subs);
+  occurrences.find((row) => row.id === botOccurrence).revision = "o3";
+  await dialog.getByRole("button", { name: "Remove occurrence subscription" }).click();
+  await dialog.getByText("subscription revision changed", { exact: false }).waitFor();
+  assert.deepEqual(removals.at(-1), { id: botOccurrence, expectedRevision: "o1" });
+  await dialog.getByText("changed since you chose it", { exact: false }).waitFor();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await occurrenceRow(botOccurrence).getByRole("button", { name: "Remove…" }).click();
+  await dialog.getByRole("button", { name: "Remove occurrence subscription" }).click();
+  await page.getByText("Removed occurrence subscription xcom.posts").waitFor();
+  assert.deepEqual(removals.at(-1), { id: botOccurrence, expectedRevision: "o3" });
+  await occurrenceRow(botOccurrence).waitFor({ state: "detached" });
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await shot("subscriptions-occurrences-dark", subs);
+  await page.emulateMedia({ colorScheme: "light" });
+
+  // Narrow: both list views stay usable at the smallest width.
+  await frame(page, subs);
+  const subsGrip = subs.locator('span[title="Resize Subscriptions"]').first();
+  const subsEdge = await subsGrip.boundingBox();
+  const subsGripY = Math.min(subsEdge.y + subsEdge.height / 2, (page.viewportSize()?.height ?? 0) - 24);
+  await page.mouse.move(subsEdge.x + subsEdge.width / 2, subsGripY);
+  await page.mouse.down();
+  await page.mouse.move(subsEdge.x - 320, subsGripY, { steps: 6 });
+  await page.mouse.up();
+  assert.ok((await subs.boundingBox()).width < 352, "resized narrow");
+  await shot("subscriptions-occurrences-narrow", subs);
+  await subs.getByRole("button", { name: "History", exact: true }).click();
+  await subs.getByText(/Showing 100 of 105 retained receipts/).waitFor();
+  await shot("subscriptions-history-narrow", subs);
+  await subsGrip.dblclick();
+
+  // The resolved Worker link opens the exact turn, not the latest one.
+  await completionRow(workerReceipt.id).getByRole("button", { name: "Details" }).click();
+  await workerTurnLink.waitFor();
+  await workerTurnLink.click();
+  const workerWin = page.locator('[data-window="worker"]');
+  await workerWin.waitFor();
+  assert.equal(new URL(page.url()).pathname, "/workers", "the link navigates to the Workers space");
+  const turnsTab = workerWin.locator('[role="tab"]').filter({ hasText: "Turns" });
+  await workerWin.locator(`article[data-turn-id="${turnOld}"]`).waitFor();
+  assert.equal(await turnsTab.getAttribute("aria-selected"), "true", "the Turns view is selected");
+  assert.equal(await workerWin.locator(`article[data-turn-id="${turnOld}"]`).getAttribute("aria-current"), "true", "the linked turn is current");
+  assert.equal(await workerWin.locator(`article[data-turn-id="${turnOld}"]`).getByText(/Linked turn · 10000000/).count(), 1);
+  assert.equal(await workerWin.locator(`article[data-turn-id="${turnLatest}"]`).getAttribute("aria-current"), null, "the latest turn is not focused");
+  await frame(page, workerWin, "workers");
+  await shot("worker-linked-turn", workerWin);
+  await page.goto(`${origin}/system`);
+  await subs.getByText("hud.hud_changed").waitFor();
 
   await page.emulateMedia({ colorScheme: "dark" });
   await shot("state-dark", state);
@@ -479,7 +718,7 @@ try {
   assert.equal(releaseReads(), reads);
 
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "mixed owner availability with a visible gap, nullable and measured bytes, drill-down action note, stale-page restart, inspector, explicit per-owner measurement, argument reveal only on drill-down, stale-revision removal refused then exact removal, serve_state_changed refresh, dark; factory-reset disclosure collapsed until keyboard-opened, read-only content with doc-pinned cold commands and copy-only buttons, dark and narrow without overflow; developer mode unknown before read, off by default with no release reads or deep-link reveal, keyboard enable at the read revision, retained not-checked/observed/changed/failed rows, source links, Check now admission through event-driven read with checking and stale-after-failure, dark, narrow reflow, refused stale-revision save without retry, remote disable removing the window and returning focus, no reads after disable or reload" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "mixed owner availability with a visible gap, nullable and measured bytes, drill-down action note, stale-page restart, inspector, explicit per-owner measurement, argument reveal only on drill-down, stale-revision removal refused then exact removal, serve_state_changed refresh, dark; history unavailable never renders as empty, revision restart mid-paging then completion, exact state filter, uncertainty wording with no unsafe controls, exact detail with resolved/unavailable/unsupported link statuses, Worker link opens the exact linked turn on /workers, dark and narrow; occurrence markers hidden until Inspect then dropped on intent-revision change, exact revision-fenced removal refused stale then exact, dark and narrow; factory-reset disclosure collapsed until keyboard-opened, read-only content with doc-pinned cold commands and copy-only buttons, dark and narrow without overflow; developer mode unknown before read, off by default with no release reads or deep-link reveal, keyboard enable at the read revision, retained not-checked/observed/changed/failed rows, source links, Check now admission through event-driven read with checking and stale-after-failure, dark, narrow reflow, refused stale-revision save without retry, remote disable removing the window and returning focus, no reads after disable or reload" }, null, 2));
 } catch (error) {
   failed = true;
   const page = browser?.contexts().flatMap((context) => context.pages()).at(-1);
