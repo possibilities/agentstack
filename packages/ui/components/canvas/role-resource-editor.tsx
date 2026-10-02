@@ -87,11 +87,13 @@ type Spec<T extends { id: string; enabled: boolean }> = {
 
 const skillSpec: Spec<RoleSkill> = {
   kind: "skill", noun: "skill", list: (role) => role?.skills, text: skillText, blank: blankSkillText,
-  args: ({ files, ...fields }) => ({ ...fields, ...(files !== undefined ? { files: draftFiles(files) } : {}) }),
+  args: ({ files, harnesses, ...fields }) => ({ ...fields, ...(files !== undefined ? { files: draftFiles(files) } : {}),
+    ...(harnesses !== undefined ? { harnesses: JSON.parse(harnesses) } : {}) }),
 };
 const mcpSpec: Spec<RoleMcpServer> = {
   kind: "mcp-server", noun: "MCP server", list: (role) => role?.mcpServers, text: mcpText, blank: blankMcpText,
-  args: ({ definition, ...fields }) => ({ ...fields, ...(definition !== undefined ? { definition: fromMcpForm(draftMcpForm(definition)).definition } : {}) }),
+  args: ({ definition, harnesses, ...fields }) => ({ ...fields, ...(definition !== undefined ? { definition: fromMcpForm(draftMcpForm(definition)).definition } : {}),
+    ...(harnesses !== undefined ? { harnesses: JSON.parse(harnesses) } : {}) }),
 };
 const projectSpec: Spec<RoleTrustedProject> = {
   kind: "trusted-project", noun: "trusted project", list: (role) => role?.trustedProjects, text: projectText, blank: blankProjectText,
@@ -389,7 +391,7 @@ export function SkillEditor({ id }: { id: string }) {
       <form className="flex flex-col gap-3" aria-label={`Edit skill ${skill.name}`} onSubmit={(event) => { event.preventDefault(); save(); }} onKeyDown={saveKeys(save)}>
         <ConflictNotice fields={saved.draft.conflicts} onKeep={saved.keep} onYield={saved.yield} />
         <EnabledRow id={formId} checked={skill.enabled} disabled={!saved.connected || saved.enabling} onChange={saved.setEnabled}
-          note={skill.enabled ? "New Bots receive it" : "Skipped in new launches"} />
+          note={skill.enabled ? "Included in new launches where its harness filter allows" : "Skipped in new launches"} />
         <SkillFields id={formId} value={saved.draft.value} set={saved.draft.set} nameProblem={nameProblem} />
         <Issues issues={other} />
         <ErrorText error={saved.error} />
@@ -410,7 +412,7 @@ export function NewSkillEditor({ enabled }: { enabled: boolean }) {
       footer={<SaveBar dirty={created.connected} conflicts={0} pending={created.creating} invalid={invalid} saveLabel="Create skill" onSave={create} note="Not created yet" />}
       actions={<Button size="icon-sm" variant="ghost" aria-label="Discard new skill" onClick={created.cancel}><XIcon /></Button>}>
       <form className="flex flex-col gap-3" aria-label="New skill" onSubmit={(event) => { event.preventDefault(); create(); }} onKeyDown={saveKeys(create)}>
-        <EnabledRow id={formId} checked={enabled} onChange={created.setEnabled} note={enabled ? "New Bots receive it once created" : "Created switched off"} />
+        <EnabledRow id={formId} checked={enabled} onChange={created.setEnabled} note={enabled ? "Included where its harness filter allows once created" : "Created switched off"} />
         <SkillFields id={formId} value={created.draft.value} set={created.draft.set} nameProblem={nameProblem} />
         <Issues issues={other} />
         <ErrorText error={created.error} />
@@ -551,13 +553,13 @@ function McpFields({ id, value, set, nameProblem }: { id: string; value(field: s
         {literals ? (
           <p className="flex items-start gap-1.5 px-0.5 text-[0.68rem] text-pretty text-warning">
             <ShieldAlertIcon aria-hidden className="mt-px size-3.5 shrink-0" />
-            Literal values are stored in plain text in the Role and in each launch’s config.toml. Use environment variables for secrets.
+            Literal values are stored in plain text in the Role and in included launches’ connection config. Use environment variables for secrets.
           </p>
         ) : null}
       </div>
       {definition && value("name") && !nameProblem ? (
         <div className="flex flex-col gap-1.5">
-          <span className={labelClass}>config.toml · written to each new launch while enabled</span>
+          <span className={labelClass}>config.toml · connection template before harness selection</span>
           <pre className="rounded-lg border bg-muted/30 px-2.5 py-2 font-mono text-[0.7rem] leading-relaxed break-words whitespace-pre-wrap">{mcpToml(value("name"), definition)}</pre>
         </div>
       ) : null}
@@ -587,13 +589,13 @@ export function McpServerEditor({ id }: { id: string }) {
         {blocking ? (
           <Alert variant="destructive">
             <TriangleAlertIcon />
-            <AlertTitle>New Bot launches fail</AlertTitle>
+            <AlertTitle>Selected launch capabilities conflict</AlertTitle>
             <AlertDescription>{blocking.message}. Rename it, change its URL or switch it off.</AlertDescription>
           </Alert>
         ) : null}
         <ConflictNotice fields={saved.draft.conflicts} onKeep={saved.keep} onYield={saved.yield} />
         <EnabledRow id={formId} checked={server.enabled} disabled={!saved.connected || saved.enabling} onChange={saved.setEnabled}
-          note={server.enabled ? "New Bots connect to it" : "Skipped in new launches"} />
+          note={server.enabled ? "New launches connect where its harness filter allows" : "Skipped in new launches"} />
         <McpFields id={formId} value={saved.draft.value} set={saved.draft.set} nameProblem={nameProblem} />
         <Issues issues={issues} />
         <p className={hintClass}>Running Bots keep their connections until restarted.</p>

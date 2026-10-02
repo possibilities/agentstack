@@ -619,11 +619,11 @@ export const skillBytes = (skill: Pick<RoleSkill, "body" | "files">): number => 
 
 /* Draft text for resources: every edited value is a string, so structured fields travel as JSON. */
 
-export const skillText = (skill: Pick<RoleSkill, "name" | "description" | "body" | "files">): Fields =>
-  ({ name: skill.name, description: skill.description, body: skill.body, files: JSON.stringify(skill.files) });
+export const skillText = (skill: Pick<RoleSkill, "name" | "description" | "body" | "files" | "harnesses">): Fields =>
+  ({ name: skill.name, description: skill.description, body: skill.body, files: JSON.stringify(skill.files), harnesses: JSON.stringify(skill.harnesses ?? null) });
 export const projectText = (project: Pick<RoleTrustedProject, "path" | "description">): Fields => ({ path: project.path, description: project.description });
-export const mcpText = (server: Pick<RoleMcpServer, "name" | "description" | "definition">): Fields =>
-  ({ name: server.name, description: server.description, definition: JSON.stringify(toMcpForm(server.definition)) });
+export const mcpText = (server: Pick<RoleMcpServer, "name" | "description" | "definition" | "harnesses">): Fields =>
+  ({ name: server.name, description: server.description, definition: JSON.stringify(toMcpForm(server.definition)), harnesses: JSON.stringify(server.harnesses ?? null) });
 export const blankSkillText: Fields = { name: "", description: "", body: "", files: "[]" };
 export const blankProjectText: Fields = { path: "", description: "" };
 

@@ -456,6 +456,8 @@ try {
   assert.equal(Buffer.from(snapshot.skills[0].files[0].contentBase64, "base64").toString(), "exit 0\n");
   // The preview follows the editor to the launch view.
   await preview.getByRole("button", { name: /^review-changes/ }).waitFor();
+  await rolesCall("skill_update", { roleId: A, expectedRevision: snapshot.revision, id: snapshot.skills[0].id, harnesses: ["claude"] });
+  await preview.getByText("No Role skills are selected for this preview.", { exact: true }).waitFor();
   await skills.getByRole("button", { name: "review-changes actions" }).click();
   await page.getByRole("menuitem", { name: "Duplicate" }).click();
   await editor.getByRole("form", { name: "Edit skill review-changes-copy" }).waitFor();
@@ -466,8 +468,11 @@ try {
     snapshot = await snap(A);
   }
   assert.deepEqual(snapshot.skills.map((skill) => skill.name), ["review-changes-copy", "review-changes"]);
+  assert.deepEqual(snapshot.skills.map((skill) => skill.harnesses), [["claude"], ["claude"]], "list duplication retains the API-configured filter");
   await skills.getByRole("switch", { name: "review-changes-copy enabled" }).click();
   await skills.locator('li[data-node^="skill:"]').filter({ hasText: "review-changes-copy" }).getByText("Off", { exact: true }).waitFor();
+  snapshot = await until(() => snap(A), (value) => !value.skills[0].enabled, "the duplicate to switch off");
+  assert.deepEqual(snapshot.skills[0].harnesses, ["claude"], "the enabled switch does not clear a filter");
 
   // An MCP server cannot take an internal Package API's name; its TOML is shown before saving.
   await servers.getByRole("button", { name: "New MCP server", exact: true }).click();
@@ -494,6 +499,25 @@ try {
   await preview.getByText('command = "node"', { exact: false }).waitFor();
   const launch = await rolesCall("role_launch_preview", { roleId: A, cwds: [join(project, "src")] });
   assert.equal(launch.config, '[mcp_servers.docs]\ncommand = "node"\nargs = ["docs server.js", "--port", "7"]\nenabled = true\n');
+  snapshot = await snap(A);
+  await rolesCall("mcp_server_update", { roleId: A, expectedRevision: snapshot.revision, id: snapshot.mcpServers[0].id, harnesses: [] });
+  await preview.getByText('command = "node"', { exact: false }).waitFor({ state: "hidden" });
+  await serverForm.getByLabel("Description · optional", { exact: true }).fill("Still excluded");
+  await serverForm.getByLabel("Name", { exact: true }).press("Meta+s");
+  await editor.getByText("All changes saved", { exact: true }).waitFor();
+  snapshot = await snap(A);
+  assert.deepEqual(snapshot.mcpServers[0].harnesses, [], "content saves omit the unchanged filter");
+  await editor.getByRole("button", { name: "docs actions" }).click();
+  await page.getByRole("menuitem", { name: "Duplicate" }).click();
+  await editor.getByRole("form", { name: "Edit MCP server docs-copy" }).waitFor();
+  snapshot = await snap(A);
+  assert.deepEqual(snapshot.mcpServers.map((server) => server.harnesses), [[], []], "editor duplication retains an empty allowlist");
+  await editor.getByRole("button", { name: "docs-copy actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await dialog.getByRole("button", { name: "Delete", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+  snapshot = await snap(A);
+  await rolesCall("mcp_server_update", { roleId: A, expectedRevision: snapshot.revision, id: snapshot.mcpServers[0].id, harnesses: null });
 
   // Trusting a project shows which running Bots launch inside it.
   await projects.getByRole("button", { name: "Trust a project", exact: true }).click();
@@ -780,16 +804,16 @@ try {
   await count(total).waitFor();
   assert.deepEqual(Object.values(await enabledNow(A)).every(Boolean), true, "every server is on in a newly created Role");
   assert.deepEqual(Object.values(await enabledNow(B)).every(Boolean), true);
-  await servers.getByText("Stack servers use stdio for Bot and Worker launches and stack roles inject. Switches apply to future launches; running sessions keep their connections. New Stack servers start on.").waitFor();
+  await servers.getByText("Stack connections use stdio for Bot and Worker launches and stack roles inject when enabled and allowed for the actual harness. These switches preserve any API-configured harness filters. Running sessions keep their connections. New Stack connections start on and unrestricted.").waitFor();
   await preview.getByRole("button", { name: "Launch", exact: false }).click();
-  await preview.getByText(`${total} of ${total} Stack servers on · 1 from the Role`).waitFor();
+  await preview.getByText(`${total} of ${total} Stack connections included · 1 from the Role`).waitFor();
   // Off for this Role only, and the preview tells enabled from configured.
   await stackSwitch("bots").click();
   await until(() => enabledNow(A), (value) => value.bots === false, "bots to switch off");
   assert.equal((await enabledNow(B)).bots, true, "switches belong to their own Role");
   await count(total - 1).waitFor();
   await servers.locator("li").filter({ has: page.getByText("bots", { exact: true }) }).getByText("Off", { exact: true }).waitFor();
-  await preview.getByText(`${total - 1} of ${total} Stack servers on · 1 from the Role`).waitFor();
+  await preview.getByText(`${total - 1} of ${total} Stack connections included · 1 from the Role`).waitFor();
   assert.equal(await preview.locator('[title$="Off for this Role"]').count(), 1);
   assert.deepEqual((await rolesCall("role_launch_preview", { roleId: A })).internalMcpServers.filter((server) => !server.enabled).map((server) => server.name), ["bots"]);
   await shot("roles-internal-off");

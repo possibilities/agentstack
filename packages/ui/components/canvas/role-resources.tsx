@@ -97,8 +97,8 @@ export function RoleSkillsWindow() {
         {skill.files.length ? `${skill.files.length} file${skill.files.length === 1 ? "" : "s"} · ` : ""}{formatBytes(skillBytes(skill))}
       </span>
     ),
-    duplicate: (skill, items) => ({ name: uniqueName(skill.name, items.map((item) => item.name)), description: skill.description, body: skill.body, files: skill.files, enabled: skill.enabled }),
-    note: "Bots still discover project and bundled skills; Role skills add to them.",
+    duplicate: (skill, items) => ({ name: uniqueName(skill.name, items.map((item) => item.name)), description: skill.description, body: skill.body, files: skill.files, enabled: skill.enabled, harnesses: skill.harnesses }),
+    note: "Enabled Role skills enter later launches only where their harness filters allow. Bots still discover project and bundled skills.",
   }} />;
 }
 
@@ -114,13 +114,13 @@ export function RoleMcpServersWindow() {
       const blocking = state.roleLaunch.data?.revision === state.role.data?.revision && state.roleLaunch.data?.issues.some((issue) => issue.id === server.id);
       return (
         <>
-          {blocking ? <span className={cn(chip, "bg-destructive/15 text-destructive")} title="New Bot launches fail until this changes">Blocks launches</span> : null}
+          {blocking ? <span className={cn(chip, "bg-destructive/15 text-destructive")} title="Selected launch capabilities conflict until this changes">Blocks launches</span> : null}
           <span className={cn(chip, "bg-muted font-mono text-muted-foreground")}>{server.definition.type}</span>
         </>
       );
     },
-    duplicate: (server, items) => ({ name: uniqueName(server.name, items.map((item) => item.name)), description: server.description, definition: server.definition, enabled: server.enabled }),
-    note: "Later launches also receive the Stack servers switched on above.",
+    duplicate: (server, items) => ({ name: uniqueName(server.name, items.map((item) => item.name)), description: server.description, definition: server.definition, enabled: server.enabled, harnesses: server.harnesses }),
+    note: "Later launches receive enabled Role and Stack connections where their harness filters allow.",
     lead: <StackServers />,
     heading: "Role servers",
   }} />;
