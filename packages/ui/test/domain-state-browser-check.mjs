@@ -13,7 +13,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath, StateJournal } from "@stack/api";
 import { ProcStore } from "../../proc/dist/src/store.js";
-import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, serveFixture, ui } from "./browser-fixture.mjs";
+import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, serveFixture, ui, seedRecovery } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -419,7 +419,7 @@ try {
     content.owner.journal.begin(input, plan);
     content.owner.journal.finish(input.requestId, "unknown", [{ resource: publicationIds.uncertain, outcome: "unknown", detail: "Interrupted filesystem collection; inspect retained evidence" }]);
     const beforeRecovery = content.publicationCalls.length;
-    await page.evaluate(({ input }) => localStorage.setItem("stack.state-flow.content:publication_clear:claims", JSON.stringify({ input, at: Date.now() })), { input });
+    await seedRecovery(page, origin, "content:publication_clear:claims", input);
     await page.reload();
     // Initial recovery can precede the socket connection; explicit receipt observation resolves
     // that transport uncertainty without retrying effects or creating a new plan.
@@ -536,7 +536,7 @@ try {
   const cpInput = { planId: cp.id, expectedRevision: cp.revision, requestId: uuid() };
   signal.owner.journal.begin(cpInput, cp);
   signal.owner.journal.finish(cpInput.requestId, "unknown", [{ resource: "worker:fixture", outcome: "unknown", detail: "Interrupted checkpoint observation" }]);
-  await page.evaluate(({ input }) => localStorage.setItem("stack.state-flow.signal:checkpoint", JSON.stringify({ input, at: Date.now() })), { input: cpInput });
+  await seedRecovery(page, origin, "signal:checkpoint", cpInput);
   await page.reload();
   await checkpoint.getByRole("region", { name: "signal receipt unknown" }).waitFor();
   assert.equal(await checkpoint.getByRole("button", { name: "Send identical request" }).count(), 0, "unknown receipt is not replayed");
@@ -724,9 +724,7 @@ try {
   await detail.getByRole("button", { name: "Cancel" }).click();
 
   // An unknown receipt left by an earlier session returns after a reload, inside a disclosure that opens itself.
-  await page.evaluate(([key, input]) => {
-    localStorage.setItem(key, JSON.stringify({ input, at: Date.now() }));
-  }, [`stack.state-flow.proc:schedule_definition:${procIds.unknown}`, unknownInput]);
+  await seedRecovery(page, origin, `proc:schedule_definition:${procIds.unknown}`, unknownInput);
   await go("proc");
   await schedules.getByRole("button", { name: /^Removed/ }).click();
   await scheduleRow(procIds.unknown).click();
@@ -796,7 +794,7 @@ try {
     await shot(`${name}-narrow`, scope);
   };
   await narrow(item, "hud-maintenance");
-  await page.evaluate(() => { for (const name of Object.keys(localStorage)) if (!name.startsWith("stack.state-flow.")) localStorage.removeItem(name); });
+  await page.evaluate(() => { for (const name of Object.keys(localStorage)) if (!name.includes(".state-flow.")) localStorage.removeItem(name); });
   await go("proc");
   await schedules.getByRole("button", { name: /^Removed/ }).click();
   await scheduleRow(procIds.unknown).click();

@@ -14,7 +14,7 @@ import { api as inferApi } from "../../infer/dist/api.js";
 import { ChatUploads } from "../../bots/dist/src/chats.js";
 import { api as usageApi } from "../../usage/dist/api.js";
 import { api as workerApi } from "../../worker/dist/api.js";
-import { anyObject, fixtureWorkspace, transport, z, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
+import { anyObject, fixtureWorkspace, transport, z, authorizeBrowser, serveFixture, fixtureServerId } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -82,7 +82,7 @@ let websocket, next, browser;
 let log = "";
 const mutations = new Set(["bot_start", "bot_stop", "bot_assign", "bot_remove"]);
 const handlers = {
-  serve_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   account_list: () => ({ accounts: botAccounts }), worker_account_list: () => ({ accounts: workerAccounts }),
   account_login_current: () => ({ login: null }), worker_account_login_current: () => ({ logins: [] }),
   bot_list: () => ({ bots }), bot_defaults_get: () => defaults, voice_status: () => ({ call: callOpen ? activeCall : null }),

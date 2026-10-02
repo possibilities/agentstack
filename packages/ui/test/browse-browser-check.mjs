@@ -11,7 +11,7 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath, StateJournal } from "@stack/api";
-import { anyObject, fixtureDoc, freePort as port, gatewayRoot, ui, z, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
+import { anyObject, fixtureDoc, freePort as port, gatewayRoot, ui, z, authorizeBrowser, serveFixture, fixtureServerId, seedRecovery } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -161,7 +161,7 @@ const handlers = {
   hypeman_detect: () => ({ installations: state.hypeman }),
   hypeman_location_set: () => ({ installations: state.hypeman }), hypeman_enable: () => ({ installations: state.hypeman }),
   hypeman_install: () => ({ installations: state.hypeman }), hypeman_uninstall: () => ({ installations: state.hypeman }),
-  serve_status: () => ({ pid: process.pid, startedAt: iso(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, startedAt: iso(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   bot_list: () => ({ bots: ["bot-1", "bot-2"].map((id) => ({ id, state: "running", pid: 321, cwd: "/fixture/workspace", url: null, account: null, runningAccount: null, mainThreadId: null, recoveryIssue: null, roleRevision: 1, settings: null })) }),
   bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }),
@@ -364,10 +364,8 @@ try {
   const resetUnknown = seedUnknown("reset", { profileId: uuid(2) });
   state.profiles.find((row) => row.id === uuid(2)).maintenanceRequestId = resetUnknown.requestId;
   const siteUnknown = seedUnknown("site", { profileId: uuid(3), origins: ["https://example.com"], categories: ["storage"] }, "partial");
-  await page.evaluate(({ resetUnknown, siteUnknown, research, retired }) => {
-    localStorage.setItem(`stack.state-flow.browse:reset:${research}`, JSON.stringify({ input: resetUnknown, at: Date.now() }));
-    localStorage.setItem(`stack.state-flow.browse:site:${retired}`, JSON.stringify({ input: siteUnknown, at: Date.now() }));
-  }, { resetUnknown, siteUnknown, research: uuid(2), retired: uuid(3) });
+  await seedRecovery(page, origin, `browse:reset:${uuid(2)}`, resetUnknown);
+  await seedRecovery(page, origin, `browse:site:${uuid(3)}`, siteUnknown);
   const plansBeforeRecovery = calls.filter((call) => /_(plan|clear)$/.test(call.name)).length;
   await page.reload();
   const fence = profiles.getByRole("region", { name: "Maintenance fence research" });
@@ -456,7 +454,7 @@ try {
   await volumeMaintenance.getByRole("button", { name: "Refresh volumes" }).click();
   await volumeMaintenance.getByRole("alert").waitFor({ state: "detached" });
   const volumeUnknown = seedUnknown("volume", { volumeIds: ["volume-0"] });
-  await page.evaluate((input) => localStorage.setItem("stack.state-flow.browse:volume:ids", JSON.stringify({ input, at: Date.now() })), volumeUnknown);
+  await seedRecovery(page, origin, "browse:volume:ids", volumeUnknown);
   const volumeApplies = calls.filter((call) => call.name === "browser_volume_clear").length;
   await page.reload();
   await volumeMaintenance.getByRole("region", { name: "browse receipt unknown" }).waitFor();

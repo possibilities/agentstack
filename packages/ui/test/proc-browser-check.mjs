@@ -13,7 +13,7 @@ import { api as botsApi } from "../../bots/dist/api.js";
 import { api as procApi } from "../../proc/dist/api.js";
 import { api as workerApi } from "../../worker/dist/api.js";
 import { ProcStore } from "../../proc/dist/src/store.js";
-import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, serveFixture } from "./browser-fixture.mjs";
+import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, serveFixture, fixtureServerId, destinationKey } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -60,7 +60,7 @@ const completionReceipts = [];
 const watchCalls = [];
 
 const handlers = {
-  serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   serve_resource_history: () => ({ snapshots: [], nextCursor: null }),
   serve_resources: () => ({ observation: { snapshotId: null, capturedAt: null, ageMs: null, freshness: "unavailable", lastAttemptAt: null, error: "server_missing", source: "unsupported", intervalMs: 5_000, staleAfterMs: 15_000, collectionDurationMs: null, coverage: null },
     host: null, capabilities: { rssBytes: false, virtualBytes: false, cpuTimeMs: false, cpuPercent: false, threads: false, diskIoBytes: false, openFileDescriptors: false, networkBytes: false, gpu: false, perSessionAllocation: false },
@@ -183,7 +183,7 @@ try {
   // Schedule detail: the secret's name shows but its value never renders before Reveal.
   await row("Secret keeper").click();
   await schedule.getByRole("heading", { name: "Secret keeper" }).waitFor();
-  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("stack.uix.proc.v1")).selectedScheduleId), secret.id);
+  assert.equal(await page.evaluate((key) => JSON.parse(localStorage.getItem(key)).selectedScheduleId, destinationKey(origin, "uix.proc.v1")), secret.id);
   await page.reload();
   await schedule.getByRole("heading", { name: "Secret keeper" }).waitFor();
   assert.deepEqual([...errors, ...consoleErrors].filter((text) => /hydration|Minified React error #418/i.test(text)), [],

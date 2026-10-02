@@ -12,7 +12,7 @@ import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall,
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as rolesApi } from "../../roles/dist/api.js";
 import { api as workerApi } from "../../worker/dist/api.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture, fixtureServerId, seedRecovery, destinationKey } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -129,7 +129,7 @@ const planWorker = ({ ids, kind, allowUnmerged = [] }) => {
 };
 
 const handlers = {
-  serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   account_list: () => ({ accounts: [] }),
   worker_account_list: () => ({ accounts: workerAccounts }),
   account_login_current: () => ({ login: null }),
@@ -640,7 +640,7 @@ try {
   await native.getByText("Unknown. The owner cannot say what happened. Inspect the exact resources; this request will not run again.").waitFor();
   for (const name of ["Prepare a new plan", "Close receipt", "Send identical request"]) assert.equal(await native.getByRole("button", { name }).count(), 0);
   const appliesBeforeReload = maintenanceCalls.filter(([name]) => name === "apply").length;
-  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("stack.uix.workers.v1"))[0].workerId), wid("d"));
+  assert.equal(await page.evaluate((key) => JSON.parse(localStorage.getItem(key))[0].workerId, destinationKey(origin, "uix.workers.v1")), wid("d"));
   await page.reload();
   await worker.getByRole("heading", { name: /stack · dddddd/ }).waitFor();
   assert.deepEqual(errors, [], "persisted Worker selection restores after reload without hydration errors");
@@ -649,7 +649,7 @@ try {
   const recovered = worker.locator("details").filter({ has: page.locator("summary", { hasText: "Purge native session" }) });
   await recovered.getByRole("region", { name: "worker receipt unknown" }).waitFor();
   assert.equal(await recovered.evaluate((element) => element.open), true);
-  assert.equal(await page.evaluate((id) => JSON.parse(localStorage.getItem(`stack.state-flow.worker:native_session:${id}`)).input.requestId, wid("d")), nativeApply.requestId);
+  assert.equal(await page.evaluate((key) => JSON.parse(localStorage.getItem(key)).input.requestId, destinationKey(origin, `state-flow.worker:native_session:${wid("d")}`)), nativeApply.requestId);
   assert.equal(maintenanceCalls.filter(([name]) => name === "apply").length, appliesBeforeReload);
   for (const name of ["Prepare a new plan", "Close receipt", "Send identical request"]) assert.equal(await recovered.getByRole("button", { name }).count(), 0);
 
@@ -746,7 +746,7 @@ try {
   const partialInput = { planId: partialPlan.id, expectedRevision: partialPlan.revision, requestId: crypto.randomUUID() };
   journal.begin(partialInput, partialPlan);
   journal.finish(partialInput.requestId, "partial", [{ resource: branches[2].workerId, outcome: "unknown", detail: "Inspect exact branch claim; admitted external effect was not verified" }]);
-  await page.evaluate((input) => localStorage.setItem("stack.state-flow.worker:branch:ids", JSON.stringify({ input, at: Date.now() })), partialInput);
+  await seedRecovery(page, origin, "worker:branch:ids", partialInput);
   await page.reload();
   const partial = list.getByRole("region", { name: "worker receipt partial" });
   await row("brain · bbbbbb").waitFor();

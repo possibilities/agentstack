@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as rolesApi } from "../../roles/dist/api.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture as serveReadFixture } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture as serveReadFixture, fixtureServerId } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -32,7 +32,7 @@ const worker = (phase, roleId, roleRevision) => ({ id: `w-${Math.random().toStri
 let botList = [bot("bot-1", null, null, join(project, "src")), bot("bot-2", null, null)];
 let workerList = [];
 const handlers = {
-  serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   bot_list: () => ({ bots: botList }),
   bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }),

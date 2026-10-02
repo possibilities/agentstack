@@ -15,7 +15,7 @@ import { api as botsApi } from "../../bots/dist/api.js";
 import { ChatIndex } from "../../bots/dist/src/chats.js";
 import { StateStore } from "../../bots/dist/src/store.js";
 import { RoleStore } from "../../roles/dist/src/index.js";
-import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, serveFixture, ui } from "./browser-fixture.mjs";
+import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, serveFixture, ui, destinationKey } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -284,9 +284,9 @@ try {
   queue.maintenance.begin(interruptedInput, interrupted);
   queue.maintenance.finish(interruptedInput.requestId, "unknown", [{ resource: queued.cancelled, outcome: "unknown", detail: "Fixture: the owner cannot say whether the body was cleared" }]);
   await page.evaluate(([key, input]) => {
-    for (const name of Object.keys(localStorage)) if (!name.startsWith("stack.state-flow.")) localStorage.removeItem(name);
+    for (const name of Object.keys(localStorage)) if (!name.includes(".state-flow.")) localStorage.removeItem(name);
     localStorage.setItem(key, JSON.stringify({ input, at: Date.now() }));
-  }, [`stack.state-flow.bots:${incarnation}:queue_bodies_clear:ids`, interruptedInput]);
+  }, [destinationKey(origin, `state-flow.bots:${incarnation}:queue_bodies_clear:ids`), interruptedInput]);
   await page.goto(`${origin}/fleet`);
   await page.locator('[data-node="bot:alpha"]').getByRole("button", { name: "State" }).click();
   await tab("Queue").click();

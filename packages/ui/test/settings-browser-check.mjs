@@ -14,7 +14,7 @@ import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@s
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as workerApi } from "../../worker/dist/api.js";
 import { SettingsStore, catalog, codexSchema, evidence, settingsState } from "../../settings/dist/src/index.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, ui, authorizeBrowser, serveFixture, fixtureServerId, seedRecovery, destinationKey } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -99,7 +99,7 @@ const handlers = {
   worker_settings_receipts_plan: ({ targets, retainDays }) => settings.receiptsPlan(targets.map(workerSubject), retainDays),
   worker_settings_receipts_clear: (input) => settings.receiptsClear(input),
   worker_state_receipt_get: ({ requestId }) => ({ receipt: settings.maintenance.receipt(requestId) }),
-  serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   serve_resources: () => { throw new Error("not part of this fixture"); }, serve_resource_history: () => { throw new Error("not part of this fixture"); },
   account_list: () => ({ accounts: [{ id: "account-1", enabled: true, removing: false, linkedAccounts: [] }] }),
   worker_account_list: () => ({ accounts: [{ id: claude, provider: "claude", enabled: true, ready: true, removing: false, linkedAccounts: [] }] }),
@@ -409,8 +409,8 @@ try {
   const recoveryInput = { planId: recoveryPlan.id, expectedRevision: recoveryPlan.revision, requestId: crypto.randomUUID() };
   settings.maintenance.begin(recoveryInput, recoveryPlan);
   settings.maintenance.finish(recoveryInput.requestId, "unknown", [{ resource: receiptSubject, outcome: "unknown", detail: "Interrupted receipt clearing" }]);
-  await page.evaluate((input) => localStorage.setItem("stack.state-flow.worker:settings_receipts:worker-defaults:claude", JSON.stringify({ input, at: Date.now() })), recoveryInput);
-  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("stack.uix.workers.v1"))[0].workerId), idleWorker);
+  await seedRecovery(page, origin, "worker:settings_receipts:worker-defaults:claude", recoveryInput);
+  assert.equal(await page.evaluate((key) => JSON.parse(localStorage.getItem(key))[0].workerId, destinationKey(origin, "uix.workers.v1")), idleWorker);
   await page.reload();
   await page.locator(`[data-window="worker"][data-node="worker:${idleWorker}"]`).waitFor();
   assert.deepEqual(errors, [], "persisted Worker selection and settings recovery reload without hydration errors");

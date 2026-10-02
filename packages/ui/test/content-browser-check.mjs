@@ -10,7 +10,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
 import { api as contentApi } from "../../content/dist/api.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture, fixtureServerId } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -20,7 +20,7 @@ const evidence = process.env.CONTENT_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1",
   STACK_CONTENT_PORT: String(await port()), STACK_CONTENT_ARTIFACT_PORT: String(await port()) };
-const handlers = { serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }) };
+const handlers = { serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }) };
 const fixture = (names) => fixtureOperations(names, handlers);
 const sockets = [];
 let websocket, next, browser, content, page;

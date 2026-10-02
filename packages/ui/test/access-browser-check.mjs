@@ -8,7 +8,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveSocket, serveWebSocket, socketPath, StateJournal } from "@stack/api";
-import { fixtureWorkspace, passthrough, transport, authorizeBrowser } from "./browser-fixture.mjs";
+import { fixtureWorkspace, passthrough, transport, authorizeBrowser, fixtureServerId, seedRecovery } from "./browser-fixture.mjs";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
@@ -73,7 +73,7 @@ const handlers = {
     publish(); return { id: grant.id, revision: grant.revision };
   },
   access_revoke: (input) => { data[`${input.kind}s`].find((item) => item.id === input.id).revoked = Date.now(); publish(); return { revoked: true }; },
-  serve_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   account_list: () => ({ accounts: [] }), account_login_current: () => ({ login: null }),
   worker_account_list: () => ({ accounts: [] }), worker_account_login_current: () => ({ logins: [] }),
   bot_list: () => ({ bots: [] }), bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
@@ -266,7 +266,7 @@ try {
   const recovered = handlers.access_history_plan({ kind: "ui_sessions", ids: ["active-session"] });
   const recoverInput = { planId: recovered.id, expectedRevision: recovered.revision, requestId: crypto.randomUUID() };
   historyJournal.begin(recoverInput, recovered); historyJournal.finish(recoverInput.requestId, "unknown", [{ resource: "active-session", outcome: "unknown", detail: "Unknown history result" }]);
-  await page.evaluate((input) => localStorage.setItem("stack.state-flow.access:history:ui_sessions", JSON.stringify({ input, at: Date.now() })), recoverInput);
+  await seedRecovery(page, origin, "access:history:ui_sessions", recoverInput);
   await page.reload();
   await history.getByRole("region", { name: "access receipt unknown" }).waitFor();
   await accessWindow.locator("summary", { hasText: "Audit retention" }).evaluate((element) => element.focus({ preventScroll: true })); await page.keyboard.press("Enter");

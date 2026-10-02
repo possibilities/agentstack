@@ -5,6 +5,18 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { findPackage, withLocalAuth, localCookieName } from "@stack/api";
+import { destinationPrefix } from "../lib/stack/destination.ts";
+
+/** The identity every fixture `serve_status` names, so the Canvas can persist: it never invents one (ADR 0167). */
+export const fixtureServerId = "7f3c1d52-9a64-4be1-8c0a-2d5e6f708192";
+/** A key as the Canvas stores it for a destination: the namespace plus the short name (`uix.chats.v1`, `state-flow.<key>`). */
+export const destinationKey = (origin, name, { serverId = fixtureServerId, authority = "local" } = {}) =>
+  destinationPrefix({ serverId, authority, origin: new URL(origin).origin }) + name;
+
+/** Seed one recovery record exactly as the Canvas saves it for this destination (see `destinationKey`). */
+export async function seedRecovery(page, origin, name, input, options) {
+  await page.evaluate(([key, value]) => localStorage.setItem(key, value), [destinationKey(origin, `state-flow.${name}`, options), JSON.stringify({ input, at: Date.now() })]);
+}
 
 /** Authenticate a disposable rendered fixture; production bootstrap is tested separately. */
 export async function authorizeBrowser(page, origin, env) {
@@ -51,9 +63,9 @@ export async function gatewayRoot(dir, names, synthetic = []) {
   return gateway;
 }
 
-/** Socket operations answered by `handlers[name]()`, with schemas the gateway can list. */
-export function fixtureOperations(names, handlers) {
-  return names.map((name) => ({ name, description: name, input: anyObject, output: z.any(), async call(_ctx, input) { return handlers[name](input); } }));
+/** Socket operations answered by `handlers[name]()`, with schemas the gateway can list. `annotations` marks chosen operations, e.g. `serve_status` read-only as the real one is, which remote viewers need. */
+export function fixtureOperations(names, handlers, annotations = {}) {
+  return names.map((name) => ({ name, description: name, input: anyObject, output: z.any(), ...(annotations[name] ? { annotations: annotations[name] } : {}), async call(_ctx, input) { return handlers[name](input); } }));
 }
 
 /** A discovery document for `docs_snapshot`, pointing every operation and topic at one WebSocket. */
@@ -97,7 +109,7 @@ export async function serveFixture(handlers = {}) {
   if (!Array.isArray(names)) throw new Error("serve must select explicit WebSocket operations");
   const { topics } = await import(pathToFileURL(join(root, "packages", "serve", "dist", "api.js")).href);
   const served = {
-    serve_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+    serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
     serve_resources: noResources,
     serve_settings_read: () => ({ developerMode: false, revision: 0, updatedAt: null }),
     ...overrides,

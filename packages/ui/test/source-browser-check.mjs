@@ -15,7 +15,7 @@ import { DatabaseSync } from "node:sqlite";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath, StateJournal } from "@stack/api";
 import { AccessStore } from "../../access/dist/src/store.js";
 import { startRemoteUi } from "../../access/dist/src/remote-ui.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture, fixtureServerId, destinationKey } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -56,7 +56,7 @@ const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) 
   STACK_GITHUB_MAX_PAYLOAD_BYTES: String(maxBytes), NEXT_TELEMETRY_DISABLED: "1",
   PATH: `${join(ghDir, "bin")}:${process.env.PATH}`, FIXTURE_GITHUB_REMOTE: ghFile };
 const { api: sourceApi } = await import("../../source/dist/api.js");
-const handlers = { serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }) };
+const handlers = { serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }) };
 const sockets = [];
 let owner, websocket, next, browser, page, remote, accessStore, log = "";
 const call = (name, args = {}) => socketCall(socketPath("source", env), "tools/call", { name, arguments: args });
@@ -803,7 +803,7 @@ try {
   journal.begin(unknownInput, unknownPlan);
   journal.finish(unknownInput.requestId, "unknown", [{ resource: "10", outcome: "unknown", detail: "Fixture interrupted admission; inspect the original request" }]);
   const fnv = (text) => { let value = 0x811c9dc5; for (let index = 0; index < text.length; index++) { value ^= text.charCodeAt(index); value = Math.imul(value, 0x01000193) >>> 0; } return value.toString(16); };
-  const slot = `stack.state-flow.source:history:${fnv("10")}`;
+  const slot = destinationKey(origin, `state-flow.source:history:${fnv("10")}`);
   await page.evaluate(([key, input]) => localStorage.setItem(key, JSON.stringify({ input, at: Date.now() })), [slot, unknownInput]);
   const clearsBefore = watchCalls("github_history_clear").length;
   await page.reload();
@@ -920,8 +920,8 @@ try {
   await shotDialog("source-create-review", createDialog);
   hold.gate = "github_endpoint_create";
   await createDialog.getByRole("button", { name: "Save receiver locally" }).click();
-  await page.waitForFunction((slot) => localStorage.getItem(slot) !== null, "stack.source-setup.create");
-  assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("stack.source-setup.create"))).input, exactCreate, "the exact request was recorded before it reached the owner");
+  await page.waitForFunction((slot) => localStorage.getItem(slot) !== null, destinationKey(origin, "source-setup.create"));
+  assert.deepEqual(JSON.parse(await page.evaluate((key) => localStorage.getItem(key), destinationKey(origin, "source-setup.create"))).input, exactCreate, "the exact request was recorded before it reached the owner");
   assert.equal((await call("github_endpoint_list")).endpoints.some((item) => item.id === docsId), false, "the owner had not been asked yet");
   hold.gate = null; hold.lose = "github_endpoint_create";
   hold.gated.release();
@@ -930,7 +930,7 @@ try {
   assert.equal(frames("github_endpoint_create").length, 1, "a lost answer is read back, never sent again");
   assert.deepEqual(frames("github_endpoint_create")[0], exactCreate);
   assert.equal(frames("github_endpoint_get").some((item) => item.id === docsId), true, "the receiver was read back by its ID");
-  assert.equal(await page.evaluate(() => localStorage.getItem("stack.source-setup.create")), null, "a confirmed save drops the recovery record");
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), destinationKey(origin, "source-setup.create")), null, "a confirmed save drops the recovery record");
   const docs = await ownerEndpoint(docsId);
   assert.equal(docs.label, "Docs repository");
   assert.equal(docs.publicOrigin, null);
@@ -1121,10 +1121,10 @@ try {
   await applyDialog.getByText(/never sent again under a new one/).waitFor();
   await dialogCaptures("source-hook-apply-confirm");
   await applyDialog.getByRole("button", { name: "Apply to GitHub" }).click();
-  await page.waitForFunction(() => /"requestId"/.test(localStorage.getItem(Object.keys(localStorage).find((key) => key.startsWith("stack.source-setup.requests.")) ?? "") ?? ""));
+  await page.waitForFunction(() => /"requestId"/.test(localStorage.getItem(Object.keys(localStorage).find((key) => key.includes(".source-setup.requests.")) ?? "") ?? ""));
   await until(async () => (await ghWrites()).length === 1);
   const applyRequest = frames("github_hook_apply").at(-1);
-  const recorded = JSON.parse(await page.evaluate((key) => localStorage.getItem(key), `stack.source-setup.requests.${repoId}`));
+  const recorded = JSON.parse(await page.evaluate((key) => localStorage.getItem(key), destinationKey(origin, `source-setup.requests.${repoId}`)));
   assert.equal(recorded[0].requestId, applyRequest.requestId, "the request ID was recorded before the answer, and is the one sent");
   assert.equal(recorded[0].status, "pending");
   assert.equal(JSON.stringify(recorded).includes(repo.secret), false, "the journal holds no secret");
@@ -1310,7 +1310,7 @@ try {
   const gheCard = card(gheId);
   await gheCard.waitFor();
   assert.equal(await receivers.getByRole("status", { name: "Unconfirmed receiver" }).count(), 0, "a receiver the owner holds needs no recovery");
-  assert.equal(await page.evaluate(() => localStorage.getItem("stack.source-setup.create")), null, "its recovery record was dropped");
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), destinationKey(origin, "source-setup.create")), null, "its recovery record was dropped");
   assert.equal(frames("github_endpoint_create").filter((item) => item.id === gheId).length, 1, "nothing was sent again");
   await openSetup(gheId);
   await toggleGroup(gheCard, "Set up by hand");
@@ -1328,8 +1328,8 @@ try {
   await createDialog.getByRole("button", { name: "Review receiver" }).click();
   hold.gate = "github_endpoint_create";
   await createDialog.getByRole("button", { name: "Save receiver locally" }).click();
-  await page.waitForFunction((slot) => localStorage.getItem(slot) !== null, "stack.source-setup.create");
-  const heldRecord = JSON.parse(await page.evaluate(() => localStorage.getItem("stack.source-setup.create"))).input;
+  await page.waitForFunction((slot) => localStorage.getItem(slot) !== null, destinationKey(origin, "source-setup.create"));
+  const heldRecord = JSON.parse(await page.evaluate((key) => localStorage.getItem(key), destinationKey(origin, "source-setup.create"))).input;
   hold.gate = null;
   await page.reload();
   const unconfirmedCreate = receivers.getByRole("status", { name: "Unconfirmed receiver" });
@@ -1350,7 +1350,7 @@ try {
   await unconfirmedCreate.waitFor({ state: "detached" });
   await receivers.getByRole("article").first().waitFor();
   // Whole-window evidence with setup panels open, from a reset camera (following a delivery link pans the bench and the camera is remembered).
-  await page.evaluate(() => localStorage.removeItem("stack.uix.bench.v2.source"));
+  await page.evaluate((key) => localStorage.removeItem(key), destinationKey(origin, "uix.bench.v2.source"));
   await page.goto(`${origin}/source`);
   await receivers.getByRole("article").first().waitFor();
   for (const [id, title, name] of [[app.endpoint.id, "Set up by hand", "source-manual-setup"], [gheId, "Set up by hand", "source-manual-ghes"], [repoId, "Hook at GitHub", "source-receivers-setup"]]) {

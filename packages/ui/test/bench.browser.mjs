@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { docsSnapshot, serveSocket, socketPath } from "@stack/api";
-import { passthrough as pass, transport, authorizeBrowser, root } from "./browser-fixture.mjs";
+import { passthrough as pass, transport, authorizeBrowser, root, destinationKey, fixtureServerId } from "./browser-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const uiDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -57,7 +57,7 @@ const historyFixture = { scopeId: "total", intervalMs: 5_000, truncated: false, 
     metrics: resourcesFixture.scopes[0].metrics, host: resourcesFixture.host, coverage: resourcesFixture.observation.coverage }] };
 const definitions = {
   serve: [
-    op("serve_status", { pid: 123, startedAt: fixtureAt, nodeVersion: process.version, indexUrl: "http://127.0.0.1:1", uiUrl: null, inspectorUrl: null, mcpUrls: { bots: "http://127.0.0.1:2/mcp/bots" },
+    op("serve_status", { serverId: fixtureServerId, pid: 123, startedAt: fixtureAt, nodeVersion: process.version, indexUrl: "http://127.0.0.1:1", uiUrl: null, inspectorUrl: null, mcpUrls: { bots: "http://127.0.0.1:2/mcp/bots" },
       children: [{ name: "api", pid: 124, running: true, exitCode: null, signal: null, error: null, startedAt: fixtureAt, exitedAt: null },
         { name: "fixture-stopped", pid: null, running: false, exitCode: 1, signal: null, error: "Fixture stopped", startedAt: null, exitedAt: fixtureAt }] }),
     op("serve_resources", resourcesFixture),
@@ -201,7 +201,7 @@ try {
   await page.goto(`${origin}/fleet`);
   await page.getByRole("main", { name: "Open bench" }).waitFor();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
-  assert.deepEqual(await page.locator("[data-window]:visible").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()), ["bots", "chat"]);
+  assert.deepEqual(await page.locator("[data-window]:visible").evaluateAll((nodes) => nodes.map((node) => node.dataset.window).sort()), ["bot-state", "bots", "chat"]);
   assert.equal(await page.getByRole("button", { name: "Grid", exact: true }).count(), 0);
   const point = () => page.locator('[data-window="bots"]').evaluate((el) => ({ x: el.getBoundingClientRect().x, y: el.getBoundingClientRect().y }));
   const samePoint = (a, b) => { assert.ok(Math.abs(a.x - b.x) < 1 && Math.abs(a.y - b.y) < 1, `${JSON.stringify(a)} != ${JSON.stringify(b)}`); };
@@ -350,7 +350,7 @@ try {
   await page.keyboard.up("Alt");
   const afterDrag = await point();
   assert.ok(Math.abs(afterDrag.x - beforeDrag.x - 50) < 1 && Math.abs(afterDrag.y - beforeDrag.y - 40) < 1, `drag ${JSON.stringify(beforeDrag)} -> ${JSON.stringify(afterDrag)}`);
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem("stack.uix.bench.v2.fleet") ?? "{}").layout?.manual?.bots === true);
+  await page.waitForFunction((key) => JSON.parse(localStorage.getItem(key) ?? "{}").layout?.manual?.bots === true, destinationKey(origin, "uix.bench.v2.fleet"));
   await page.reload();
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   samePoint(afterDrag, await point());
@@ -416,16 +416,16 @@ try {
 
   // Reproduce physically overlapping windows without adding temporary production spaces.
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.evaluate(() => {
-    const saved = JSON.parse(localStorage.getItem("stack.uix.bench.v2.fleet"));
+  await page.evaluate((key) => {
+    const saved = JSON.parse(localStorage.getItem(key));
     saved.space = "another-logical-space"; // forces Fleet's direct URL to fit, rather than reuse this camera
     saved.layout.positions.chat = { x: 0, y: 0 };
     saved.layout.positions.bots = { x: 0, y: 0 };
     saved.layout.manual.chat = true;
     saved.layout.manual.bots = true;
-    saved.layout.order = ["chat", "bots"];
-    localStorage.setItem("stack.uix.bench.v2.fleet", JSON.stringify(saved));
-  });
+    saved.layout.order = ["bot-state", "chat", "bots"];
+    localStorage.setItem(key, JSON.stringify(saved));
+  }, destinationKey(origin, "uix.bench.v2.fleet"));
   await page.goto(`${origin}/fleet`);
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
   const expectFront = async (id) => page.waitForFunction((target) => {
@@ -445,13 +445,13 @@ try {
   // Every space is a closed visual/focus boundary, even at minimum zoom and after panning.
   const expectedWindows = {
     HUD: ["hud-attention", "hud-item", "hud-resources", "hud-timeline", "hud-work"],
-    Fleet: ["bots", "chat"], Accounts: ["accounts", "model-catalogs", "usage"],
+    Fleet: ["bot-state", "bots", "chat"], Accounts: ["accounts", "model-catalogs", "usage"],
     Lab: ["call-speech", "inference"],
-    System: ["access", "activity", "codex-tools", "host", "packages", "processes", "resources", "sampling", "server"],
+    System: ["access", "activity", "codex-tools", "host", "packages", "processes", "resources", "sampling", "server", "state", "subscriptions", "xcom-state"],
     Roles: ["role-catalog", "role-editor", "role-instructions", "role-mcp-servers", "role-preview", "role-projects", "role-shims", "role-skills"],
-    Inbox: ["notify-detail", "notify-inbox"],
+    Inbox: ["notify-compose", "notify-detail", "notify-inbox"],
     Signal: ["attention", "attention-changes", "attention-messages", "attention-runs", "signal"],
-    Content: ["content-artifacts", "content-documents", "content-editor", "content-library", "content-preview"],
+    Content: ["content-artifacts", "content-documents", "content-editor", "content-library", "content-preview", "content-storage"],
     Workers: ["worker", "worker-runtimes", "workers"],
     Scrape: ["scrape-checks", "scrape-convert", "scrape-extract", "scrape-feeds", "scrape-presets", "scrape-queue", "scrape-status"],
   };
@@ -491,24 +491,31 @@ try {
   await page.waitForTimeout(200);
   assert.deepEqual(await page.locator("[data-window]:visible").evaluateAll((nodes) => nodes.map((n) => n.dataset.window).sort()), expectedWindows.Roles);
   await page.screenshot({ path: join(evidence, "isolated-roles-bench.png") });
-  // Upgrade a shared-world save without discarding manual layout or its viewed anchor.
-  await page.evaluate(() => {
-    for (const key of Object.keys(localStorage)) if (key.startsWith("stack.uix.bench.v2.")) localStorage.removeItem(key);
-    localStorage.setItem("stack.uix.bench.v1", JSON.stringify({
-      space: "fleet", camera: { x: 100, y: 200, k: 0.8 }, anchor: { id: "bots", point: { x: 1000, y: 1000 } },
-      layout: { positions: { bots: { x: 123, y: 234 }, accounts: { x: 66, y: 88 } }, manual: { bots: true, accounts: true },
-        collapsed: { accounts: true }, sizes: { bots: { width: 500 } }, order: ["bots", "accounts"] },
-    }));
+  // A save from before destination isolation names no platform: it is quarantined, never read, migrated or rewritten.
+  const legacyBench = JSON.stringify({
+    space: "fleet", camera: { x: 100, y: 200, k: 0.8 }, anchor: { id: "bots", point: { x: 1000, y: 1000 } },
+    layout: { positions: { bots: { x: 123, y: 234 }, accounts: { x: 66, y: 88 } }, manual: { bots: true, accounts: true },
+      collapsed: { accounts: true }, sizes: { bots: { width: 500 } }, order: ["bots", "accounts"] },
   });
+  await page.evaluate((legacy) => {
+    for (const key of Object.keys(localStorage)) if (key.includes(".uix.bench.v2.")) localStorage.removeItem(key);
+    localStorage.setItem("stack.uix.bench.v1", legacy);
+    localStorage.setItem("stack.uix.bench.v2.fleet", legacy);
+  }, legacyBench);
   await page.goto(`${origin}/fleet`);
   await page.locator('[data-window="bots"]').waitFor({ state: "visible" });
-  samePoint({ x: 900, y: 1000 }, await point());
+  assert.ok(Math.abs((await point()).x - 900) > 1 || Math.abs((await point()).y - 1000) > 1, "the legacy anchor was not applied");
   await switchSpace("Accounts");
-  assert.equal(await page.getByRole("button", { name: "Expand Accounts", exact: true }).count(), 1);
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem("stack.uix.bench.v2.accounts") ?? "{}").layout?.manual?.accounts === true);
-  assert.deepEqual(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem("stack.uix.bench.v2.accounts")).layout.positions).sort()), expectedWindows.Accounts);
+  assert.equal(await page.getByRole("button", { name: "Expand Accounts", exact: true }).count(), 0, "the legacy collapsed state was not applied");
+  const accountsKey = destinationKey(origin, "uix.bench.v2.accounts");
+  await page.waitForFunction((key) => localStorage.getItem(key) !== null, accountsKey);
+  assert.deepEqual(await page.evaluate((key) => Object.keys(JSON.parse(localStorage.getItem(key)).layout.positions).sort(), accountsKey), expectedWindows.Accounts);
+  const stored = await page.evaluate(([fleet]) => ({ v1: localStorage.getItem("stack.uix.bench.v1"), v2: localStorage.getItem("stack.uix.bench.v2.fleet"), own: JSON.parse(localStorage.getItem(fleet) ?? "null") }), [destinationKey(origin, "uix.bench.v2.fleet")]);
+  assert.equal(stored.v1, legacyBench, "the unqualified v1 save is left exactly as it was");
+  assert.equal(stored.v2, legacyBench, "the unqualified v2 save is left exactly as it was");
+  assert.notDeepEqual(stored.own?.layout?.positions?.bots, { x: 123, y: 234 }, "nothing was migrated from it");
   assert.deepEqual(issues, []);
-  console.log("PASS: isolated spaces at minimum zoom/pan, independent cameras/history, hidden focus exclusion, retained draft/collapse state, reduced motion and rapid navigation, legacy layout migration; desktop/mobile navigation, joint dock sizing/expanded reading, keyboard resize/Escape/focus return, retained inspection/reference, stacking, inspector scroll, pin persistence, schemas, search, deep links and manual placement reload; no page errors.");
+  console.log("PASS: isolated spaces at minimum zoom/pan, independent cameras/history, hidden focus exclusion, retained draft/collapse state, reduced motion and rapid navigation, legacy layout quarantine; desktop/mobile navigation, joint dock sizing/expanded reading, keyboard resize/Escape/focus return, retained inspection/reference, stacking, inspector scroll, pin persistence, schemas, search, deep links and manual placement reload; no page errors.");
   console.log(`Screenshots: ${evidence}`);
   }
 } catch (error) {

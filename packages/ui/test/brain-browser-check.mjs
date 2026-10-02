@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath, StateJournal } from "@stack/api";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture, fixtureServerId, seedRecovery } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -38,7 +38,7 @@ const watchReceipts = [
 ];
 const watchCalls = [];
 const watchLinks = {}; // recordId → resolved link, populated once the exact job/run ids exist
-const handlers = { serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+const handlers = { serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   serve_completion_list: (args) => {
     watchCalls.push(args);
     const rows = watchReceipts.filter((row) => (!args.package || row.pkg === args.package) && (!args.operation || row.operation === args.operation)
@@ -217,7 +217,7 @@ try {
   const unknown = { planId: unknownPlan.id, expectedRevision: unknownPlan.revision, requestId: crypto.randomUUID() };
   journal.begin(unknown, unknownPlan);
   journal.finish(unknown.requestId, "unknown", [{ resource: "job:2", outcome: "unknown", detail: "Fixture interrupted admission; inspect original request" }]);
-  await page.evaluate((input) => localStorage.setItem("stack.state-flow.brain:jobs_payload:2", JSON.stringify({ input, at: Date.now() })), unknown);
+  await seedRecovery(page, origin, "brain:jobs_payload:2", unknown);
   await page.reload();
   await activate(jobs.getByRole("radio", { name: /^Done/ }).or(jobs.getByRole("button", { name: /^Done/ })).first());
   await activate(orphan.getByRole("button", { name: "Show job 2 details" }));

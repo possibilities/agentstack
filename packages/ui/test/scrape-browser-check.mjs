@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath, StateJournal } from "@stack/api";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture, fixtureServerId, seedRecovery } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -31,7 +31,7 @@ const { QUEUE_DIR, FAILED_DIR } = await import("../../scrape/dist/src/queue.js")
 assert.equal(resolveDataHome(), join(dir, "scrape"));
 assert.equal(QUEUE_DIR, join(dir, "scrape", "queue"), "Scrape must never use a live queue");
 const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
-const handlers = { serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }) };
+const handlers = { serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }) };
 const sockets = [];
 let websocket, next, browser, scrape, web, page, db, journal, releaseClaim;
 let claimEntered;
@@ -220,7 +220,7 @@ try {
   const listedClaim = (await call("scrape_queue_list")).jobs.find((job) => job.id === claimed.id);
   const digest = createHash("sha256").update(await readFile(join(FAILED_DIR, listedClaim.file), "utf8")).digest("hex");
   db.prepare("INSERT INTO queue_fences VALUES(?,?,?,?)").run(claimed.id, digest, unknown.requestId, "retry");
-  await page.evaluate(({ id, input }) => localStorage.setItem(`stack.state-flow.scrape:queue_retry:${id}`, JSON.stringify({ input, at: Date.now() })), { id: claimed.id, input: unknown });
+  await seedRecovery(page, origin, `scrape:queue_retry:${claimed.id}`, unknown);
   await page.reload();
   await claimFlow.getByRole("region", { name: "scrape receipt unknown" }).waitFor();
   await claimFlow.getByRole("button", { name: "Read receipt again" }).waitFor();
@@ -281,7 +281,7 @@ try {
   const corpusUnknown = { planId: corpusPlan.id, expectedRevision: corpusPlan.revision, requestId: crypto.randomUUID() };
   journal.begin(corpusUnknown, corpusPlan);
   journal.finish(corpusUnknown.requestId, "unknown", [{ resource: "corpus/x-tweet/sample-002", outcome: "unknown", detail: "Fixture interrupted filesystem apply; inspect capture" }]);
-  await page.evaluate((input) => localStorage.setItem("stack.state-flow.scrape:corpus_clear:x-tweet", JSON.stringify({ input, at: Date.now() })), corpusUnknown);
+  await seedRecovery(page, origin, "scrape:corpus_clear:x-tweet", corpusUnknown);
   await page.reload();
   await checks.getByLabel("Preset to replay").selectOption("x-tweet");
   await corpusFlow.getByRole("region", { name: "scrape receipt unknown" }).waitFor();

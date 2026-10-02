@@ -545,7 +545,7 @@ try {
   await summary.focus();
   await factory.keyboard.press("Enter");
   for (const text of ["Clears, after verified teardown", "Keeps", "Refused", "During and after", "Plan and clear · private socket",
-    "Cold commands · after shutdown", "not erased", "<state>.retained-git/<requestId>/vault", "stack.state-flow.*", "stack.uix.browse.intent.*"]) {
+    "Cold commands · after shutdown", "not erased", "<state>.retained-git/<requestId>/vault", "stack.destination.*", "state-flow.*", "uix.browse.intent.*"]) {
     await disclosure.getByText(text, { exact: false }).first().waitFor();
   }
 

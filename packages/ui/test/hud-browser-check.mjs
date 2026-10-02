@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as hudApi } from "../../hud/dist/api.js";
-import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, serveFixture } from "./browser-fixture.mjs";
+import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, serveFixture, fixtureServerId } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -37,7 +37,7 @@ const session = { id: worker, botId: "bot-1", threadId: "main-bot-1", accountId:
     workContext: { workItemId: ids.design, scopeRevision: 1, source: "explicit" } }, pendingPermissions: 0 };
 
 const handlers = {
-  serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   serve_resource_history: () => ({ snapshots: [], nextCursor: null }),
   // The gateway admits serve only with every operation its manifest selects; this check reads none of them.
   serve_codex_tools: () => { throw new Error("not observed in this fixture"); },

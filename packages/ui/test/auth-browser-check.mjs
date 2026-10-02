@@ -9,7 +9,7 @@ import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serveSocket, serveWebSocket, socketPath, StateJournal } from "@stack/api";
-import { fixtureWorkspace, anyObject, transport, z, authorizeBrowser } from "./browser-fixture.mjs";
+import { fixtureWorkspace, anyObject, transport, z, authorizeBrowser, fixtureServerId, seedRecovery } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -59,7 +59,7 @@ const handlers = {
     served.get("auth").publish("worker_accounts_changed"); return receipt;
   },
   auth_state_receipt_get: ({ requestId }) => ({ receipt: cacheJournal.receipt(requestId) }),
-  serve_status: () => ({ pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, startedAt: new Date().toISOString(), nodeVersion: process.version, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   account_list: () => ({ accounts: [] }),
   account_login_current: () => ({ login: botAttempt }),
   worker_account_list: () => ({ accounts }),
@@ -355,7 +355,7 @@ try {
   const cp = handlers.worker_account_cache_plan({ accountId: codexAccount.id });
   const input_ = { planId: cp.id, expectedRevision: cp.revision, requestId: crypto.randomUUID() };
   cacheJournal.begin(input_, cp); cacheJournal.finish(input_.requestId, "unknown", [{ resource: "cache/opencode/models.json", outcome: "unknown", detail: "Interrupted cache clearing" }]);
-  await page.evaluate(({ input, id }) => localStorage.setItem(`stack.state-flow.auth:account_cache:${id}`, JSON.stringify({ input, at: Date.now() })), { input: input_, id: codexAccount.id });
+  await seedRecovery(page, origin, `auth:account_cache:${codexAccount.id}`, input_);
   await page.reload();
   const inspectCodex = codex.getByRole("button", { name: /^Inspect worker account/ });
   if (await inspectCodex.getAttribute("aria-pressed") !== "true") {

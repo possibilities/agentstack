@@ -13,7 +13,7 @@ import { api as botsApi } from "../../bots/dist/api.js";
 import { api as notifyApi } from "../../notify/dist/api.js";
 import { AccessStore } from "../../access/dist/src/store.js";
 import { startRemoteUi } from "../../access/dist/src/remote-ui.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture, fixtureServerId, destinationKey } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -24,12 +24,13 @@ const evidence = process.env.INBOX_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 const env = { ...process.env, STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
 const handlers = {
-  serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   bot_list: () => ({ bots: [] }),
   bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }),
 };
-const fixture = (names) => fixtureOperations(names, handlers);
+// The real serve_status is read-only, which is what lets a remote viewer learn the server's identity over its scoped gateway.
+const fixture = (names) => fixtureOperations(names, handlers, { serve_status: { readOnlyHint: true } });
 const sockets = [];
 let websocket, next, browser, notify, remoteUi, accessStore;
 let log = "";
@@ -184,7 +185,7 @@ try {
     await page.waitForFunction(() => !document.querySelector('[data-window="notify-compose"] input')?.disabled);
   };
   const savedDraft = () => page.evaluate(() => {
-    const key = Object.keys(localStorage).find(key => key.startsWith("stack.uix.notify-compose.v1."));
+    const key = Object.keys(localStorage).find(key => key.includes(".uix.notify-compose.v1."));
     return key ? JSON.parse(localStorage.getItem(key)) : null;
   });
   const storedRecord = async () => { const draft = await savedDraft(); return call("notification_get", { id: draft.id }); };
@@ -336,11 +337,11 @@ try {
   notifyDoc.transports[0].operations = exposedOperations;
 
   // Draft persistence is a send precondition, not optional arrangement storage. No write when storage fails.
-  const slotKey = await page.evaluate(() => Object.keys(localStorage).find(key => key.startsWith("stack.uix.notify-compose.v1.")));
+  const slotKey = await page.evaluate(() => Object.keys(localStorage).find(key => key.includes(".uix.notify-compose.v1.")));
   await nextDraft();
   await page.evaluate(() => {
     window.originalSetItem = Storage.prototype.setItem;
-    Storage.prototype.setItem = function(key, value) { if (key.startsWith("stack.uix.notify-compose.v1.")) throw new Error("fixture storage failure"); return window.originalSetItem.call(this, key, value); };
+    Storage.prototype.setItem = function(key, value) { if (key.includes(".uix.notify-compose.v1.")) throw new Error("fixture storage failure"); return window.originalSetItem.call(this, key, value); };
   });
   await compose.getByLabel("Title", { exact: true }).fill("Unpersisted intent");
   await compose.getByLabel("Message", { exact: true }).fill("Must not dispatch.");
@@ -383,6 +384,10 @@ try {
   await remotePage.locator('[data-window="notify-inbox"] [data-notification]').first().waitFor();
   assert.equal(await remotePage.locator('[data-window="notify-compose"]').count(), 0, "view-only remote has no Compose");
   assert.equal(await remotePage.getByRole("button", { name: "New notification", exact: true }).count(), 0);
+  // A remote viewer learns the server's identity over its scoped gateway, then keeps state under the remote namespace only.
+  const remotePrefix = destinationKey(remoteOrigin, "", { authority: "remote" });
+  await remotePage.waitForFunction((prefix) => Object.keys(localStorage).some((name) => name === `${prefix}uix.bench.v2.inbox`), remotePrefix);
+  assert.deepEqual(await remotePage.evaluate((prefix) => Object.keys(localStorage).filter((name) => !name.startsWith(prefix)), remotePrefix), [], "every remote key is namespaced to the remote destination");
   const grant = accessStore.inventory().grants.find(item => item.client_id === credential.clientId);
   accessStore.updateGrant(grant.id, 1, ["ui:view", "ui:control"], []);
   await remotePage.locator('[data-remote-scope="control"]').waitFor();

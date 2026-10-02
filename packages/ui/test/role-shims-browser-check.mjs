@@ -11,7 +11,7 @@ import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall,
 import { processBirth } from "../../roles/dist/src/launch-state.js";
 import { api as botsApi } from "../../bots/dist/api.js";
 import { api as rolesApi } from "../../roles/dist/api.js";
-import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture } from "./browser-fixture.mjs";
+import { fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, ui, authorizeBrowser, serveFixture, fixtureServerId, seedRecovery } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -24,7 +24,7 @@ await mkdir(evidence, { recursive: true });
 // Nothing of the live Stack environment reaches the fixture: only the disposable directories are named.
 const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("STACK_"))), STACK_STATE_DIR: dir, STACK_INSTALL_BIN_DIR: bin, NEXT_TELEMETRY_DISABLED: "1" };
 const handlers = {
-  serve_status: () => ({ pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
+  serve_status: () => ({ serverId: fixtureServerId, pid: process.pid, children: [], mcpUrls: {}, indexUrl: null, uiUrl: null, inspectorUrl: null }),
   bot_list: () => ({ bots: [] }),
   bot_defaults_get: () => ({ model: "fixture", reasoningEffort: "medium", sandboxMode: "danger-full-access", approvalPolicy: "never" }),
   voice_status: () => ({ call: null }),
@@ -242,7 +242,7 @@ try {
   journal.begin(recoveryInput, recoveryPlan);
   journal.finish(recoveryInput.requestId, "unknown", [{ resource: unknown, outcome: "unknown", detail: "Interrupted teardown remains unknown" }]);
   journal.close();
-  await page.evaluate((input) => localStorage.setItem("stack.state-flow.roles:launch_clear:ids", JSON.stringify({ input, at: Date.now() })), recoveryInput);
+  await seedRecovery(page, origin, "roles:launch_clear:ids", recoveryInput);
   await page.reload();
   await launches.getByRole("region", { name: "roles receipt unknown" }).waitFor();
   assert.equal(await launches.getByRole("button", { name: "Send identical request" }).count(), 0);
