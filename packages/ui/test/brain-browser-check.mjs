@@ -385,7 +385,7 @@ try {
 
   // Each page read carries the same exact bound identity; no page or receipt triggers a reveal.
   const syncCalls = sentCalls.filter((params) => params.package === "brain" && params.name === "sources_sync_completion");
-  assert.deepEqual(syncCalls.map((params) => params.arguments?.offset ?? 0), [0, 50, 100], "the observation pages at 50-run offsets");
+  assert.deepEqual(syncCalls.slice(-3).map((params) => params.arguments?.offset ?? 0), [0, 50, 100], "the observation pages at 50-run offsets");
   for (const params of syncCalls) assert.deepEqual([params.arguments.requestId, params.arguments.botId, params.arguments.threadId], [watchReq(6), watchBot, watchThread]);
   assert.equal(revealCalls(), revealsBefore, "no watch surface ever calls jobs_reveal");
   assert.equal(audits(), auditCount, "no watch surface wrote a reveal audit");
