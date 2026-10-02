@@ -8,6 +8,8 @@ import type { WorkerFilter } from "./workers";
  */
 export type WorkerWindow = { id: string; workerId: string | null };
 export type WorkerWindows = readonly WorkerWindow[];
+/** An exact-turn focus request for one Worker window; transient, never persisted. `seq` distinguishes repeat focuses. */
+export type TurnFocus = { windowId: string; workerId: string; turnId: string; seq: number };
 
 export const primaryWorker = "worker";
 const storageKey = "stack.uix.workers.v1";
@@ -17,6 +19,8 @@ type Listener = () => void;
 export class WorkerWindowStore {
   private windows: WorkerWindows = [{ id: primaryWorker, workerId: null }];
   private filter: WorkerFilter = {};
+  private turnFocus: TurnFocus | null = null;
+  private focusSeq = 0;
   private listeners = new Set<Listener>();
   private storage: Pick<Storage, "getItem" | "setItem"> | null = null;
 
@@ -34,6 +38,7 @@ export class WorkerWindowStore {
 
   getWindows = (): WorkerWindows => this.windows;
   getFilter = (): WorkerFilter => this.filter;
+  getTurnFocus = (): TurnFocus | null => this.turnFocus;
 
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
@@ -46,6 +51,14 @@ export class WorkerWindowStore {
     if (existing) return existing.id;
     this.set(this.windows.map((window) => window.id === primaryWorker ? { ...window, workerId } : window));
     return primaryWorker;
+  }
+
+  /** Reveal the window showing this Worker and focus one exact turn in its Turns view. Returns the window to reveal. */
+  showTurn(workerId: string, turnId: string): string {
+    const id = this.show(workerId);
+    this.turnFocus = { windowId: id, workerId, turnId, seq: ++this.focusSeq };
+    this.emit();
+    return id;
   }
 
   /** Add a window for this Worker beside the others. Returns its ID. */

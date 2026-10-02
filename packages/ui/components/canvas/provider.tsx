@@ -3,7 +3,7 @@
 import { createContext, use, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { SpaceId } from "@/lib/stack/spaces";
 import { ChatWindowStore, type ChatWindows } from "@/lib/stack/chat-windows";
-import { WorkerWindowStore, type WorkerWindows } from "@/lib/stack/worker-windows";
+import { WorkerWindowStore, type TurnFocus, type WorkerWindows } from "@/lib/stack/worker-windows";
 import { ViewerWindowStore, type ControlGrants, type HandoffActions, type ViewerWindows } from "@/lib/stack/browse-viewers";
 import { ProcWindowStore, type ProcRunWindows } from "@/lib/stack/proc-windows";
 import { HudViewStore, type HudView } from "@/lib/stack/hud-view";
@@ -73,13 +73,14 @@ export function useChatWindows(): { windows: ChatWindows; chats: ChatWindowStore
   return { windows, chats };
 }
 
-/** Workers-space windows, the store that arranges them, and the Workers list's filter. */
-export function useWorkerWindows(): { windows: WorkerWindows; filter: WorkerFilter; workerWindows: WorkerWindowStore } {
+/** Workers-space windows, the store that arranges them, the Workers list's filter, and any exact-turn focus request. */
+export function useWorkerWindows(): { windows: WorkerWindows; filter: WorkerFilter; turnFocus: TurnFocus | null; workerWindows: WorkerWindowStore } {
   const workerWindows = use(WorkerWindowsContext);
   if (!workerWindows) throw new Error("useWorkerWindows requires StackProvider");
   const windows = useSyncExternalStore(workerWindows.subscribe, workerWindows.getWindows, workerWindows.getWindows);
   const filter = useSyncExternalStore(workerWindows.subscribe, workerWindows.getFilter, workerWindows.getFilter);
-  return { windows, filter, workerWindows };
+  const turnFocus = useSyncExternalStore(workerWindows.subscribe, workerWindows.getTurnFocus, workerWindows.getTurnFocus);
+  return { windows, filter, turnFocus, workerWindows };
 }
 
 /** Proc-space Run windows, the Schedule selection and the lists' filters. */

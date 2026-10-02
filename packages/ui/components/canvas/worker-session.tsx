@@ -152,7 +152,7 @@ async function readTools(store: StackStore, id: string, pages: number): Promise<
   * window reads, except for managed settings and explicit local state maintenance.
  */
 export function WorkerWindow({ id }: { id: string }) {
-  const { windows, workerWindows } = useWorkerWindows();
+  const { windows, workerWindows, turnFocus } = useWorkerWindows();
   const { workerSessions, workerAccounts, remote } = useStack();
   const { goTo } = useWorkbench();
   const workerId = windows.find((window) => window.id === id)?.workerId ?? null;
@@ -162,6 +162,13 @@ export function WorkerWindow({ id }: { id: string }) {
   const worker = status?.worker.id === workerId ? status.worker : listed;
   const labels = workerAccountLabels(workerAccounts.data);
   const [tab, setTab] = useState<Tab>("conversation");
+  const [focusTurnId, setFocusTurnId] = useState<string | null>(null);
+  const focusSeq = turnFocus?.seq ?? 0;
+  useEffect(() => {
+    const match = turnFocus && turnFocus.windowId === id && turnFocus.workerId === workerId ? turnFocus.turnId : null;
+    setFocusTurnId(match);
+    if (match) setTab("turns");
+  }, [focusSeq]);
   const primary = id === primaryWorker;
   const actions = (
     <>
@@ -204,7 +211,7 @@ export function WorkerWindow({ id }: { id: string }) {
             {tab === "conversation" ? <ConversationTab key={`${worker.id}:${worker.contentClearedAt ?? "original"}`} worker={worker} generation={generation} />
               : tab === "changes" ? <ChangesTab key={worker.id} worker={worker} generation={generation} />
               : tab === "files" ? <WorkerFilesTab key={worker.id} worker={worker} generation={generation} />
-              : tab === "turns" ? <TurnsTab key={worker.id} worker={worker} generation={generation} />
+              : tab === "turns" ? <TurnsTab key={worker.id} worker={worker} generation={generation} focusTurnId={focusTurnId} />
               : tab === "tools" ? <ToolsTab key={worker.id} worker={worker} generation={generation} />
               : tab === "records" ? <RecordsTab key={`${worker.id}:${worker.contentClearedAt ?? "original"}`} worker={worker} generation={generation} />
               : tab === "settings" ? <WorkerSettingsTab key={worker.id} worker={worker} status={status} />
@@ -559,18 +566,30 @@ function Patch({ diff }: { diff: WorkerDiff }) {
   );
 }
 
-function TurnsTab({ worker, generation }: { worker: WorkerSession; generation: number }) {
+function TurnsTab({ worker, generation, focusTurnId }: { worker: WorkerSession; generation: number; focusTurnId?: string | null }) {
   const store = useStore();
   const turns = useSnapshot(worker.id, generation, () => readTurns(store, worker.id));
   const list = turns.data ?? [];
+  const focused = focusTurnId && list.some((turn) => turn.id === focusTurnId) ? focusTurnId : null;
+  const scrolled = useRef<string | null>(null);
+  // Set scrollTop on the tab's own scroll container only; scrollIntoView could move bench ancestors.
+  const focusRef = useCallback((element: HTMLElement | null) => {
+    if (!element || !focused || scrolled.current === `${worker.id}:${focused}`) return;
+    scrolled.current = `${worker.id}:${focused}`;
+    const container = element.closest<HTMLElement>("[data-scroll]");
+    if (container) container.scrollTop += element.getBoundingClientRect().top - container.getBoundingClientRect().top;
+  }, [worker.id, focused]);
   return (
     <Scroller>
+      {focusTurnId && turns.data && !focused ? <p role="status" className="text-xs text-warning">The linked turn {shortId(focusTurnId)} is not in this Worker&rsquo;s turn list.</p> : null}
       {list.map((turn, index) => {
         const mismatch = settingsMismatch({ model: turn.requestedModel, effort: turn.requestedEffort }, turn.observedSettings);
         return (
-          <article key={turn.id} className="flex flex-col gap-1.5 rounded-xl border px-2.5 py-2">
+          <article key={turn.id} ref={focused === turn.id ? focusRef : undefined} data-turn-id={turn.id} aria-current={focused === turn.id ? "true" : undefined}
+            className={cn("flex flex-col gap-1.5 rounded-xl border px-2.5 py-2", focused === turn.id && "ring-2 ring-foreground/30")}>
             <div className="flex items-center gap-2 text-[0.78rem]">
               <span className="font-medium">Turn {index + 1}</span>
+              {focused === turn.id ? <span className="shrink-0 rounded bg-muted px-1.5 py-px text-[0.64rem] font-medium text-muted-foreground">Linked turn · {shortId(turn.id)}</span> : null}
               <span className={cn("text-[0.7rem]", turn.phase === "failed" ? "text-destructive" : turn.phase === "unknown" ? "text-warning" : turn.phase === "completed" ? "text-success" : "text-muted-foreground")}>
                 {turn.phase}{turn.stopReason ? ` · ${turn.stopReason}` : ""}
               </span>

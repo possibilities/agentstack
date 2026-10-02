@@ -30,6 +30,13 @@ export function useShowWorker(): (id: string) => void {
   return (id: string) => goTo({ kind: "worker-window", id: workerWindows.show(id) });
 }
 
+/** Show a Worker's exact turn: its window's Turns view, never the latest turn. */
+export function useShowWorkerTurn(): (workerId: string, turnId: string) => void {
+  const { workerWindows } = useWorkerWindows();
+  const { goTo } = useWorkbench();
+  return (workerId: string, turnId: string) => goTo({ kind: "worker-window", id: workerWindows.showTurn(workerId, turnId) });
+}
+
 /**
  * Every Worker in worker_list, grouped by what it needs. Choosing one shows it
  * in the Worker window. Bots start and steer Workers; this space reads them and
