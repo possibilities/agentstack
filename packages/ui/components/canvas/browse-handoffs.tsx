@@ -8,14 +8,17 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { browseCallError, browseLocalReason, groupHandoffs, handoffContentSelection, handoffOutcomes, handoffStates, heldBy, intentFor, loadIntent, profileName, saveIntent } from "@/lib/stack/browse";
-import { localOperations, stateOperations } from "@/lib/stack/state";
+import { browseReportText } from "@/lib/stack/completion";
+import { shortId } from "@/lib/stack/derive";
+import { localOperation, localOperations, stateOperations } from "@/lib/stack/state";
 import { primaryViewer, type HandoffActionState } from "@/lib/stack/browse-viewers";
-import type { BrowserHandoff, BrowserHandoffAction, BrowserProfile } from "@/lib/stack/types";
+import type { BrowserHandoff, BrowserHandoffAction, BrowserHandoffObservation, BrowserProfile } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
-import { ContentCleared, Empty, Flash, NodeCard, NodeLink, NodeTitle, StatusDot, Time } from "./primitives";
+import { ContentCleared, Empty, Flash, NodeCard, NodeLink, NodeTitle, Row, StatusDot, Time } from "./primitives";
 import { browseMaintenanceOperations } from "./browse-maintenance";
 import { MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
 import { useStack, useStore, useViewerWindows, useWorkbench } from "./provider";
+import { BotWatch, useObservedRead } from "./watch-receipts";
 import { PlacementContext, Section, Window } from "./window";
 
 function session(): Storage | null {
@@ -229,14 +232,54 @@ function HistoryRows({ rows, profiles, selection }: { rows: BrowserHandoff[]; pr
             <span className="ml-auto shrink-0 text-[0.64rem] text-muted-foreground">{handoff.outcome ? handoffOutcomes[handoff.outcome] : "Resolved"} · <Time at={Date.parse(handoff.resolvedAt ?? handoff.createdAt)} /></span>
           </div>
           {handoff.contentClearedAt ? <ContentCleared at={handoff.contentClearedAt} /> : null}
-          <p className="flex gap-2 text-[0.66rem] text-muted-foreground">
-            <span className="font-mono">{handoff.botId}</span><span className="truncate">{profileName(profiles.get(handoff.profileId), handoff.profileId)}</span>
+          <p className="flex flex-wrap gap-x-2 gap-y-0.5 text-[0.66rem] text-muted-foreground">
+            <span className="font-mono">{handoff.botId}</span>
+            <span className="font-mono" title={`Thread ${handoff.threadId}`}>thread {handoff.threadId.slice(0, 12)}</span>
+            <span className="font-mono" title={`Request ${handoff.requestId}`}>request {shortId(handoff.requestId)}</span>
+            <span className="truncate">{profileName(profiles.get(handoff.profileId), handoff.profileId)}</span>
             {!handoff.contentClearedAt && handoff.note ? <span className="min-w-0 truncate italic" title={handoff.note}>“{handoff.note}”</span> : null}
           </p>
         </NodeCard>
       </li>;
     })}
   </ul>;
+}
+
+/**
+ * One handoff's recorded origin, then its Bot watch: the retained receipt for this exact request ID,
+ * and the resolved human report read through `browser_handoff_completion`. A report is what the
+ * human told the Bot, not verified browser state. Content-cleared handoffs keep their IDs.
+ */
+export function HandoffWatch({ handoff }: { handoff: BrowserHandoff }) {
+  const { bots } = useStack();
+  const knownBot = bots.data?.some((bot) => bot.id === handoff.botId);
+  return (
+    <div className="flex flex-col gap-2">
+      <dl className="flex flex-col">
+        <Row label="Bot" mono>{knownBot ? <NodeLink node={{ kind: "bot", id: handoff.botId }} label={`Bot ${handoff.botId}`}>{handoff.botId}</NodeLink> : handoff.botId}</Row>
+        <Row label="Chat thread" mono copy={handoff.threadId}><span className="break-all whitespace-normal">{handoff.threadId}</span></Row>
+        <Row label="Request ID" mono copy={handoff.requestId}><span className="break-all whitespace-normal">{handoff.requestId}</span></Row>
+        <Row label="Handoff ID" mono copy={handoff.id}><span className="break-all whitespace-normal">{handoff.id}</span></Row>
+      </dl>
+      <BotWatch pkg="browse" recordId={handoff.requestId} origin={{ botId: handoff.botId, threadId: handoff.threadId }} observe={handoff.revision}>
+        {() => <HandoffCompletion handoff={handoff} />}
+      </BotWatch>
+    </div>
+  );
+}
+
+/** The exact-request observation, read only while a watch receipt exists and on each handoff revision. */
+function HandoffCompletion({ handoff }: { handoff: BrowserHandoff }) {
+  const state = useStack();
+  const store = useStore();
+  const access = localOperation(state, "browse", "browser_handoff_completion");
+  const usable = access.available && Boolean(handoff.botId && handoff.threadId && handoff.requestId);
+  const read = useObservedRead<BrowserHandoffObservation>(usable ? `handoff-completion:${handoff.id}` : null, handoff.revision,
+    () => store.call<BrowserHandoffObservation>("browse", "browser_handoff_completion", { botId: handoff.botId, threadId: handoff.threadId, requestId: handoff.requestId }));
+  if (!access.available) return <p className="text-[0.72rem] text-pretty text-muted-foreground">{access.reason}</p>;
+  if (read.error) return <p className="text-[0.72rem] text-pretty text-destructive">Observation unavailable: {read.error}</p>;
+  if (read.loading || !read.data) return <p className="text-[0.72rem] text-muted-foreground">Reading…</p>;
+  return <p className="text-[0.72rem] text-pretty text-muted-foreground">{browseReportText(read.data.result?.outcome ?? null)}</p>;
 }
 
 function HandoffHistory({ rows, profiles }: { rows: BrowserHandoff[]; profiles: Map<string, BrowserProfile> }) {

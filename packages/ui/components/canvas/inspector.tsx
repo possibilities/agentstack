@@ -36,6 +36,7 @@ import { useShowWorker } from "./worker-windows";
 import { workerLabel } from "@/lib/stack/workers";
 import { maskActionEnv, ownerOf, runTitle, scheduleTitle } from "@/lib/stack/proc";
 import { controllerKey, handoffOutcomes, handoffStates, heldBy, profileName } from "@/lib/stack/browse";
+import { HandoffWatch } from "./browse-handoffs";
 
 type View = {
   eyebrow: string;
@@ -507,6 +508,7 @@ function resolve(ref: NodeRef, state: StackState): View | null {
       return {
         eyebrow: `Browser handoff · ${handoff.outcome ? handoffOutcomes[handoff.outcome] : handoffStates[handoff.state].label}`, accent: "browse", title: handoff.contentClearedAt ? "Handoff content cleared" : handoff.message.split("\n")[0].slice(0, 80) || "Handoff",
         record: handoff, fields: browseFields(catalog, "browser_handoff_list", "handoffs"), related,
+        body: <HandoffWatch handoff={handoff} />,
         operations: { pkg: "browse", list: browseOperations(catalog, ["browser_handoff_get", "browser_handoff_take", "browser_handoff_finish"]) },
         events: state.events.filter((event) => event.pkg === "browse" && event.topic === "browser_handoffs_changed"),
       };
