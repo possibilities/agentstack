@@ -71,7 +71,7 @@ const args=process.argv.slice(2), file=${JSON.stringify(managerFile)}, log=${JSO
 let state=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):{registered:false,running:false,path:null};
 fs.appendFileSync(log,JSON.stringify(args)+'\\n');
 const command=args[0];
-if(command==='print'){if(!state.registered)process.exit(113);console.log('state = '+(state.running?'running':'waiting'));console.log('path = '+state.path);}
+if(command==='print'){if(!state.registered)process.exit(113);console.log('state = '+(state.running?'running':'waiting'));console.log('path = '+state.path);process.exit(0);}
 else if(command==='bootstrap'){const text=fs.readFileSync(args[2],'utf8');state={registered:true,running:text.includes('<key>RunAtLoad</key><true/>'),path:args[2]};}
 else if(command==='kickstart')state.running=true;
 else if(command==='bootout')state={...state,registered:false,running:false};
