@@ -1,5 +1,5 @@
 import { readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { isTransportType, readConfig, type PackageConfig } from "./config.js";
@@ -25,6 +25,17 @@ export function websocketPort(env: NodeJS.ProcessEnv = process.env): number {
 export function workspaceRoot(from: string): string {
   let dir = from;
   for (let i = 0; i < 8; i += 1) {
+    // Installed UI resources retain the api.yaml inventory, not a pnpm checkout.
+    const resources = join(dir, "stack-package-resources.json");
+    if (existsSync(resources)) {
+      const manifest = JSON.parse(readFileSync(resources, "utf8"));
+      if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)
+        || manifest.version !== 1 || manifest.kind !== "package-api-resources"
+        || Object.keys(manifest).some(key => !["version", "kind"].includes(key))) {
+        throw new Error("invalid installed Package API resources manifest");
+      }
+      return dir;
+    }
     if (existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
     const parent = dirname(dir);
     if (parent === dir) break;

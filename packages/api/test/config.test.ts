@@ -10,6 +10,25 @@ import { loadPackageApi } from "../src/catalog.js";
 import { serveApi } from "../src/serve.js";
 import { findPackage, workspaceRoot } from "../src/workspace.js";
 
+test("installed Package API resources resolve without a pnpm checkout and reject unknown manifest versions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-installed-resources-"));
+  try {
+    const dir = join(root, "packages", "demo");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "api.yaml"), "name: demo\ndescription: Installed metadata.\nwebsocket:\n  description: Selected reads.\n  operations: [read]\n  events: []\n");
+    const file = join(root, "stack-package-resources.json");
+    await writeFile(file, JSON.stringify({ version: 1, kind: "package-api-resources" }));
+    assert.equal(workspaceRoot(dir), root);
+    const { config } = await findPackage(root, "demo");
+    assert.deepEqual(config.websocket?.operations, ["read"]);
+    assert.deepEqual(config.websocket?.events, []);
+    for (const manifest of [null, { version: 2, kind: "package-api-resources" }, { version: 1, kind: "other" }, { version: 1, kind: "package-api-resources", root: "/untrusted" }]) {
+      await writeFile(file, JSON.stringify(manifest));
+      assert.throws(() => workspaceRoot(dir), /invalid installed Package API resources manifest/);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("bots declares socket, MCP, and WebSocket transports", async () => {
   const root = workspaceRoot(dirname(fileURLToPath(import.meta.url)));
   const bots = await findPackage(root, "bots");
