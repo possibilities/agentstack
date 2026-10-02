@@ -49,6 +49,7 @@ function journalOwner(name) {
 
 // Signal: processing on, a source read still draining.
 const signal = { owner: journalOwner("signal"), draining: true, status: { contentGeneration: 1, enabled: true, activatedAt: Date.now() - 60_000, baselined: true,
+  checkpointGeneration: 0, checkpointResets: [],
   settings: { model: "gpt-fixture", reasoningEffort: "low", accountId: null, revision: 1 }, lastScan: Date.now(), lastInference: null, sourceErrors: [], jobs: [], messages: 42, runs: 7, changeSeq: 1 } };
 // Infer: two terminal requests and one still running.
 const request = (id, state, text) => ({ requestId: id, contentClearedAt: null, accountId: uuid(), model: "gpt-fixture", effort: "low", maxOutputTokens: 256, state, error: state === "failed" ? "rate_limited" : null,
@@ -106,6 +107,21 @@ const inferCatalog = { observed: new Map(inferAccounts.map((accountId) => [accou
 const publishers = {};
 const handlers = {
   attention_status: () => signal.status,
+  attention_checkpoint_plan: (selection) => {
+    assert.deepEqual(selection, { sources: "all", mode: "rebaseline" });
+    return signal.owner.plan("checkpoint_rebaseline", selection, { revision: `checkpoint-${signal.status.checkpointGeneration}`,
+      resources: ["bot:bot-1:main-bot-1", "worker:fixture"], blockedBy: signal.draining ? ["Active source reads must drain"] : [],
+      retained: ["Captured messages, feedback, suppression and Infer outcomes"], regeneration: ["Resume skips current upstream messages"] });
+  },
+  attention_checkpoint_reset: (input) => {
+    const receipt = signal.owner.apply(input, () => `checkpoint-${signal.status.checkpointGeneration}`, () => {
+      signal.status.checkpointGeneration++;
+      signal.status.checkpointResets = [{ source: "worker:fixture", generation: signal.status.checkpointGeneration, at: Date.now() }];
+      signal.status.changeSeq++;
+      return [{ resource: "worker:fixture", outcome: "removed", detail: "Cursor replaced; captured evidence retained" }];
+    });
+    publishers.signal?.("signal_changed"); return receipt;
+  },
   attention_control: ({ enabled }) => { signal.status = { ...signal.status, enabled, changeSeq: signal.status.changeSeq + 1 }; publishers.signal?.("signal_changed"); return signal.status; },
   attention_history_plan: () => {
     if (signal.status.enabled) throw new Error("Pause Signal processing before planning content cleanup");
@@ -238,7 +254,7 @@ try {
   };
   await socketFor("serve", serve.names);
   await socketFor("api", ["docs_snapshot"]);
-  await socketFor("signal", ["attention_status", "attention_control", "attention_history_plan", "attention_history_clear", "signal_state_receipt_get", "attention_infer_requests"]);
+  await socketFor("signal", ["attention_status", "attention_control", "attention_history_plan", "attention_history_clear", "signal_state_receipt_get", "attention_infer_requests", "attention_checkpoint_plan", "attention_checkpoint_reset"]);
   await socketFor("infer", ["infer_request_list", "infer_model_list", "infer_discover", "infer_catalog_clear", "infer_history_plan", "infer_history_clear", "infer_state_receipt_get"]);
   await socketFor("auth", ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"]);
   await socketFor("content", ["blob_stage_list", "blob_stage_abort", "content_blob_list", "content_storage_plan", "content_storage_collect", "content_state_receipt_get"]);
@@ -316,6 +332,35 @@ try {
   await completed(sw).waitFor();
   assert.ok(infer.requests.find((row) => row.requestId === correlated).contentClearedAt);
   await shot("signal-cleared", sw);
+
+  const checkpoint = sw.locator("details").filter({ hasText: "rebaseline checkpoints" });
+  await checkpoint.locator("summary").click();
+  signal.draining = true;
+  await checkpoint.getByRole("button", { name: "Prepare checkpoint rebaseline" }).click();
+  await checkpoint.getByText("Active source reads must drain").waitFor();
+  assert.equal(await checkpoint.getByRole("button", { name: "Rebaseline checkpoints", exact: true }).isDisabled(), true);
+  signal.draining = false;
+  await checkpoint.getByRole("button", { name: "Prepare a new plan" }).click();
+  await checkpoint.getByText("Captured messages, feedback, suppression and Infer outcomes", { exact: true }).waitFor();
+  await shot("signal-checkpoint-plan-light", sw);
+  await page.emulateMedia({ colorScheme: "dark" });
+  await shot("signal-checkpoint-plan-dark", sw);
+  await page.emulateMedia({ colorScheme: "light" });
+  await checkpoint.getByRole("button", { name: "Rebaseline checkpoints", exact: true }).click();
+  await completed(checkpoint).waitFor();
+  await sw.getByText("worker:fixture", { exact: true }).first().waitFor();
+  await checkpoint.getByRole("button", { name: "Close receipt" }).click();
+  const cp = handlers.attention_checkpoint_plan({ sources: "all", mode: "rebaseline" });
+  const cpInput = { planId: cp.id, expectedRevision: cp.revision, requestId: uuid() };
+  signal.owner.journal.begin(cpInput, cp);
+  signal.owner.journal.finish(cpInput.requestId, "unknown", [{ resource: "worker:fixture", outcome: "unknown", detail: "Interrupted checkpoint observation" }]);
+  await page.evaluate(({ input }) => localStorage.setItem("stack.state-flow.signal:checkpoint", JSON.stringify({ input, at: Date.now() })), { input: cpInput });
+  await page.reload();
+  await checkpoint.getByRole("region", { name: "signal receipt unknown" }).waitFor();
+  assert.equal(await checkpoint.getByRole("button", { name: "Send identical request" }).count(), 0, "unknown receipt is not replayed");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await shot("signal-checkpoint-unknown-narrow");
+  await page.setViewportSize({ width: 2400, height: 1500 });
 
   // Lab Infer: running requests cannot be selected; a lost apply response is recovered from the same request's receipt.
   await go("lab");

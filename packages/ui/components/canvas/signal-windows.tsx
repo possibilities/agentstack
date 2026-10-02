@@ -325,6 +325,12 @@ export function SignalWindow() {
           {error ? <p role="alert" className="text-[0.72rem] text-destructive">{error}</p> : null}
           <dl className="flex flex-col">
             <Row label="Baselines">{data.baselined ? "established" : data.activatedAt ? "pending" : "not started"}</Row>
+            <Row label="Checkpoint generation">{data.checkpointGeneration ?? 0}</Row>
+            <Row label="Latest checkpoint resets">
+              {data.checkpointResets?.length ? <ul className="flex min-w-0 flex-col gap-1">
+                {data.checkpointResets.map((reset) => <li key={reset.source} className="break-words"><span className="font-mono">{reset.source}</span> · generation {reset.generation} · <Time at={reset.at} /></li>)}
+              </ul> : "none"}
+            </Row>
             <Row label="Last scan"><Time at={data.lastScan} /></Row>
             <Row label="Last interpretation">
               {inference?.at ? (

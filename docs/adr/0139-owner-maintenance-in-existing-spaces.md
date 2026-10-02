@@ -6,7 +6,7 @@ Status: accepted, 2026-09-30. Uses the shared flow of [ADR 0136](0136-system-sta
 
 Each owner's shipped maintenance appears where that owner's records already live. Every control is local-only and follows the live WebSocket selection. Each control calls only that owner's named operations.
 
-- **Signal**: clears all captured content as one scope, gated on processing being paused. The plan also waits for reads and inference to drain. Its correlated Infer request IDs form a separate, explicit Infer selection. Clearing Signal never cascades into Infer.
+- **Signal**: clears all captured content as one scope, gated on processing being paused. The plan also waits for reads and inference to drain. Its correlated Infer request IDs form a separate, explicit Infer selection. Clearing Signal never cascades into Infer. A separate Maintenance disclosure rebaselines checkpoints for all current sources (not future sources), after the first baseline, pause and pending/active interpretation drain. Resume skips current upstream messages; captured evidence, suppression and Infer outcomes remain. Status shows the checkpoint generation and latest per-source resets. This is not historical replay or transcript erase.
 - **Lab Infer**: selects up to 100 terminal requests; running and already-cleared requests cannot be selected.
 - **Inbox**: in the dismissed view, selects dismissed notifications that still hold content. Clearing never answers anything, and the original outcome stays.
 - **Content**: a Storage window lists upload stages, each retired at its exact revision. It also lists collection blobs one digest prefix at a time with their item and stage references. Only unreferenced blobs can be selected for a collection plan. Vault, Artifacts and Git are separate stores.

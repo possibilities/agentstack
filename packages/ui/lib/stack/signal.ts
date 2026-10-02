@@ -44,6 +44,15 @@ export function jobCounts(status: AttentionStatus | null): Record<string, number
   return Object.fromEntries((status?.jobs ?? []).map((row) => [row.state, row.count]));
 }
 
+/** Local preconditions only; the plan additionally proves source reads and native inference are drained. */
+export function checkpointUnavailable(status: AttentionStatus): string | null {
+  if (!status.baselined) return "Establish the first baseline before rebaselining checkpoints.";
+  if (status.enabled) return "Pause interpretation before rebaselining checkpoints.";
+  if (status.jobs.some((job) => (job.state === "pending" || job.state === "running") && job.count > 0))
+    return "Resolve pending and running interpretations first; captured-content clearing is a separate action.";
+  return null;
+}
+
 /**
  * Read a whole attention_*_read export. Each chunk is fenced by the first
  * chunk's revision; a changed export restarts from zero.

@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { localOperation, stateOperations } from "@/lib/stack/state";
+import { localOperation, localOperations, stateOperations } from "@/lib/stack/state";
+import { checkpointUnavailable } from "@/lib/stack/signal";
 import { inferClearNote, inferPlanLimit, useInferClear } from "./infer-maintenance";
-import { StateFlowView, useStateFlow } from "./state-flow";
+import { MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
 import { useStack, useStore } from "./provider";
 import { Section } from "./window";
 
@@ -39,10 +40,30 @@ export function SignalContentSection() {
         </p>
         <p className={hint}>Content generation {data.contentGeneration}. Open views re-read when it advances.</p>
         <StateFlowView controls={controls} label="Prepare captured-content clear" applyLabel="Clear captured content" unavailable={unavailable} />
+        <CheckpointReset />
         <CorrelatedInfer />
       </div>
     </Section>
   );
+}
+
+function CheckpointReset() {
+  const state = useStack();
+  const store = useStore();
+  const controls = useStateFlow({
+    operations: stateOperations(store.call, "signal", { plan: "attention_checkpoint_plan", apply: "attention_checkpoint_reset", receipt: "signal_state_receipt_get" }, { sources: "all", mode: "rebaseline" }),
+    recoveryKey: "signal:checkpoint", observe: state.signalGeneration,
+  });
+  const access = localOperations(state, "signal", ["attention_checkpoint_plan", "attention_checkpoint_reset", "signal_state_receipt_get"]);
+  if (state.remote || !access.available || !state.signalStatus.data) return null;
+  const unavailable = state.status.signal !== "open" ? "The signal connection is not open."
+    : checkpointUnavailable(state.signalStatus.data);
+  return <MaintenanceDisclosure active={controls.flow.phase !== "idle"} aside="rebaseline checkpoints">
+    <p className={hint}>Rebaseline checkpoints for all current sources; future sources are not included. Resuming skips current upstream messages. This is not historical replay or transcript erase.</p>
+    <p className={hint}>Captured messages, annotations, feedback, suppression and Infer IDs and outcomes remain. Only selected cursors, partial buffers and reconciliation are replaced. No inference is admitted, and resume is separate.</p>
+    <p className={hint}>Requires the first baseline established, processing paused and nothing pending or running. The plan also verifies source reads and inference have drained; unreadable sources block.</p>
+    <StateFlowView controls={controls} label="Prepare checkpoint rebaseline" applyLabel="Rebaseline checkpoints" unavailable={unavailable} />
+  </MaintenanceDisclosure>;
 }
 
 /** Retained Infer request IDs Signal correlated with its runs; selecting some prepares an Infer plan, nothing more. */

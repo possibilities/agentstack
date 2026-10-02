@@ -6,10 +6,21 @@ import test from "node:test";
 registerHooks({ resolve(specifier, context, next) {
   return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const { evidenceSegments, isMainThread, pairInterpretations, parseConversation, queueOrder, readChunks, signalErrorText } = await import("../lib/stack/signal.ts");
+const { checkpointUnavailable, evidenceSegments, isMainThread, pairInterpretations, parseConversation, queueOrder, readChunks, signalErrorText } = await import("../lib/stack/signal.ts");
 const { StackStore } = await import("../lib/stack/store.ts");
 
 const item = (id, cursor, urgency, deadline = null) => ({ id, cursor, timing: { urgency, deadline, blockingScope: null } });
+
+test("checkpoint rebaseline requires established baseline, pause and no pending/running interpretation", () => {
+  const ready = { baselined: true, enabled: false, jobs: [{ state: "unknown", count: 1 }, { state: "completed", count: 3 }] };
+  assert.equal(checkpointUnavailable(ready), null, "terminal unknown evidence is not pending work");
+  assert.match(checkpointUnavailable({ ...ready, baselined: false }), /first baseline/);
+  assert.match(checkpointUnavailable({ ...ready, enabled: true }), /Pause/);
+  for (const state of ["pending", "running"]) {
+    assert.match(checkpointUnavailable({ ...ready, jobs: [{ state, count: 1 }] }), /Resolve/);
+    assert.equal(checkpointUnavailable({ ...ready, jobs: [{ state, count: 0 }] }), null);
+  }
+});
 
 test("the queue orders by urgency, then a stated deadline, then newest", () => {
   const items = [item("a", 1, "routine"), item("b", 2, "unspecified"), item("c", 3, "immediate"), item("d", 4, "routine", "Friday"), item("e", 5, "routine")];

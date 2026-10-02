@@ -140,7 +140,7 @@ export const ownerGaps: Record<string, string> = {
   access: "History and session-specific retirement are not supported; revocation is the control.",
   hud: "Physical media and backup erasure, and other owners' copies such as Worker-captured Work context, are out of scope.",
   bots: "Native Codex queue and history copies and backups are out of scope. Queue entries without a recorded generation can be cleared by exact ID only.",
-  signal: "Checkpoint reset is not supported.",
+  signal: "Checkpoint rebaseline skips current upstream messages, not historical replay or transcript erase. Future sources are not included; captured evidence and independent Infer payloads remain.",
   infer: "Catalog eviction is memory-only and leaves no receipt. It never refreshes models or touches dispatched requests, traces or credentials.",
   proc: "Definition redaction covers removed schedules only. Active and Brain-protected schedules, captured executions and process output are separate selections.",
   content: "Vault or Git-history purge and temporary publication collection are not supported; remotes and backups keep copies.",
