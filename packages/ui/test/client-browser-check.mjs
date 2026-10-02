@@ -16,6 +16,7 @@ import { startClientHost } from "@stack/client";
 import { startClientUi } from "../bin/launcher.mjs";
 import { freePort, ui, z } from "./browser-fixture.mjs";
 import { checkLocalWorkflow, checkNoTrustedRelease, settleForCapture } from "./client-local-workflow.mjs";
+import { checkRemoteWorkflow } from "./client-remote-workflow.mjs";
 
 const evidence = process.env.CLIENT_EVIDENCE_DIR;
 const base = await mkdtemp("/private/tmp/s8-"); // macOS Unix socket paths must stay short.
@@ -92,6 +93,9 @@ try {
   pass("launcher cold start without any platform installation/socket");
   await expectStatus(401, `${origin}/client`);
   await expectStatus(401, `${origin}/client/local`);
+  await expectStatus(401, `${origin}/client/manual`);
+  await expectStatus(401, `${origin}/client/phone`);
+  await expectStatus(401, `${origin}/api/client/receipt`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: "{}" });
   await expectStatus(401, `${origin}/client?_rsc=unauthenticated`, { headers: { rsc: "1" } });
   await expectStatus(401, `${origin}/_next/static/does-not-exist.js`);
   await expectStatus(401, `${origin}/api/client/events`);
@@ -238,7 +242,7 @@ try {
     method, headers: { host: new URL(remoteUiOrigin).host, origin: remoteUiOrigin, cookie: `__Host-stack_ui=${viewer.accessToken}` },
   });
   assert.equal((await remoteUi(remoteRequest("/connect/me"), peer)).status, 200, "fixture viewer authority is valid before the path gate");
-  for (const [path, method] of [["/client", "GET"], ["/client/local", "GET"], ["/api/client/events", "GET"], ["/api/client/rpc", "POST"]])
+  for (const [path, method] of [["/client", "GET"], ["/client/local", "GET"], ["/client/manual", "GET"], ["/client/phone", "GET"], ["/api/client/receipt", "POST"], ["/api/client/events", "GET"], ["/api/client/rpc", "POST"]])
     assert.equal((await remoteUi(remoteRequest(path, method), peer)).status, 404);
   assert.equal(forwarded, 0);
   pass("valid Access viewer cannot reach Client pages/RPC/SSE; remote allowlist remains closed");
@@ -253,7 +257,7 @@ try {
 
   if (process.env.PLAYWRIGHT_MODULE) {
     const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
-    browser = await chromium.launch({ headless: true, channel: "chrome" });
+    browser = await chromium.launch({ headless: true, channel: "chrome", args: ["--host-resolver-rules=MAP *.test 127.0.0.1", "--no-proxy-server"] });
     const context = await browser.newContext();
     const page = await context.newPage();
     const errors = [], violations = [];
@@ -324,6 +328,7 @@ try {
     }
     await checkNoTrustedRelease(page, client, pass, evidence);
     await checkLocalWorkflow({ browser, base, evidence, pass, checkHeader });
+    await checkRemoteWorkflow({ browser, base, evidence, pass, checkHeader });
     auth.rotate();
     await page.getByText("Client session expired.", { exact: false }).waitFor();
     await page.getByText("Phone setup pending", { exact: true }).waitFor();
