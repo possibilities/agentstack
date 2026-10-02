@@ -40,6 +40,11 @@ const entry = (id, owner, bytes = null) => ({ id, ownerPackage: owner, subject: 
   reads: [{ package: owner, operation: `${owner}_state_read`, arguments: {} }], actions: [], retention: "Kept", regeneration: "None", issues: [] });
 const subscription = (id, revision = "v1") => ({ id, botId: "alpha", threadId: "thread-1", instance: "i", pkg: "notify", topic: "notify_changed", scope: null,
   readOperation: "notification_list", state: "active", lastDeliveredAt: null, revision });
+const completionRow = (id, extra = {}) => ({ id, botId: "alpha", threadId: "thread-1", pkg: "notify", operation: "notification_send",
+  recordId: "00000000-0000-4000-8000-0000000000d1", state: "delivered", lastDeliveredAt: 1, lastDeliveryKind: "terminal", lastError: null,
+  nativeAdmissionUncertain: false, subscriptionPresent: true, ...extra });
+const occurrenceRow = (id, extra = {}) => ({ id, target: { kind: "bot", botId: "alpha", threadId: "thread-1", instance: "i" }, pkg: "xcom", name: "posts",
+  policy: "native", cursor: null, truncated: false, revision: "o1", receiptCount: 0, receiptsTruncated: false, ...extra });
 
 test("the System state store reads owner inventories and subscriptions locally, fences stale reads and follows serve_state_changed", async () => {
   const dir = await mkdtemp(join("/tmp", "as-state-store-"));
@@ -148,15 +153,115 @@ test("the System state store reads owner inventories and subscriptions locally, 
   }
 });
 
-test("a remote store never reads owner inventories or subscriptions", async () => {
+test("completion history and occurrence subscriptions stay unread until watched, then follow their notices", async () => {
+  const dir = await mkdtemp(join("/tmp", "as-state-store-"));
+  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("STACK_"))), STACK_STATE_DIR: dir };
+  const historyCalls = [], occurrenceCalls = [], watchCalls = [];
+  let receipts = [completionRow("00000000-0000-4000-8000-0000000000c1")];
+  let occurrences = [occurrenceRow("00000000-0000-4000-8000-0000000000b1")];
+  const handlers = {
+    serve_subscription_list(args) {
+      watchCalls.push(args);
+      return { subscriptions: [], revision: `s${watchCalls.length}`, nextOffset: null };
+    },
+    serve_completion_list(args) {
+      historyCalls.push(args);
+      const rows = receipts.filter((row) => (!args.botId || row.botId === args.botId) && (!args.state || row.state === args.state));
+      return { completions: rows.slice(args.offset, args.offset + args.limit), revision: `h${receipts.length}`, total: rows.length, nextOffset: null, truncated: false };
+    },
+    serve_occurrence_list(args) {
+      occurrenceCalls.push(args);
+      const rows = occurrences.filter((row) => (!args.botId || row.target.kind === "bot" && row.target.botId === args.botId));
+      return { subscriptions: rows.slice(args.offset, args.offset + args.limit), revision: `o${occurrences.length}`, nextOffset: null };
+    },
+  };
+  const serve = await serveFixture(handlers);
+  const socket = await serveSocket({ info: { name: "serve", description: "serve", transportDescription: "Fixture", path: socketPath("serve", env) }, context: {},
+    operations: fixtureOperations(serve.names, serve.handlers), events: { topics: serve.topics } });
+  const websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, ["serve"]), port: 0 });
+  const originalFetch = globalThis.fetch, originalWebSocket = globalThis.WebSocket;
+  const { WebSocket } = createRequire(join(root, "packages/api/package.json"))("ws");
+  const origin = "http://127.0.0.1:8745";
+  const session = withLocalAuth(env, auth => auth.redeem(auth.bootstrap(origin, "ui"), origin, "ui"));
+  globalThis.fetch = async (url, options) => url === "/connect/local/ticket"
+    ? Response.json({ ticket: withLocalAuth(env, auth => auth.ticket(session.token, origin)) }) : originalFetch(url, options);
+  globalThis.WebSocket = class extends WebSocket { constructor(url, protocols) { super(url, protocols, { origin }); } };
+  const store = new StackStore(snapshot({ serve: websocket.url }));
+  try {
+    store.start({ packages: ["serve"], scopedBots: false });
+    // Nothing reads them until a view watches; only subscriptions refresh on connect.
+    await until(store, (state) => state.subscriptions.data !== null, "subscriptions read");
+    assert.deepEqual(historyCalls, []);
+    assert.deepEqual(occurrenceCalls, []);
+    assert.equal(store.getState().completions.data, null);
+    assert.equal(store.getState().occurrences.data, null);
+
+    // The first watcher reads; the second watcher shares it.
+    const unwatchOne = store.watchCompletions();
+    const unwatchBoth = store.watchCompletions();
+    const unwatchOccurrences = store.watchOccurrences();
+    await until(store, (state) => state.completions.data?.completions.length === 1 && state.occurrences.data?.subscriptions.length === 1, "first watched reads");
+    assert.equal(historyCalls.length, 1);
+    assert.equal(occurrenceCalls.length, 1);
+
+    // Receipt and occurrence changes arrive on serve_subscriptions_changed.
+    receipts.push(completionRow("00000000-0000-4000-8000-0000000000c2"));
+    occurrences.push(occurrenceRow("00000000-0000-4000-8000-0000000000b2"));
+    socket.publish("serve_subscriptions_changed");
+    await until(store, (state) => state.completions.data?.completions.length === 2 && state.occurrences.data?.subscriptions.length === 2, "serve_subscriptions_changed");
+
+    // serve_state_changed re-reads watched lists too, and removal re-reads them as well.
+    receipts.push(completionRow("00000000-0000-4000-8000-0000000000c3"));
+    socket.publish("serve_state_changed");
+    await until(store, (state) => state.completions.data?.completions.length === 3, "serve_state_changed");
+    const afterRemove = historyCalls.length;
+    await assert.rejects(store.removeSubscription("00000000-0000-4000-8000-0000000000a1", "v1"), /unobserved|revision|Error/);
+    await until(store, () => historyCalls.length > afterRemove, "removal re-reads watched history");
+
+    // A filter re-read passes it exactly; an unwatched list stops following notices but keeps its held page.
+    await store.filterCompletions({ state: "unknown" });
+    assert.equal(historyCalls.at(-1).state, "unknown");
+    assert.equal(store.getState().completions.data.completions.length, 0, "the filtered page is what the fixture answered");
+    unwatchBoth(); unwatchOne(); unwatchOccurrences();
+    const settled = { history: historyCalls.length, occurrences: occurrenceCalls.length, watches: watchCalls.length };
+    receipts.push(completionRow("00000000-0000-4000-8000-0000000000c4"));
+    socket.publish("serve_subscriptions_changed");
+    await until(store, () => watchCalls.length > settled.watches, "subscriptions still refresh on the notice");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(historyCalls.length, settled.history, "unwatched history is not re-read");
+    assert.equal(occurrenceCalls.length, settled.occurrences, "unwatched occurrences are not re-read");
+    assert.equal(store.getState().completions.data?.filter.state, "unknown", "unwatching keeps the held data");
+  } finally {
+    store.stop();
+    globalThis.fetch = originalFetch;
+    globalThis.WebSocket = originalWebSocket;
+    await websocket.close();
+    await socket.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a remote store never reads owner inventories, subscriptions, history or occurrences", async () => {
   const store = new StackStore(snapshot({}, { remote: { scope: "control", scopes: ["ui:view", "ui:control"], contentOrigins: {} } }));
   const calls = [];
   store.call = async (pkg, name) => { calls.push(`${pkg}.${name}`); throw new Error("unexpected"); };
+  const unwatchCompletions = store.watchCompletions();
+  const unwatchOccurrences = store.watchOccurrences();
   await store.refreshStateInventory();
   await store.refreshSubscriptions();
+  await store.refreshCompletions();
+  await store.refreshOccurrences();
+  await store.moreCompletions();
+  await store.moreOccurrences();
+  await store.filterCompletions({ state: "unknown" });
+  await store.filterOccurrences({ botId: "alpha" });
   await store.selectStateInventory({ owners: null, measure: true });
+  unwatchCompletions();
+  unwatchOccurrences();
   assert.deepEqual(calls, []);
   assert.equal(store.getState().stateInventory.data, null);
+  assert.equal(store.getState().completions.data, null);
+  assert.equal(store.getState().occurrences.data, null);
 });
 
 test("a remote session never opens the local-only Xcom channel", async () => {

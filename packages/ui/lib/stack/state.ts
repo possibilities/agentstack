@@ -1,5 +1,5 @@
 import type { SpaceId } from "./spaces";
-import type { NodeRef, PackageDoc, ServeStateList, ServeSubscriptionPage, StateApplyInput, StateEntry, StateLink, StateOwner, StatePlan, StateReceipt, StateReceiptStatus, StateRelationship } from "./types";
+import type { NodeRef, PackageDoc, ServeCompletionPage, ServeCompletionReceipt, ServeOccurrencePage, ServeStateList, ServeSubscriptionPage, StateApplyInput, StateEntry, StateLink, StateOwner, StatePlan, StateReceipt, StateReceiptStatus, StateRelationship } from "./types";
 
 /**
  * Owner state inspection and the shared plan/receipt flow (docs/state-control.md, ADR 0135). Pure and
@@ -23,6 +23,10 @@ export type StateInventory = ServeStateList & {
 
 export type SubscriptionFilter = { botId?: string; threadId?: string; package?: string };
 export type SubscriptionList = ServeSubscriptionPage & { filter: SubscriptionFilter; restarted: boolean };
+export type CompletionFilter = { botId?: string; package?: string; state?: ServeCompletionReceipt["state"] };
+export type CompletionList = ServeCompletionPage & { filter: CompletionFilter; restarted: boolean };
+export type OccurrenceFilter = { botId?: string; package?: string };
+export type OccurrenceList = ServeOccurrencePage & { filter: OccurrenceFilter; restarted: boolean };
 
 /** The owner refused a continuation because its observation changed since the first page. */
 export function revisionChanged(error: unknown): boolean {
@@ -50,7 +54,7 @@ export async function continueInventory(call: Call, held: StateInventory): Promi
   }
 }
 
-function subscriptionArgs(filter: SubscriptionFilter, offset: number, revision?: string): Record<string, unknown> {
+function subscriptionArgs(filter: Record<string, string | undefined>, offset: number, revision?: string): Record<string, unknown> {
   const exact = Object.fromEntries(Object.entries(filter).filter(([, value]) => typeof value === "string" && value.length > 0));
   return { ...exact, offset, limit: statePageLimit, ...(revision ? { revision } : {}) };
 }
@@ -67,6 +71,37 @@ export async function continueSubscriptions(call: Call, held: SubscriptionList):
   } catch (error) {
     if (!revisionChanged(error)) throw error;
     return { ...await loadSubscriptions(call, held.filter), restarted: true };
+  }
+}
+
+/** Retained completion receipts page by receipt ID, outliving their watches; continuations pin the first page's revision. */
+export async function loadCompletions(call: Call, filter: CompletionFilter): Promise<CompletionList> {
+  return { ...await call<ServeCompletionPage>("serve_completion_list", subscriptionArgs(filter, 0)), filter, restarted: false };
+}
+
+export async function continueCompletions(call: Call, held: CompletionList): Promise<CompletionList> {
+  if (held.nextOffset === null) return held;
+  try {
+    const page = await call<ServeCompletionPage>("serve_completion_list", subscriptionArgs(held.filter, held.nextOffset, held.revision));
+    return { ...page, completions: [...held.completions, ...page.completions], filter: held.filter, restarted: held.restarted };
+  } catch (error) {
+    if (!revisionChanged(error)) throw error;
+    return { ...await loadCompletions(call, held.filter), restarted: true };
+  }
+}
+
+export async function loadOccurrences(call: Call, filter: OccurrenceFilter): Promise<OccurrenceList> {
+  return { ...await call<ServeOccurrencePage>("serve_occurrence_list", subscriptionArgs(filter, 0)), filter, restarted: false };
+}
+
+export async function continueOccurrences(call: Call, held: OccurrenceList): Promise<OccurrenceList> {
+  if (held.nextOffset === null) return held;
+  try {
+    const page = await call<ServeOccurrencePage>("serve_occurrence_list", subscriptionArgs(held.filter, held.nextOffset, held.revision));
+    return { ...page, subscriptions: [...held.subscriptions, ...page.subscriptions], filter: held.filter, restarted: held.restarted };
+  } catch (error) {
+    if (!revisionChanged(error)) throw error;
+    return { ...await loadOccurrences(call, held.filter), restarted: true };
   }
 }
 

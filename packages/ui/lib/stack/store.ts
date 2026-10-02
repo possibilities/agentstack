@@ -16,7 +16,7 @@ import type { ProcRun, ProcScheduleListItem, ProcStatus } from "./types";
 import type { SettingsCatalog, SettingsView } from "./types";
 import { catalogRequest, readRequest, settingsKey, settingsPackage, type SettingsTarget } from "./settings";
 import { loadTree, type HudTree } from "./hud";
-import { continueInventory, continueSubscriptions, loadInventory, loadSubscriptions, type StateInventory, type StateSelection, type SubscriptionFilter, type SubscriptionList } from "./state";
+import { continueCompletions, continueInventory, continueOccurrences, continueSubscriptions, loadCompletions, loadInventory, loadOccurrences, loadSubscriptions, type CompletionFilter, type CompletionList, type OccurrenceFilter, type OccurrenceList, type StateInventory, type StateSelection, type SubscriptionFilter, type SubscriptionList } from "./state";
 import { checkSettled, developerModeOn, type HarnessCheck } from "./developer";
 import type { HarnessCheckAdmission, HarnessReleases, ServeSettings } from "./types";
 
@@ -90,6 +90,12 @@ export type StackState = Snapshot & {
   /** Loaded durable Bot watches, including operation-declared one-shot completion metadata, for `subscriptionFilter`. Read arguments are excluded. Local only. */
   subscriptions: Resource<SubscriptionList>;
   subscriptionFilter: SubscriptionFilter;
+  /** Retained completion receipts for `completionFilter`; they outlive their watches. Local only; read only while watched. */
+  completions: Resource<CompletionList>;
+  completionFilter: CompletionFilter;
+  /** Typed occurrence subscriptions for `occurrenceFilter`; arguments and receipts need the explicit per-row inspection. Local only; read only while watched. */
+  occurrences: Resource<OccurrenceList>;
+  occurrenceFilter: OccurrenceFilter;
   /** The Bot Fleet's state window shows. Local only. */
   botStateId: string | null;
   /** Per Bot: bumped on bot_state_changed, lifecycle and queue notices and scoped (re)connects. Bot state views re-read on it. */
@@ -341,6 +347,7 @@ export class StackStore {
       serveSettings: { data: null, error: null, at: null }, harnessReleases: { data: null, error: null, at: null }, harnessCheck: null,
       stateInventory: { data: null, error: null, at: null }, stateSelection: { owners: null, measure: false },
       subscriptions: { data: null, error: null, at: null }, subscriptionFilter: {}, serveStateGeneration: 0,
+      completions: { data: null, error: null, at: null }, completionFilter: {}, occurrences: { data: null, error: null, at: null }, occurrenceFilter: {},
       botStateId: null, botStateGenerations: {}, xcomGeneration: 0,
       roleContext: {}, roleContextShown: {}, roleHarness: null,
       signalStatus: { data: null, error: null, at: null }, signalGeneration: 0, signalRecords: { items: {}, messages: {}, runs: {} },
@@ -415,7 +422,13 @@ export class StackStore {
       if (topic === "resources_changed") { this.refresh("resources"); this.refreshWatchedHistories(); }
       if (topic === "serve_state_changed") this.invalidateServeState();
       if (topic === "serve_settings_changed") this.readServeSettings();
-    }, this.state.remote ? ["pids_changed", "codex_tools_changed", "resources_changed"] : ["pids_changed", "codex_tools_changed", "resources_changed", "serve_state_changed", "serve_settings_changed"],
+      // Subscription-set and retained-receipt transitions have their own payload-free topic.
+      if (topic === "serve_subscriptions_changed") {
+        void this.refreshSubscriptions();
+        if (this.completionWatchers > 0) void this.refreshCompletions();
+        if (this.occurrenceWatchers > 0) void this.refreshOccurrences();
+      }
+    }, this.state.remote ? ["pids_changed", "codex_tools_changed", "resources_changed"] : ["pids_changed", "codex_tools_changed", "resources_changed", "serve_state_changed", "serve_settings_changed", "serve_subscriptions_changed"],
     { silent: ["resources_changed"], onStatus: (status) => { if (status !== "open") this.forgetServeSettings(); } });
     open("auth", () => { this.refresh("accounts"); this.refresh("workerAccounts"); this.refresh("login"); this.refresh("workerLogins"); }, (topic) => {
       this.refresh("accounts");
@@ -1547,12 +1560,18 @@ export class StackStore {
 
   private stateSeq = 0;
   private subscriptionSeq = 0;
+  private completionSeq = 0;
+  private occurrenceSeq = 0;
+  private completionWatchers = 0;
+  private occurrenceWatchers = 0;
 
   private invalidateServeState(): void {
     if (this.state.remote) return;
     this.set({ serveStateGeneration: this.state.serveStateGeneration + 1 });
     void this.refreshStateInventory();
     void this.refreshSubscriptions();
+    if (this.completionWatchers > 0) void this.refreshCompletions();
+    if (this.occurrenceWatchers > 0) void this.refreshOccurrences();
   }
 
   /** Show one Bot in Fleet's state window. */
@@ -1622,11 +1641,88 @@ export class StackStore {
   };
 
   /**
+   * Reference-counted watch of retained completion receipts: the first watcher reads, notices and
+   * reconnects refresh while watched, and unwatching keeps the held pages.
+   */
+  watchCompletions = (): (() => void) => {
+    this.completionWatchers += 1;
+    if (this.completionWatchers === 1) void this.refreshCompletions();
+    return () => { this.completionWatchers = Math.max(0, this.completionWatchers - 1); };
+  };
+
+  /** Reference-counted watch of typed occurrence subscriptions, with the same lifetime as watchCompletions. */
+  watchOccurrences = (): (() => void) => {
+    this.occurrenceWatchers += 1;
+    if (this.occurrenceWatchers === 1) void this.refreshOccurrences();
+    return () => { this.occurrenceWatchers = Math.max(0, this.occurrenceWatchers - 1); };
+  };
+
+  filterCompletions = (filter: CompletionFilter): Promise<void> => {
+    this.set({ completionFilter: filter, completions: { data: null, error: null, at: null } });
+    return this.completionWatchers > 0 ? this.refreshCompletions() : Promise.resolve();
+  };
+
+  refreshCompletions = async (): Promise<void> => {
+    if (this.state.remote) return;
+    const seq = ++this.completionSeq, filter = this.state.completionFilter;
+    try {
+      const data = await loadCompletions((name, args) => this.call("serve", name, args), filter);
+      if (seq === this.completionSeq) this.set({ completions: { data, error: null, at: Date.now() } });
+    } catch (error) {
+      if (seq === this.completionSeq) this.set({ completions: { ...this.state.completions, error: callMessage(error) } });
+    }
+  };
+
+  moreCompletions = async (): Promise<void> => {
+    const held = this.state.completions.data;
+    if (!held || held.nextOffset === null || this.state.remote) return;
+    const seq = ++this.completionSeq;
+    try {
+      const data = await continueCompletions((name, args) => this.call("serve", name, args), held);
+      if (seq === this.completionSeq) this.set({ completions: { data, error: null, at: Date.now() } });
+    } catch (error) {
+      if (seq === this.completionSeq) this.set({ completions: { ...this.state.completions, error: callMessage(error) } });
+    }
+  };
+
+  filterOccurrences = (filter: OccurrenceFilter): Promise<void> => {
+    this.set({ occurrenceFilter: filter, occurrences: { data: null, error: null, at: null } });
+    return this.occurrenceWatchers > 0 ? this.refreshOccurrences() : Promise.resolve();
+  };
+
+  refreshOccurrences = async (): Promise<void> => {
+    if (this.state.remote) return;
+    const seq = ++this.occurrenceSeq, filter = this.state.occurrenceFilter;
+    try {
+      const data = await loadOccurrences((name, args) => this.call("serve", name, args), filter);
+      if (seq === this.occurrenceSeq) this.set({ occurrences: { data, error: null, at: Date.now() } });
+    } catch (error) {
+      if (seq === this.occurrenceSeq) this.set({ occurrences: { ...this.state.occurrences, error: callMessage(error) } });
+    }
+  };
+
+  moreOccurrences = async (): Promise<void> => {
+    const held = this.state.occurrences.data;
+    if (!held || held.nextOffset === null || this.state.remote) return;
+    const seq = ++this.occurrenceSeq;
+    try {
+      const data = await continueOccurrences((name, args) => this.call("serve", name, args), held);
+      if (seq === this.occurrenceSeq) this.set({ occurrences: { data, error: null, at: Date.now() } });
+    } catch (error) {
+      if (seq === this.occurrenceSeq) this.set({ occurrences: { ...this.state.occurrences, error: callMessage(error) } });
+    }
+  };
+
+  /**
    * Remove one exact subscription at the revision the operator saw. A lost acknowledgement may still have removed
    * it, so the list is re-read either way; the same absent ID answers `removed: false`.
    */
   removeSubscription = (id: string, expectedRevision: string): Promise<{ id: string; removed: boolean }> =>
-    this.call<{ id: string; removed: boolean }>("serve", "serve_subscription_remove", { id, expectedRevision }).finally(() => { void this.refreshSubscriptions(); });
+    this.call<{ id: string; removed: boolean }>("serve", "serve_subscription_remove", { id, expectedRevision }).finally(() => {
+      void this.refreshSubscriptions();
+      if (this.completionWatchers > 0) void this.refreshCompletions();
+      if (this.occurrenceWatchers > 0) void this.refreshOccurrences();
+    });
 
   private set(patch: Partial<StackState>): void {
     this.state = { ...this.state, ...patch };

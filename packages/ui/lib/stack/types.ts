@@ -1090,6 +1090,12 @@ export type ServeCompletionLinkStatus = "resolved" | "missing" | "unavailable" |
 /** `serve_completion_get`'s exact receipt lookup plus its bounded owner identity link. */
 export type ServeCompletionDetail = { receipt: ServeCompletionReceipt | null; link: ServeCompletionLink | null; linkStatus: ServeCompletionLinkStatus };
 
+/** `serve_occurrence_list` row: arguments, last error and delivery receipts are excluded. */
+export type ServeOccurrenceRow = Omit<OccurrenceSubscription, "deliveries">;
+export type ServeOccurrencePage = { subscriptions: ServeOccurrenceRow[]; revision: string; nextOffset: number | null };
+/** `serve_occurrence_get`'s explicit inspection: potentially sensitive source arguments, last error and the latest 128 receipts. */
+export type ServeOccurrenceDetail = OccurrenceSubscription & { arguments: Record<string, unknown>; lastError: string | null };
+
 export type ChannelStatus = "idle" | "connecting" | "open" | "closed";
 
 export type StackEvent = {
