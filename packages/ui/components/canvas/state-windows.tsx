@@ -15,8 +15,9 @@ import { groupByOwner, linkNeedsSelection, localOperation, measured, operationNo
 import type { ServeSubscription, ServeSubscriptionDetail, StateEntry, StateOwner } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
-import { Empty, NodeCard, NodeLink, NodeTitle, StatusDot, type Tone } from "./primitives";
+import { CopyButton, Empty, NodeCard, NodeLink, NodeTitle, StatusDot, type Tone } from "./primitives";
 import { useNow, useStack, useStore, useWorkbench } from "./provider";
+import { MaintenanceDisclosure } from "./state-flow";
 import { Window } from "./window";
 
 const hintClass = "text-[0.72rem] text-pretty text-muted-foreground";
@@ -98,7 +99,106 @@ export function StateEntryDetails({ entry }: { entry: StateEntry }) {
   );
 }
 
+const labelClass = "text-[0.68rem] font-medium tracking-[0.06em] text-muted-foreground uppercase";
+const factoryPlanFrame = `{"id":1,"method":"tools/call","params":{"name":"serve_factory_reset_plan","arguments":{"scope":"installation"}}}`;
+const factoryColdCommands = [
+  ["receipt read command", "Reads the receipt and fence without initializing erased owners.",
+    `stack serve factory-reset-control serve_factory_reset_receipt_get '{"requestId":"<UUID>"}'`],
+  ["recovery command", "Requires a definitely absent reset-writer PID; marks interrupted admissions unknown without redispatch.",
+    `stack serve factory-reset-control serve_factory_reset_recover '{"requestId":"<UUID>"}'`],
+  ["fence release command", "Only for a completed reset and its fence's nextGeneration, with the writer absent and the root still empty. Starts nothing.",
+    `stack serve factory-reset-control serve_factory_reset_fence_release '{"requestId":"<UUID>","expectedGeneration":"<nextGeneration UUID>"}'`],
+] as const;
+
+function Command({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="group/row relative min-w-0 rounded-md border bg-muted/30">
+      <CopyButton value={value} label={label} className="absolute top-0.5 right-0.5 opacity-100" />
+      <pre tabIndex={0} aria-label={label} className="overflow-auto p-2 pr-8 font-mono text-[0.68rem] leading-relaxed break-all whitespace-pre-wrap focus-visible:outline-2 focus-visible:outline-ring">{value}</pre>
+    </div>
+  );
+}
+
+function FactoryList({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className={labelClass}>{title}</span>
+      <ul className="flex list-disc flex-col gap-0.5 pl-4 text-xs text-pretty">{children}</ul>
+    </div>
+  );
+}
+
+const mono = "font-mono text-[0.68rem]";
+
+/**
+ * Read-only instructions for Serve's private-socket installation factory reset (ADR 0158, docs/state-control.md). The UI
+ * cannot call those operations and stops with the Server during a reset, so nothing here plans, clears, recovers or releases.
+ */
+function FactoryResetDisclosure() {
+  return (
+    <MaintenanceDisclosure title="Installation factory reset" aside="read-only">
+      <p className={hintClass}>
+        A separately confirmed whole-installation reset, not a batch of maintenance controls. Its operations run only on the
+        Server&rsquo;s private socket; this UI cannot call them, and nothing here plans, clears, recovers or releases.
+      </p>
+      <FactoryList title="Clears, after verified teardown">
+        <li>Active accounts, secrets, Roles and settings, owner data and ledgers, local sessions and signing keys, and Access identity.</li>
+        <li>Exact linked Worker worktrees, removed through Git.</li>
+        <li>Recorded Browser provider instances, then unmounted volumes.</li>
+        <li>Exact profile-owned Auth keychain items, never personal keychain services.</li>
+        <li>Managed toolchain files inside active state may be removed.</li>
+      </FactoryList>
+      <FactoryList title="Keeps">
+        <li>Old Vault files and Git, relocated unchanged to <code className={mono}>&lt;state&gt;.retained-git/&lt;requestId&gt;/vault</code>: <strong>not erased</strong> and not imported. The new Vault starts empty.</li>
+        <li>Content-free scope, digest and generation evidence and receipts in sibling <code className={mono}>&lt;state&gt;.factory-control</code>.</li>
+        <li>Source checkouts, branches, commits and retained refs.</li>
+        <li>Personal credentials, logins, keychains and histories.</li>
+        <li>External binaries and configuration, TLS/Tailscale and backups.</li>
+        <li>Device, Canvas and independent Client-host copies.</li>
+        <li>Foreign or unattributed provider resources.</li>
+      </FactoryList>
+      <p className={hintClass}>Reset is not secure media erasure.</p>
+      <FactoryList title="Refused">
+        <li>In-root <code className={mono}>browser/hypeman</code> or <code className={mono}>hypeman-staging-*</code> provider storage blocks before admission. Resolve or uninstall it through Browse first, or keep the provider outside the installation.</li>
+        <li>Unknown installation-root entries, live or unresolved standalone Role launches and unproven resources refuse.</li>
+        <li>Unretained Git metadata, quarantines, mounts, special files or over-budget snapshots block root clearing; failed or forced teardown does not authorize it.</li>
+        <li>Clear requires your declaration that independent writers are quiesced; the Server claims no global OS lock.</li>
+      </FactoryList>
+      <FactoryList title="During and after">
+        <li>Clear durably fences admissions and startup, then returns a <code className={mono}>running</code> receipt: admission, not completion.</li>
+        <li>The Server and this UI then stop. A lost connection is never a success receipt; read the receipt with the cold command below.</li>
+        <li>A completed reset stays startup-fenced until an exact release. Partial or unknown outcomes and unexplained fences cannot be released through the API; inspect exact resources and preserve evidence.</li>
+        <li>Release starts nothing. A later explicit Server start creates fresh defaults and a fresh Access identity; destinations pair again and old destination-bound shares never retarget.</li>
+      </FactoryList>
+      <div className="flex flex-col gap-1">
+        <span className={labelClass}>Plan and clear · private socket</span>
+        <p className={hintClass}>One JSON object per line on <code className={mono}>&lt;state&gt;/sockets/serve.sock</code>:</p>
+        <Command value={factoryPlanFrame} label="plan request" />
+        <p className={hintClass}>
+          <code className={mono}>serve_factory_reset_clear</code> takes that plan&rsquo;s <code className={mono}>planId</code> and <code className={mono}>expectedRevision</code>,
+          a new <code className={mono}>requestId</code> UUID, <code className={mono}>confirmation:&quot;factory-reset&quot;</code> and <code className={mono}>externalWritersQuiesced:true</code>.
+        </p>
+      </div>
+      <div className="flex flex-col gap-1">
+        <span className={labelClass}>Cold commands · after shutdown</span>
+        <p className={hintClass}>Run each with the same explicit <code className={mono}>STACK_STATE_DIR</code> as the reset installation.</p>
+        {factoryColdCommands.map(([label, note, command]) => (
+          <div key={label} className="flex flex-col gap-0.5">
+            <p className="text-xs text-pretty">{note}</p>
+            <Command value={command} label={label} />
+          </div>
+        ))}
+      </div>
+      <p className={hintClass}>
+        This browser&rsquo;s Canvas storage is a device copy. Reset does not clear it and neither does this view: uncertain
+        {" "}<code className={mono}>stack.state-flow.*</code> and <code className={mono}>stack.uix.browse.intent.*</code> recovery records are preserved.
+      </p>
+    </MaintenanceDisclosure>
+  );
+}
+
 function EntryRow({ entry }: { entry: StateEntry }) {
+  const { remote } = useStack();
   const [open, setOpen] = useState(false);
   const node = { kind: "state-entry", id: entry.id } as const;
   const category = entry.id.startsWith(`${entry.ownerPackage}:`) ? entry.id.slice(entry.ownerPackage.length + 1) : entry.id;
@@ -118,7 +218,12 @@ function EntryRow({ entry }: { entry: StateEntry }) {
           {measured(entry.bytes, formatBytes)}{entry.items !== null ? ` · ${entry.items} items` : ""}
         </span>
       </div>
-      {open ? <div className="pl-5"><StateEntryDetails entry={entry} /></div> : null}
+      {open ? (
+        <div className="flex flex-col gap-2 pl-5">
+          <StateEntryDetails entry={entry} />
+          {entry.id === "serve:factory-reset" && !remote ? <FactoryResetDisclosure /> : null}
+        </div>
+      ) : null}
     </NodeCard>
   );
 }
