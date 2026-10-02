@@ -154,9 +154,14 @@ export function buildFilter(draft: FilterDraft): { filter: GithubFilter; errors:
 const sortKeys = (value: unknown): unknown => Array.isArray(value) ? value.map(sortKeys)
   : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([key, item]) => [key, sortKeys(item)])) : value;
 
+/** JSON with object keys in a fixed order: what a reviewed definition shows is exactly what is sent, and equal filters print equally. */
+export function canonicalJson(value: unknown, space?: number): string {
+  return JSON.stringify(sortKeys(value), null, space);
+}
+
 /** A stable identity for a filter: JSON keeps `false`, `0`, `"false"` and `null` apart. Two keys differ exactly when the owner sees two filters. */
 export function filterKey(filter: GithubFilter): string {
-  return JSON.stringify(sortKeys(filter));
+  return canonicalJson(filter);
 }
 
 export const filterIsEmpty = (filter: GithubFilter): boolean => Object.keys(filter).length === 0;
