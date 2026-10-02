@@ -47,7 +47,9 @@ function QueueFlows({ job }: { job: ScrapeQueueJob }) {
       if (!eligible.includes(action) && controls.flow.phase === "idle") return null;
       const title = action === "cancel" ? "Cancel pending generation" : action === "retry" ? "Retry failed generation" : "Discard remaining queue files";
       const reason = unavailable ?? (!eligible.includes(action) ? "This generation is no longer eligible; inspect the retained receipt."
-        : Object.entries(flows).some(([name, value]) => name !== action && value.flow.phase !== "idle") ? "Finish inspecting the other maintenance flow first." : null);
+        : Object.entries(flows).some(([name, value]) => name !== action && value.flow.phase !== "idle"
+          && !(action === "discard" && value.flow.phase === "receipt" && ["unknown", "partial", "completed", "blocked"].includes(value.flow.receipt.status)))
+          ? "Finish inspecting the other maintenance flow first." : null);
       return <StateFlowView key={action} controls={controls} label={`Prepare ${title.toLowerCase()}`} applyLabel={title} unavailable={reason} receiptOnlyRecovery />;
     })}
   </MaintenanceDisclosure>;
