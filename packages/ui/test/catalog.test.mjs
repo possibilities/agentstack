@@ -4,14 +4,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
-import { docsSnapshot } from "@stack/api";
+import { docsSnapshot, pollInput } from "@stack/api";
 import { root } from "./browser-fixture.mjs";
 import { fieldsOf, findOperation, loadCatalog, standaloneCapability } from "../lib/stack/catalog.ts";
 
 registerHooks({ resolve(specifier, context, next) {
   return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const { admissionWatchReference } = await import("../lib/stack/reference.ts");
+const { admissionWatchReference, occurrenceSourceReference, occurrenceSources, occurrenceSourceFacts } = await import("../lib/stack/reference.ts");
 
 const brain = {
   name: "brain", description: "Isolated research storage", packageName: "@stack/brain",
@@ -125,5 +125,49 @@ test("watch reference templates preserve exact admission/read identities and ind
     assert.equal(admissionWatchReference(search, brainDoc), null);
     const workerDoc = packages.find((doc) => doc.name === "worker");
     assert.equal(standaloneCapability(workerDoc.operations.find((operation) => operation.name === "worker_runtime_list"), workerDoc), "service", "a live read-only operation remains service-dependent");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("occurrence reference examples derive from real source declarations and exact MCP selection", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "opencode/stack-reference-"));
+  try {
+    // listenInput is not an @stack/api export; pollInput strictly proves the poll example invents no keys.
+    const { packages } = await docsSnapshot.call({ root, env: { STACK_STATE_DIR: directory } }, {});
+    const sourceDoc = packages.find((doc) => doc.name === "source");
+    const watch = sourceDoc.operations.find((operation) => operation.name === "github_watch_events");
+    const reference = occurrenceSourceReference(watch, sourceDoc);
+    assert.deepEqual(reference.exposure, { name: true, poll: true, worker: true });
+    assert.deepEqual(reference.listExample, { jsonrpc: "2.0", id: 1, method: "events/list", params: {} });
+    assert.deepEqual(reference.pollExample.params, { name: "github_delivery", arguments: { id: "<replace: string>" }, cursor: null, maxEvents: 25 });
+    assert.deepEqual(reference.listenExample, { jsonrpc: "2.0", id: 3, method: "tools/call",
+      params: { name: "events_listen", arguments: { name: "github_delivery", arguments: { id: "<replace: string>" }, policy: "native" } } });
+    assert.equal(reference.outputShape, "{events:[{eventId,name,timestamp,data}],cursor,truncated,hasMore,nextPollMs}");
+    pollInput.parse(reference.pollExample.params);
+    for (const doc of packages) for (const operation of doc.operations) {
+      if (operation.eventSource) assert.ok(occurrenceSourceReference(operation, doc), `${doc.name}.${operation.name}`);
+      else assert.equal(occurrenceSourceReference(operation, doc), null, `${doc.name}.${operation.name}`);
+    }
+    assert.equal(occurrenceSourceReference(packages.find((doc) => doc.name === "brain").operations.find((operation) => operation.name === "search"),
+      packages.find((doc) => doc.name === "brain")), null);
+    assert.deepEqual(occurrenceSources(sourceDoc).map(({ source, operation }) => ({ name: source.name, operation })),
+      [{ name: "github_delivery", operation: "github_watch_events" }]);
+    for (const [key, facts] of Object.entries(occurrenceSourceFacts)) {
+      const [pkg, name] = key.split(".");
+      const pkgDoc = packages.find((doc) => doc.name === pkg);
+      assert.ok(pkgDoc?.operations.some((operation) => operation.eventSource?.name === name), key);
+      if (facts.acknowledgeOperation !== null) assert.ok(pkgDoc.operations.some((operation) => operation.name === facts.acknowledgeOperation), key);
+    }
+    const mcp = sourceDoc.transports.find((transport) => transport.type === "mcp");
+    const changed = (selection) => ({ ...sourceDoc, transports: sourceDoc.transports.map((transport) => transport.type === "mcp" ? { ...transport, ...selection } : transport) });
+    const noName = occurrenceSourceReference(watch, changed({ events: mcp.events.filter((name) => name !== "github_delivery") }));
+    assert.equal(noName.exposure.name, false);
+    assert.equal(noName.listed, false);
+    assert.deepEqual([noName.listExample, noName.pollExample, noName.listenExample], [null, null, null]);
+    const noPoll = occurrenceSourceReference(watch, changed({ operations: mcp.operations.filter((name) => name !== "github_watch_events") }));
+    assert.equal(noPoll.exposure.poll, false);
+    assert.deepEqual([noPoll.listExample, noPoll.pollExample, noPoll.listenExample], [null, null, null]);
+    const noWorker = occurrenceSourceReference(watch, changed({ workerEvents: [] }));
+    assert.equal(noWorker.exposure.worker, false);
+    assert.ok(noWorker.listExample && noWorker.pollExample && noWorker.listenExample);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

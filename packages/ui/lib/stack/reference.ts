@@ -47,6 +47,42 @@ export function admissionWatchReference(operation: OperationDoc, doc: PackageDoc
     readExample: exposure.read ? call(watch.readOperation, readArguments) : null };
 }
 
+function schemaShape(schema: JsonSchema): string {
+  if (schema.type !== "object" || !schema.properties) return typeLabel(schema);
+  return `{${Object.entries(schema.properties).map(([name, field]) => {
+    const items = field.items;
+    return items && typeof items === "object" && !Array.isArray(items) && items.properties ? `${name}:[${schemaShape(items)}]` : name;
+  }).join(",")}}`;
+}
+
+/** Catalog-snapshot selection only; never inferred from read-only hints. */
+export function occurrenceExposure(operation: OperationDoc, doc: PackageDoc) {
+  const source = operation.eventSource;
+  const mcp = doc.transports.find((transport) => transport.type === "mcp");
+  return { name: !!source && (mcp?.events.includes(source.name) ?? false), poll: mcp?.operations.includes(operation.name) ?? false,
+    worker: !!source && (mcp?.workerEvents.includes(source.name) ?? false) };
+}
+
+export function occurrenceSources(doc: PackageDoc) {
+  return doc.operations.flatMap((operation) => operation.eventSource ? [{ source: operation.eventSource, operation: operation.name, exposure: occurrenceExposure(operation, doc) }] : []);
+}
+
+/** Draft MCP Events poll protocol and Stack's generated events_listen tool are separate contracts; neither is invalidation subscribe. */
+export function occurrenceSourceReference(operation: OperationDoc, doc: PackageDoc) {
+  const source = operation.eventSource;
+  if (!source) return null;
+  const exposure = occurrenceExposure(operation, doc);
+  const listed = exposure.name && exposure.poll;
+  const args = inputTemplate(source.inputSchema);
+  const maxEvents = operation.inputSchema.properties?.maxEvents?.default;
+  const rpc = (id: number, method: string, params: Record<string, unknown>) => ({ jsonrpc: "2.0", id, method, params });
+  return { source, exposure, listed, outputShape: schemaShape(operation.outputSchema),
+    listExample: listed ? rpc(1, "events/list", {}) : null,
+    pollExample: listed ? rpc(2, "events/poll", { name: source.name, arguments: args, cursor: null, ...(typeof maxEvents === "number" ? { maxEvents } : {}) }) : null,
+    listenExample: listed ? rpc(3, "tools/call", { name: "events_listen", arguments: { name: source.name, arguments: args, policy: "native" } }) : null,
+    facts: occurrenceSourceFacts[`${doc.name}.${source.name}`] ?? null };
+}
+
 // Domain facts beyond the declaration: brain/src/admission-watches.ts, worker/src/observation.ts,
 // proc/src/schema.ts and proc/api.ts. Keep these tied to the exact admission, not package-wide availability.
 export const admissionWatchCaveats: Record<string, string[]> = {
@@ -55,4 +91,16 @@ export const admissionWatchCaveats: Record<string, string[]> = {
   "worker.worker_start": ["Worker scope is request:<UUID>, not a Worker ID; Worker-ID progress is separate."],
   "worker.worker_send": ["Worker scope is request:<UUID>, not a Worker ID; Worker-ID progress is separate."],
   "proc.proc_run_start": ["Proc requestId is the run ID; output is read separately by cursor."],
+};
+
+// Source-defined poll behavior beyond the declaration: source/src/events.ts and source/api.ts.
+// Keep these tied to the exact occurrence source, not package-wide availability.
+export const occurrenceSourceFacts: Record<string, { acknowledgeOperation: string | null; facts: { term: string; detail: string }[] }> = {
+  "source.github_delivery": { acknowledgeOperation: "github_watch_acknowledge", facts: [
+    { term: "Null cursor", detail: "Starts at the current watermark: returns no events and a cursor to keep. It never replays retained history." },
+    { term: "Replay cursor", detail: "Binds the exact watch identity, filter and start, and replays retained matches in arrival order. An edited, synthesized or transplanted cursor is refused." },
+    { term: "maxAgeMs", detail: "Skips older matches and reports truncated: true. Skipped matches are not returned." },
+    { term: "Event ID", detail: "Receiver UUID plus GitHub delivery GUID. Identical redelivery keeps the same ID." },
+    { term: "Disabled or removed watch", detail: "A disabled watch returns no events and keeps its cursor position; a removed watch refuses later polls." },
+  ] },
 };

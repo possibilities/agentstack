@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { annotationBadges, operationTitle, standaloneCapability, typeLabel } from "@/lib/stack/catalog";
 import { completionReceiptLabels } from "@/lib/stack/completion";
 import { emptyLocation, locationHref, type ReferenceTarget } from "@/lib/stack/navigation";
-import { admissionWatchCaveats, admissionWatchReference, inputTemplate, requestExample, subscriptionExample, transportInstructions } from "@/lib/stack/reference";
+import { admissionWatchCaveats, admissionWatchReference, inputTemplate, occurrenceSourceReference, occurrenceSources, requestExample, subscriptionExample, transportInstructions } from "@/lib/stack/reference";
 import { nodeKey, type JsonSchema, type NodeRef, type OperationDoc, type PackageDoc, type TransportDoc } from "@/lib/stack/types";
 import { CopyButton, Time } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
@@ -135,6 +135,55 @@ function AdmissionWatch({ doc, operation }: { doc: PackageDoc; operation: Operat
   </section>;
 }
 
+function OccurrenceSource({ doc, operation }: { doc: PackageDoc; operation: OperationDoc }) {
+  const source = operation.eventSource;
+  const reference = occurrenceSourceReference(operation, doc);
+  if (!source || !reference) return null;
+  const acknowledge = reference.facts?.acknowledgeOperation && doc.operations.some((candidate) => candidate.name === reference.facts?.acknowledgeOperation)
+    ? reference.facts.acknowledgeOperation : null;
+  return <section className="flex min-w-0 flex-col gap-4" aria-label="Occurrence source">
+    <h4 className="text-sm font-semibold">Occurrence source</h4>
+    <p className="text-xs leading-relaxed text-muted-foreground">This read-only operation declares a typed occurrence source. Occurrences carry typed payloads and stable IDs. They are not payload-free invalidation notices; socket and WebSocket <code>events/subscribe</code> never deliver them.</p>
+    <dl className="flex min-w-0 flex-col gap-3 text-xs">
+      <Fact term="Name"><code>{source.name}</code></Fact>
+      <Fact term="Description">{source.description}</Fact>
+      <Fact term="Delivery">{source.delivery.join(", ")} only. No push, callbacks, webhook signing or TTLs.</Fact>
+    </dl>
+    <Schema title="Occurrence arguments" schema={source.inputSchema} />
+    <Schema title="Occurrence payload" schema={source.payloadSchema} />
+    <dl className="flex min-w-0 flex-col gap-3 text-xs">
+      <Fact term="MCP selection">Occurrence name: {reference.exposure.name ? "selected" : "not selected"} · poll operation: {reference.exposure.poll ? "selected" : "not selected"} · Worker occurrence (workerEvents): {reference.exposure.worker ? "selected" : "not selected"}. events/list and events/poll need both the name and the operation selected. Worker connections also need workerEvents, which grants only this poll read, not other source reads or mutations. This snapshot is not live health or permission.</Fact>
+      <Fact term="Poll output"><code>{reference.outputShape}</code>. Each event's data matches the payload schema above.</Fact>
+    </dl>
+    <h5 className="text-xs font-semibold">Poll semantics</h5>
+    <dl className="flex min-w-0 flex-col gap-3 text-xs">
+      <Fact term={<code>cursor</code>}>Opaque. Send back the returned cursor unchanged; never edit, synthesize or reuse it with other arguments. Its start position is source-defined.</Fact>
+      <Fact term={<code>hasMore</code>}>Another bounded page is ready now; poll again with the returned cursor.</Fact>
+      <Fact term={<code>truncated</code>}>The source explicitly skipped matches, for example by maxAgeMs. It is never a silent gap.</Fact>
+      <Fact term={<code>nextPollMs</code>}>The source's suggested delay before the next poll.</Fact>
+      <Fact term={<code>eventId</code>}>Stable identity for deduplication. Not approval, authority or proof of processing.</Fact>
+      <Fact term={<code>data</code>}>Validated against the payload schema, but still untrusted observed data, not instructions.</Fact>
+      {reference.facts?.facts.map((fact) => <Fact key={fact.term} term={fact.term}>{fact.detail}</Fact>)}
+      {acknowledge ? <Fact term="Consumption acknowledgement">Polling, events_listen native admission and Worker intake never advance this source's consumption cursor. Acknowledge only what was handled, separately and explicitly, with <LinkTo target={{ kind: "operation", pkg: doc.name, id: acknowledge }}><code>{acknowledge}</code></LinkTo>.</Fact> : null}
+    </dl>
+    <details className="min-w-0"><summary className="cursor-pointer rounded-sm py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring">Draft MCP Events poll protocol</summary>
+      <div className="flex min-w-0 flex-col gap-3 pt-2">
+        <p className="text-xs leading-relaxed text-muted-foreground">Protocol requests on this package's MCP connection, not model tools: the poll profile of the experimental MCP Events draft. No push, callback registration, webhook signing, TTLs or MCP 2.0 negotiation. events/list returns the connection's selected sources; a Worker connection lists only workerEvents selections. Fill the placeholders; templates are illustrative, not validated.</p>
+        {reference.listed ? <><Code value={reference.listExample} label="MCP events/list template" /><Code value={reference.pollExample} label="MCP events/poll template" /></>
+          : <p className="text-xs text-muted-foreground">Not listed over MCP: the occurrence name and its poll operation must both be selected.</p>}
+        <p className="text-xs leading-relaxed text-muted-foreground"><code>events/stream</code>, draft <code>events/subscribe</code> and <code>events/unsubscribe</code> return Unsupported (-32014) on MCP. Socket and WebSocket <code>events/subscribe</code> is the separate invalidation contract.</p>
+      </div>
+    </details>
+    <details className="min-w-0"><summary className="cursor-pointer rounded-sm py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring">Stack managed tool: events_listen</summary>
+      <div className="flex min-w-0 flex-col gap-3 pt-2">
+        <p className="text-xs leading-relaxed text-muted-foreground">A Stack-generated MCP tool, not draft events/subscribe. It attaches this source only to the invoking verified Bot Chat or exact Worker. An operator, including this UI, has no wakeup target and cannot create one by supplying a Bot or Worker ID. Bots accept policy native only; interrupt is an explicit Worker-only opt-in. Repeating identical arguments keeps the existing subscription and cursor. The same conversation inspects it with events_status and stops it with events_unsubscribe. Neither native admission nor Worker inbox intake means consumption.</p>
+        {reference.listed ? <Code value={reference.listenExample} label="events_listen tool call template" />
+          : <p className="text-xs text-muted-foreground">Not listed over MCP: the occurrence name and its poll operation must both be selected.</p>}
+      </div>
+    </details>
+  </section>;
+}
+
 function HttpRoutes({ transport }: { transport: TransportDoc }) {
   const routes = transport.routes ?? [];
   const surfaces = [...new Set(routes.map((route) => route.surface))];
@@ -172,6 +221,7 @@ function Operation({ doc, operation }: { doc: PackageDoc; operation: OperationDo
       {capability ? <div className="flex flex-col gap-1 pt-1"><p className="text-xs font-medium">{capabilityLabels[capability]}</p><p className="text-xs leading-relaxed text-muted-foreground">Owner-declared capability, not live health, store readiness or permission. Operator stdio calls run without the Stack service only when its socket is definitely absent before dispatch; Bot and Worker calls still verify identity; HTTP, WebSocket and this UI always need the live service.</p></div> : null}
     </header>
     <Schema title="Input" schema={operation.inputSchema} /><Separator /><Schema title="Output" schema={operation.outputSchema} /><Separator />
+    {operation.eventSource ? <><OccurrenceSource doc={doc} operation={operation} /><Separator /></> : null}
     {operation.completionWatch ? <><AdmissionWatch doc={doc} operation={operation} /><Separator /></> : null}
     <section className="flex min-w-0 flex-col gap-4"><h4 className="text-sm font-semibold">Request templates</h4><p className="text-xs leading-relaxed text-muted-foreground">Fill each &lt;replace: …&gt; placeholder. Shows required fields only; templates are not validated.</p>
       {doc.transports.map((transport) => {
@@ -185,12 +235,13 @@ function Operation({ doc, operation }: { doc: PackageDoc; operation: OperationDo
 
 function Package({ doc }: { doc: PackageDoc }) {
   const { events } = useStack();
+  const sources = occurrenceSources(doc);
   return <article className="flex min-w-0 flex-col gap-6">
-    <header className="flex flex-col gap-2"><p className="break-all font-mono text-xs text-muted-foreground">{doc.packageName}</p><h3 className="text-2xl font-semibold tracking-tight">{doc.name}</h3><p className="text-sm leading-relaxed text-muted-foreground">{doc.description}</p><p className="text-xs text-muted-foreground">{doc.operations.length} operations · {Object.keys(doc.events).length} invalidation topics</p></header>
+    <header className="flex flex-col gap-2"><p className="break-all font-mono text-xs text-muted-foreground">{doc.packageName}</p><h3 className="text-2xl font-semibold tracking-tight">{doc.name}</h3><p className="text-sm leading-relaxed text-muted-foreground">{doc.description}</p><p className="text-xs text-muted-foreground">{doc.operations.length} operations · {Object.keys(doc.events).length} invalidation topics · {sources.length} occurrence sources</p></header>
     <section className="flex flex-col gap-3"><h4 className="text-sm font-semibold">Transports</h4>{doc.transports.map((transport) => <Transport key={transport.type} transport={transport} />)}{!doc.transports.length ? <p className="text-xs text-muted-foreground">No transports configured.</p> : null}</section>
     <Separator />
     {doc.transports.filter((transport) => transport.type === "http" && transport.routes?.length).map((transport) => <div key={transport.type} className="flex min-w-0 flex-col gap-6"><HttpRoutes transport={transport} /><Separator /></div>)}
-    <section className="flex min-w-0 flex-col gap-3"><h4 className="text-sm font-semibold">Invalidations and subscriptions</h4><p className="text-xs leading-relaxed text-muted-foreground">These notices carry a topic only; re-read state after (re)subscribing. Counts are this session’s. Typed MCP occurrence sources are separate operation declarations, not invalidation notices.</p>
+    <section className="flex min-w-0 flex-col gap-3"><h4 className="text-sm font-semibold">Invalidations and subscriptions</h4><p className="text-xs leading-relaxed text-muted-foreground">These notices carry a topic only; re-read state after (re)subscribing. Counts are this session’s. Typed occurrence sources are separate operation declarations, listed below.</p>
       {Object.entries(doc.events).map(([topic, description]) => <div key={topic} className="flex flex-col gap-1 border-l pl-3"><div className="flex items-baseline justify-between gap-2"><code className="break-all text-xs">{topic}</code><span className="text-xs text-muted-foreground tabular-nums">{events.filter((event) => event.pkg === doc.name && event.topic === topic).length} notices</span></div><p className="text-xs leading-relaxed text-muted-foreground">{description}</p></div>)}
       {!Object.keys(doc.events).length ? <p className="text-xs text-muted-foreground">No declared invalidation topics.</p> : null}
       {doc.eventScope ? <div className="flex flex-col gap-1 rounded-lg bg-muted/40 p-3 text-xs"><p className="font-medium">{doc.eventScope.required ? "Required" : "Optional"} subscription scope</p><p className="leading-relaxed text-muted-foreground">{doc.eventScope.description}</p><p className="break-all">Declared example: <code>{doc.eventScope.example}</code> (illustrative; verify current state).</p></div> : null}
@@ -198,7 +249,16 @@ function Package({ doc }: { doc: PackageDoc }) {
         const example = subscriptionExample(doc, transport);
         return example ? <details key={transport.type} className="min-w-0"><summary className="cursor-pointer rounded-sm py-1 text-xs font-medium focus-visible:outline-2 focus-visible:outline-ring">Subscribe over {transport.type}</summary><div className="flex min-w-0 flex-col gap-2 pt-2"><p className="text-xs leading-relaxed text-muted-foreground">{transportInstructions(transport.type)} Replace the scope placeholder with a current scope{doc.eventScope?.required ? "." : ", or omit scope when not needed."} The acknowledgement returns accepted topics; subsequent notices use events/changed.</p><Code value={example} label={`${transport.type} subscription template`} /></div></details> : null;
       })}
-      {doc.transports.some((t) => t.type === "mcp" && t.subscriptions) ? <p className="text-xs leading-relaxed text-muted-foreground">Verified Bot Chats can subscribe to selected snapshot topics. Typed occurrences use MCP events/list and events/poll; events_listen attaches them to a verified Bot Chat or Worker. Worker occurrence access requires explicit workerEvents selection. Worker intake is not native acknowledgement or consumption.</p> : null}
+      {doc.transports.some((t) => t.type === "mcp" && t.subscriptions && t.events.some((name) => name in doc.events)) ? <p className="text-xs leading-relaxed text-muted-foreground">Verified Bot Chats can subscribe to selected snapshot topics.</p> : null}
+      <div className="flex min-w-0 flex-col gap-2" role="group" aria-label="Typed occurrence sources">
+        <h5 className="text-xs font-semibold">Typed occurrence sources</h5>
+        <p className="text-xs leading-relaxed text-muted-foreground">Typed payloads with stable IDs, polled with MCP events/poll or attached to a verified Bot Chat or Worker with events_listen. Worker intake is not native acknowledgement or consumption. Each poll operation shows schemas and examples.</p>
+        {sources.map(({ source, operation, exposure }) => <div key={source.name} className="flex min-w-0 flex-col gap-1 border-l pl-3">
+          <div className="flex flex-wrap items-center gap-2"><code className="break-all text-xs">{source.name}</code><span className="text-xs text-muted-foreground">poll via</span><LinkTo target={{ kind: "operation", pkg: doc.name, id: operation }}><code>{operation}</code></LinkTo>{!(exposure.name && exposure.poll) ? <Badge variant="outline">not MCP-listed</Badge> : null}{exposure.worker ? <Badge variant="outline">Worker</Badge> : null}</div>
+          <p className="text-xs leading-relaxed text-muted-foreground">{source.description}</p>
+        </div>)}
+        {!sources.length ? <p className="text-xs text-muted-foreground">No typed occurrence sources declared.</p> : null}
+      </div>
     </section><Separator />
     <section className="flex flex-col gap-3"><h4 className="text-sm font-semibold">Operations</h4><ul className="flex flex-col divide-y">{doc.operations.map((operation) => {
       const capability = standaloneCapability(operation, doc);
