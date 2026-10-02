@@ -312,9 +312,10 @@ export class McpEventSubscriptions {
       const rows = this.db.prepare(`SELECT ${completionHistoryColumns}
         FROM completion_receipts c${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY c.id ASC LIMIT ? OFFSET ?`)
         .all(...params, input.limit, input.offset) as CompletionHistoryRow[];
+      const completions = rows.map(row => this.historyReceipt(row));
       this.db.exec("COMMIT");
       const nextOffset = input.offset + input.limit < total ? input.offset + input.limit : null;
-      return { completions: rows.map(row => this.historyReceipt(row)), revision, total, nextOffset, truncated: nextOffset !== null };
+      return { completions, revision, total, nextOffset, truncated: nextOffset !== null };
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
