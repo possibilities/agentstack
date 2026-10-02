@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { CopyButton, Empty, Flash, NodeCard, NodeTitle, Row, StatusDot, Time, type Tone } from "./primitives";
 import { useNow, useStack, useStore } from "./provider";
 import { CallErrorNote, EgressConsent, Elapsed, fieldLabel } from "./scrape-shared";
+import { ScrapeCorpusMaintenance, ScrapeQueueMaintenance } from "./scrape-maintenance";
 import { footerButton, Section, Window } from "./window";
 
 const badge = "rounded-md bg-muted px-1.5 py-px font-mono text-[0.64rem] text-muted-foreground";
@@ -86,6 +87,7 @@ export function ChecksWindow() {
   const presets = scrapePresets.data ?? [];
   const configured = scrapeCanaries.data ?? [];
   const [replayPreset, setReplayPreset] = useState("");
+  const [corpusLocked, setCorpusLocked] = useState(false);
   const [canaryPresets, setCanaryPresets] = useState<string[] | null>(null);
   const [session, setSession] = useState("");
   const [consent, setConsent] = useState(false);
@@ -117,11 +119,11 @@ export function ChecksWindow() {
           <Section title="Corpus replay" aside={<span className="text-[0.65rem] text-muted-foreground">Offline · recorded shapes</span>}>
             <form className="flex items-center gap-2" onSubmit={(event) => { event.preventDefault(); runReplay(); }}>
               <label htmlFor={`${formId}-replay`} className="sr-only">Preset to replay</label>
-              <NativeSelect id={`${formId}-replay`} size="sm" className="min-w-0 flex-1" value={replayPreset} disabled={replaying} onChange={(event) => setReplayPreset(event.target.value)}>
+              <NativeSelect id={`${formId}-replay`} size="sm" className="min-w-0 flex-1" value={replayPreset} disabled={replaying || corpusLocked} onChange={(event) => setReplayPreset(event.target.value)}>
                 <NativeSelectOption value="">Every preset</NativeSelectOption>
                 {presets.map((preset) => <NativeSelectOption key={preset.name} value={preset.name}>{preset.name}</NativeSelectOption>)}
               </NativeSelect>
-              <Button type="submit" size="sm" disabled={Boolean(offline) || replaying} title={offline ?? undefined}>
+              <Button type="submit" size="sm" disabled={Boolean(offline) || replaying || corpusLocked} title={offline ?? undefined}>
                 {replaying ? <Spinner data-icon="inline-start" /> : <PlayIcon data-icon="inline-start" />}Replay
               </Button>
             </form>
@@ -143,6 +145,7 @@ export function ChecksWindow() {
                 </div>
               ) : null
             ) : null}
+            {replayPreset ? <ScrapeCorpusMaintenance preset={replayPreset} onLockChange={setCorpusLocked} /> : null}
           </Section>
           <Section title="Live canaries" aside={<span className="text-[0.65rem] text-muted-foreground">Navigates configured samples</span>}>
             <form className="flex flex-col gap-2" onSubmit={(event) => { event.preventDefault(); runCanaries(); }}>
@@ -375,6 +378,8 @@ export function QueueWindow() {
                   </p>
                   {job.problem ? <p className="text-[0.66rem] break-all text-destructive">{job.problem}</p>
                     : job.state === "failed" ? <p className="text-[0.66rem] text-muted-foreground">Failed · the queue records no reason; try the URL in Extract</p> : null}
+                  {job.maintenanceFence ? <p className="text-xs break-all text-warning">Maintenance fence · {job.maintenanceFence.action} · {job.maintenanceFence.status}<br />Request <code>{job.maintenanceFence.requestId}</code> · inspect the receipt; this generation stays fenced.</p> : null}
+                  <ScrapeQueueMaintenance job={job} />
                 </NodeCard>
               </li>
             ))}

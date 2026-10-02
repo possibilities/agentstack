@@ -6,7 +6,26 @@ import test from "node:test";
 registerHooks({ resolve(specifier, context, next) {
   return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const { driftedPreset, jobLabel, parseFrontmatter, presetPreview, scrapeCallError, scrapeLocalReason } = await import("../lib/stack/scrape.ts");
+const { corpusSelection, queueMaintenanceActions, driftedPreset, jobLabel, parseFrontmatter, presetPreview, scrapeCallError, scrapeLocalReason } = await import("../lib/stack/scrape.ts");
+
+test("queue maintenance distinguishes pending, failed, retrying and receipt-retired generations", () => {
+  assert.deepEqual(queueMaintenanceActions({ state: "pending" }), ["cancel"]);
+  assert.deepEqual(queueMaintenanceActions({ state: "failed" }), ["retry", "discard"]);
+  assert.deepEqual(queueMaintenanceActions({ state: "retrying" }), []);
+  for (const state of ["pending", "failed", "retrying"]) {
+    assert.deepEqual(queueMaintenanceActions({ state, maintenanceFence: { status: "unknown" } }), ["discard"]);
+  }
+});
+
+test("corpus selection binds exact observed final captures and never directories, siblings or shipped fixtures", () => {
+  const rows = [{ preset: "x-tweet", id: "sample-001" }, { preset: "x-tweet", id: "sample-002" }, { preset: "x-article", id: "sample-003" }];
+  assert.deepEqual(corpusSelection(rows, "x-tweet", ["sample-002"]), [{ preset: "x-tweet", id: "sample-002" }]);
+  for (const ids of [[], ["sample-003"], ["sample-001", "sample-001"], ["sample-004"], ["fixture-001"], ["../sample-001"], [".capture-tmp"], ["sample-001", "sample-002", ...Array(99).fill("sample-004")]]) {
+    assert.equal(corpusSelection(rows, "x-tweet", ids), null);
+  }
+  assert.equal(corpusSelection(rows.slice(1), "x-tweet", ["sample-001"]), null);
+  assert.equal(corpusSelection(rows, "../x-tweet", ["sample-001"]), null);
+});
 
 const preset = (name, domain, patterns, aliases = []) => ({ name, summary: "", domain, mode: "content", aliases, url_patterns: patterns, source: "official" });
 const presets = [

@@ -1,4 +1,19 @@
-import type { ScrapeCanaryStatus, ScrapeFailureClass, ScrapePreset, ScrapeQueueJob, ScrapeStatus } from "./types";
+import type { ScrapeCanaryStatus, ScrapeCapture, ScrapeFailureClass, ScrapePreset, ScrapeQueueJob, ScrapeStatus } from "./types";
+
+export type ScrapeQueueAction = "cancel" | "retry" | "discard";
+
+/** UI eligibility only; the owner's plan still checks native claim evidence and exact generations. */
+export function queueMaintenanceActions(job: ScrapeQueueJob): ScrapeQueueAction[] {
+  if (job.maintenanceFence) return ["discard"];
+  return job.state === "pending" ? ["cancel"] : job.state === "failed" ? ["retry", "discard"] : [];
+}
+
+/** Changed inventories cannot silently broaden a selection to directories or shipped fixtures. */
+export function corpusSelection(rows: ScrapeCapture[], preset: string, selected: string[]): ScrapeCapture[] | null {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/.test(preset) || !selected.length || selected.length > 100 || new Set(selected).size !== selected.length) return null;
+  return selected.every((id) => /^sample-[0-9]{3,10}$/.test(id) && rows.some((row) => row.preset === preset && row.id === id))
+    ? selected.map((id) => ({ preset, id })) : null;
+}
 
 /**
  * Remote Access sessions receive only Scrape's read-only operations: fetching, canaries and the

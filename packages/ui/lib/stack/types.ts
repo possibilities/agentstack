@@ -806,6 +806,8 @@ export type ScrapeQueueJob = { id: string; state: "pending" | "retrying" | "fail
   summarize: boolean; allow_private_network: boolean | null; frontmatter_keys: string[]; completed_failures: number; max_attempts: number | null; next_attempt_at: string | null; problem: string | null };
 export type ScrapeQueue = { jobs: ScrapeQueueJob[]; counts: Record<ScrapeQueueJob["state"], number>; truncated: boolean };
 export type ScrapeQueueResult = { processed: number; failed: number; retry_scheduled: number; retry_waiting: number; retry_exhausted: number };
+export type ScrapeCapture = { preset: string; id: string };
+export type ScrapeCorpus = { captures: ScrapeCapture[]; revision: string };
 /** `scrape_presets_check`: `not_configured` is never a pass. */
 export type ScrapeCanaryStatus = "pass" | "drift" | "operational_failure" | "not_configured";
 export type ScrapeCanaryRun = { checked_at: string; results: Array<{ preset: string; status: ScrapeCanaryStatus; detail: string }> };
