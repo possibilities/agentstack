@@ -143,7 +143,7 @@ export const ownerGaps: Record<string, string> = {
   signal: "Checkpoint rebaseline skips current upstream messages, not historical replay or transcript erase. Future sources are not included; captured evidence and independent Infer payloads remain.",
   infer: "Catalog eviction is memory-only and leaves no receipt. It never refreshes models or touches dispatched requests, traces or credentials.",
   proc: "Definition redaction covers removed schedules only. Active and Brain-protected schedules, captured executions and process output are separate selections.",
-  content: "Vault or Git-history purge and temporary publication collection are not supported; remotes and backups keep copies.",
+  content: "Temporary publication collection covers exact claimed dead-writer paths only; legacy/unattributed paths and quarantine remain. Vault history is read-only disclosure, not Git-history purge or rewrite. Remotes, backups and device copies remain independent; no device-local reset is available.",
 };
 
 /** A link with empty arguments names an operation, not a resource: it is never callable from the inventory. */

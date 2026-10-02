@@ -34,6 +34,15 @@ test("collection slugs follow the API's shape", () => {
   assert.equal(content.slugify("x".repeat(100)).length, 80);
 });
 
+test("publication selection refuses blocked, missing, duplicate and oversized claims", () => {
+  const rows = [{ id: "dead", blockedBy: [] }, { id: "live", blockedBy: ["Writer PID is alive"] }];
+  assert.deepEqual(content.publicationSelection(rows, ["dead"]), ["dead"]);
+  for (const selected of [[], ["live"], ["missing"], ["dead", "live"], ["dead", "dead"], Array(101).fill("dead")]) {
+    assert.equal(content.publicationSelection(rows, selected), null);
+  }
+  assert.equal(content.publicationSelection([{ id: "dead", blockedBy: ["Directory changed"] }], ["dead"]), null);
+});
+
 test("wikilink completion finds the open reference and closes it", () => {
   assert.deepEqual(content.wikilinkQuery("See [[blue", 10), { start: 6, query: "blue" });
   assert.equal(content.wikilinkQuery("See [[done]] and", 16), null);

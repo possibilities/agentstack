@@ -1151,3 +1151,15 @@ export function nodeKey(ref: NodeRef): string {
   if (ref.kind === "operation") return `operation:${ref.pkg}.${ref.id}`;
   return "id" in ref ? `${ref.kind}:${ref.id}` : ref.kind;
 }
+/** Trusted-local Content maintenance observations; no bodies or remote URLs. */
+export type ContentPublication = {
+  id: string; scope: "artifact" | "bundle"; path: string; bytes: number | null;
+  createdAt: string; releasedAt: string | null; blockedBy: string[]; revision: string;
+};
+export type ContentPublicationPage = { entries: ContentPublication[]; revision: string; nextOffset: number | null; retained: string[] };
+export type ContentVaultHistoryEntry = { slug: string; path: string; commit: string; blob: string; mode: string };
+export type ContentVaultHistoryPage = {
+  entries: ContentVaultHistoryEntry[]; revision: string; nextOffset: number | null; commitsScanned: number;
+  paths: { slug: string; path: string; current: boolean }[];
+  remotes: { name: string; fetch: boolean; push: boolean }[]; retained: string[];
+};

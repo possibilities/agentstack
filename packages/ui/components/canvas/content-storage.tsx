@@ -8,13 +8,14 @@ import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import { relativeTime } from "@/lib/stack/derive";
+import { publicationSelection } from "@/lib/stack/content";
 import { formatBytes } from "@/lib/stack/resources";
-import { localOperation, stateOperations } from "@/lib/stack/state";
-import type { StateFile } from "@/lib/stack/types";
+import { localOperation, localOperations, measured, stateOperations, type Page } from "@/lib/stack/state";
+import type { ContentPublication, ContentPublicationPage, StateFile } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
 import { usePagedRead } from "./owner-reads";
-import { StateFlowView, useStateFlow } from "./state-flow";
+import { MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
 import { Empty } from "./primitives";
 import { useNow, useStack, useStore } from "./provider";
 import { Section, Window } from "./window";
@@ -57,10 +58,67 @@ export function ContentStorageWindow() {
           </p>
           <Stages />
           <Blobs />
+          <Publications />
         </div>
       )}
     </Window>
   );
+}
+
+const publicationOperations = { plan: "content_publication_plan", apply: "content_publication_clear", receipt: "content_state_receipt_get" };
+
+function Publications() {
+  const state = useStack();
+  if (!localOperations(state, "content", ["content_publication_list", ...Object.values(publicationOperations)]).available) return null;
+  return <PublicationCollection />;
+}
+
+function PublicationCollection() {
+  const store = useStore();
+  const state = useStack();
+  const [selected, setSelected] = useState<string[]>([]);
+  const pages = usePagedRead<ContentPublication>(async (offset, revision) => {
+    if (state.status.content !== "open") throw new Error("The Content connection is not open.");
+    const page = await store.call<ContentPublicationPage>("content", "content_publication_list", { offset, limit: 100, ...(revision ? { revision } : {}) });
+    return { ...page, items: page.entries };
+  }, `content:publications:${state.status.content}`, state.contentGeneration);
+  // The pager preserves the last page's observation metadata alongside the accumulated rows.
+  const page = pages.page as (Page<ContentPublication> & Pick<ContentPublicationPage, "retained">) | null;
+  const selection = publicationSelection(page?.items ?? [], selected);
+  const flow = useStateFlow({ operations: stateOperations(store.call, "content", publicationOperations, { ids: selection ?? [] }),
+    recoveryKey: "content:publication_clear:claims", observe: state.contentGeneration,
+    onReceipt: (receipt) => { if (receipt.status !== "running") pages.refresh(); if (receipt.status === "completed") setSelected([]); } });
+  const locked = flow.flow.phase !== "idle";
+  const unavailable = state.status.content !== "open" ? "The Content connection is not open." : pages.error || pages.loading || !page ? "Refresh temporary publications before preparing."
+    : !selection ? "Select up to 100 unblocked claims; review changed selections." : null;
+  return <Section title="Temporary publications">
+    <MaintenanceDisclosure active={locked} aside="Exact claims">
+      <p className={hint}>Collect only exact claimed temporaries with definitely absent writers and unchanged directory incarnations. Live/reused PIDs, unknown liveness and symlink/special content block collection. Nothing resumes or republishes.</p>
+      <p className={hint}>Published objects, item/upload/blob references, Vault/Git and permanent claim/receipt evidence remain. Legacy untracked paths and cleanup quarantines are not adopted; remotes, backups and device copies are separate.</p>
+      <Button size="xs" variant="ghost" className="self-start" disabled={pages.loading || state.status.content !== "open"} onClick={pages.refresh}>Refresh temporary publications</Button>
+      {pages.error ? <p role="alert" className="text-xs text-destructive">Temporary publications unavailable: {pages.error}</p> : null}
+      {page?.restarted ? <p role="status" className="text-xs text-warning">Publication claims changed while paging; restarted from the first page.</p> : null}
+      {page ? <>
+        <ul aria-label="Temporary publication claims" className="flex max-h-64 flex-col gap-2 overflow-auto">
+          {page.items.map((row) => <li key={row.id} className="flex min-w-0 flex-col gap-1 text-xs">
+            <label className="flex items-start gap-2">
+              <input type="checkbox" className="mt-0.5 size-3.5 accent-destructive" aria-label={`Select publication ${row.id}`} checked={selected.includes(row.id)}
+                disabled={locked || Boolean(row.blockedBy.length) || (!selected.includes(row.id) && selected.length >= 100)}
+                onChange={() => setSelected((held) => held.includes(row.id) ? held.filter((id) => id !== row.id) : [...held, row.id])} />
+              <span className="min-w-0 flex-1"><code className="break-all">{row.id}</code><span className="block text-muted-foreground">{row.scope} · {measured(row.bytes, formatBytes)}</span></span>
+            </label>
+            <code className="break-all text-muted-foreground">{row.path}</code>
+            <span className={hint}>Created {row.createdAt} · {row.releasedAt ? `Released ${row.releasedAt}` : "Not released"}</span>
+            {row.blockedBy.map((blocker, index) => <p key={index} className="text-destructive">Blocked: {blocker}</p>)}
+          </li>)}
+        </ul>
+        {!page.items.length && !pages.error ? <p className={hint}>No claimed temporary publications in this observation.</p> : null}
+        {page.retained.map((text, index) => <p key={index} className={hint}>{text}</p>)}
+      </> : null}
+      {page?.nextOffset != null ? <Button size="xs" variant="ghost" className="self-start" disabled={pages.loading} onClick={pages.more}>Load more publications</Button> : null}
+      <StateFlowView controls={flow} label={`Prepare collecting ${selected.length} temporary publication${selected.length === 1 ? "" : "s"}`} applyLabel="Collect these temporaries" unavailable={unavailable} receiptOnlyRecovery />
+    </MaintenanceDisclosure>
+  </Section>;
 }
 
 function Stages() {

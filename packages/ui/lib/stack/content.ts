@@ -1,4 +1,10 @@
-import type { ContentItem, ContentItemKind, ContentItemScope, ContentOrigins } from "./types";
+import type { ContentItem, ContentItemKind, ContentItemScope, ContentOrigins, ContentPublication } from "./types";
+
+/** Only exact claims in the current observation may be prepared; the owner rechecks liveness and incarnation. */
+export function publicationSelection(rows: ContentPublication[], selected: string[]): string[] | null {
+  if (!selected.length || selected.length > 100 || new Set(selected).size !== selected.length) return null;
+  return selected.every((id) => rows.some((row) => row.id === id && !row.blockedBy.length)) ? selected : null;
+}
 
 /** Mirrors the Content API: base64 transfers and chunks are at most 256 KiB decoded. */
 export const inlineLimit = 256 * 1024;
