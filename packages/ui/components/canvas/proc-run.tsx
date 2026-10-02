@@ -237,14 +237,16 @@ function OutputLog({ run, generation }: { run: ProcRunDetail; generation: number
     if (s.running) { s.again = true; return; }
     s.running = true;
     try {
-      // The first read covers the tail; follow-ups continue from the last seq.
+      // The first read covers the tail; follow-ups continue from the last seq. Merge into the live
+      // state — a remount or key-change reset may replace state.current while a read is in flight.
       let after = s.tail ? (s.lines.at(-1)?.seq ?? 0) : Math.max(0, run.lineCount - 200);
       for (let page = 0; page < 50; page++) {
         const result = await store.call<ProcOutputPage>("proc", "proc_run_read", { id: key, after, limit: pageSize });
-        if (state.current.key !== key) return;
-        for (const gap of lineGaps(after, result.lines, result.gap)) s.gaps.set(gap.from, gap);
-        s.lines = mergeLines(s.lines, result.lines);
-        s.tail = true;
+        const live = state.current;
+        if (live.key !== key) return;
+        for (const gap of lineGaps(after, result.lines, result.gap)) live.gaps.set(gap.from, gap);
+        live.lines = mergeLines(live.lines, result.lines);
+        live.tail = true;
         after = result.nextAfter;
         if (result.lines.length < pageSize) break;
       }
@@ -252,10 +254,11 @@ function OutputLog({ run, generation }: { run: ProcRunDetail; generation: number
     } catch (error) {
       if (state.current.key === key) setReadError(error instanceof Error ? error.message : String(error));
     } finally {
-      if (state.current.key === key) {
-        state.current.running = false;
+      const live = state.current;
+      if (live.key === key) {
+        live.running = false;
         bumpLines((value) => value + 1);
-        if (state.current.again) { state.current.again = false; void readForward(); }
+        if (live.again || s.again) { live.again = false; s.again = false; void readForward(); }
       }
     }
   }, [key, run.lineCount, store]);
@@ -270,9 +273,10 @@ function OutputLog({ run, generation }: { run: ProcRunDetail; generation: number
     const after = Math.max(0, first.seq - 1 - pageSize);
     try {
       const result = await store.call<ProcOutputPage>("proc", "proc_run_read", { id: key, after, limit: first.seq - 1 - after });
-      if (state.current.key !== key) return;
-      for (const gap of lineGaps(after, result.lines, result.gap)) s.gaps.set(gap.from, gap);
-      s.lines = mergeLines(result.lines, s.lines);
+      const live = state.current;
+      if (live.key !== key) return;
+      for (const gap of lineGaps(after, result.lines, result.gap)) live.gaps.set(gap.from, gap);
+      live.lines = mergeLines(result.lines, live.lines);
       // Keep the reader where they were after the prepend.
       const element = scroll.current;
       const before = element ? element.scrollHeight - element.scrollTop : 0;
