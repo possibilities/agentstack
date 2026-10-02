@@ -20,7 +20,7 @@ const fakeGate = (cdp: string, neko: string): ManagedGate => ({
   async grantHuman() { return neko + "/human"; }, async revokeHuman() {},
 });
 import { botMcpUrl, botInstance, installationControlRoot, invocationContext, McpEventSubscriptions, serveSocket, socketCall, socketPath, operation, type EventValue, type InvocationContext, type StatePlan } from "@stack/api";
-import { api, browserHandoffRequest, browserHandoffCompletion, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
+import { api, browserCompletionIdentity, browserHandoffRequest, browserHandoffCompletion, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect } from "../api.js";
 import type { Handoff } from "../src/handoff.js";
 
 type Item = Record<string, unknown>;
@@ -769,4 +769,51 @@ printf '#!/bin/sh\\nprintf "agent-browser %s\\\\n"\\n' "$version" >"$package/bin
     assert.equal((await system.uninstallBrowser()).installed, false);
     assert.equal((await system.browserStatus()).policy, "automatic");
   } finally { await system.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test("completion identity resolves the exact Chat-bound handoff for the local operator only", async () => {
+  const options = { failInstanceCreate: true };
+  const s = await fixture(options);
+  const backend = new Backend(s.system, async () => undefined);
+  const bot = { id: "a", url: "unix:///bot-a", state: "running", recoveryIssue: null };
+  const invocation: InvocationContext = { transport: "mcp", botId: bot.id, instance: botInstance(bot.url), threadId: "main", sessionId: null };
+  const server = await serveSocket({ info: { name: "bots", description: "fixture", transportDescription: "fixture", path: socketPath("bots", s.env) }, context: {}, operations: [operation({
+    name: "chat_thread_read", description: "Sanctioned thread fixture.", input: z.object({ botId: z.string(), threadId: z.string() }), output: z.object({ thread: z.object({ id: z.string() }) }),
+    async call(_ctx, input) { if (input.botId !== "a" || !["main", "child"].includes(input.threadId)) throw new Error("outside sanctioned lineage"); return { thread: { id: input.threadId } }; },
+  })] });
+  const profiles = new Profiles(backend, s.system, s.env, async () => [bot], fakeGate);
+  const maintenance = new BrowseState(profiles, backend, s.env, s.system.root);
+  const ctx = { backend, system: s.system, profiles, state: maintenance };
+  try {
+    await s.system.setHypemanLocation(s.root); await s.system.enableHypeman(s.root); await profiles.start(false);
+    const held = await profiles.create("a", "held");
+    const pendingRequest = randomUUID();
+    const pending = await profiles.requestHandoff({ profileId: held.id, requestId: pendingRequest, message: "CANARY-MESSAGE sign in", subscribe: false }, invocation);
+    assert.equal(pending.state, "preparing", "a failed profile launch retains the pending handoff");
+    const resolved = await browserCompletionIdentity.call(ctx, { botId: "a", threadId: "main", requestId: pendingRequest });
+    assert.deepEqual(resolved, { link: { kind: "browse", requestId: pendingRequest, handoffId: pending.id } });
+    assert.ok(!JSON.stringify(resolved).includes("CANARY"), "identity links never carry message text");
+    for (const miss of [{ botId: "a", threadId: "other", requestId: pendingRequest }, { botId: "other", threadId: "main", requestId: pendingRequest },
+      { botId: "a", threadId: "main", requestId: randomUUID() }])
+      assert.deepEqual(await browserCompletionIdentity.call(ctx, miss), { link: null });
+    await assert.rejects(browserCompletionIdentity.call(ctx, { botId: "a", threadId: "main", requestId: pendingRequest }, invocation), /local operator/);
+
+    options.failInstanceCreate = false;
+    const usable = await profiles.create("a", "usable");
+    await profiles.ensure(usable.id);
+    const doneRequest = randomUUID();
+    let handoff = await profiles.requestHandoff({ profileId: usable.id, requestId: doneRequest, message: "CANARY-MESSAGE finish", subscribe: false }, invocation);
+    assert.equal(handoff.state, "awaiting_human");
+    handoff = (await profiles.actHandoff("take", { id: handoff.id, expectedRevision: handoff.revision, requestId: randomUUID() })).handoff;
+    handoff = (await profiles.actHandoff("finish", { id: handoff.id, expectedRevision: handoff.revision, requestId: randomUUID(), outcome: "completed", note: "CANARY-NOTE" })).handoff;
+    assert.equal(handoff.state, "resolved");
+    await profiles.stateRedact([handoff.id]);
+    const cleared = await browserCompletionIdentity.call(ctx, { botId: "a", threadId: "main", requestId: doneRequest });
+    assert.deepEqual(cleared, { link: { kind: "browse", requestId: doneRequest, handoffId: handoff.id } },
+      "content redaction retains exact handoff identity");
+    assert.ok(!JSON.stringify(cleared).includes("CANARY"));
+  } finally {
+    profiles.prepareClose();
+    await backend.closeContext(); await server.close(); await s.close(); maintenance.journal.close();
+  }
 });

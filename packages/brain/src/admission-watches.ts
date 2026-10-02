@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { OperationRejected, requireCompletionCoordination, stateHash, type CompletionWatch, type InvocationContext } from "@stack/api";
+import { OperationRejected, brainSubmitCompletionLink, brainSourcesCompletionLink, completionIdentityInput, requireCompletionCoordination, stateHash, type CompletionWatch, type InvocationContext } from "@stack/api";
 import { ResearchCache } from "./db.js";
 import { indexedDocumentForUrl, submissionUrlKey } from "./admission.js";
 import { admitIngestRequest, parseIngestRequest } from "./dispatch.js";
@@ -25,6 +25,8 @@ export const sourcesCompletion = z.strictObject({ result: z.strictObject({ scope
   read: z.strictObject({ operation: z.literal("sources_sync_completion"), requestId: z.uuid(), offset: z.number().int().nullable() }) }).nullable() });
 export const completionInput = z.strictObject({ requestId: z.uuid(), botId: z.string().min(1), threadId: z.string().min(1) });
 export const sourcesCompletionInput = completionInput.extend({ offset: z.number().int().min(0).max(1000).default(0) });
+export const brainCompletionIdentityInput = completionIdentityInput.extend({ operation: z.enum(["submit", "sources_sync"]) });
+export const brainCompletionIdentityOutput = z.strictObject({ link: z.union([brainSubmitCompletionLink, brainSourcesCompletionLink]).nullable() });
 const declaration = (topic: string, readOperation: string): CompletionWatch => ({ topic, readOperation, idArgument: "requestId", terminalField: "result", defaultWhen: [], initialValueField: "observation",
   readArguments: { requestId: { input: "requestId" }, botId: { invocation: "botId" }, threadId: { invocation: "threadId" } } });
 export const brainWatches: Record<string, CompletionWatch> = { submit: declaration("jobs_changed", "submission_completion"), sources_sync: declaration("sources_changed", "sources_sync_completion") };
@@ -134,5 +136,25 @@ export function readCompletion(dbPath: string, operation: "submit" | "sources_sy
         discovered: run.counts.discovered, admitted: run.counts.admitted, suppressed: run.counts.suppressed, warnings: run.warnings, checkpoint_committed: run.checkpoint_committed })),
       truncated: runs.length > 50, nextOffset, read: { operation: "sources_sync_completion", requestId: input.requestId, offset: nextOffset },
     } });
+  } finally { cache.close(); }
+}
+
+/** Structurally read-only identity read for the local operator. A mismatched or
+ * absent binding is null, never an error; the complete fixed Run set or nothing. */
+export function readCompletionIdentity(dbPath: string, input: z.infer<typeof brainCompletionIdentityInput>) {
+  const cache = new ResearchCache(dbPath);
+  try {
+    const row = binding(cache.db, input.requestId);
+    if (!row || row.operation !== input.operation || row.bot_id !== input.botId || row.thread_id !== input.threadId) return { link: null };
+    if (input.operation === "submit") {
+      const admitted = JSON.parse(row.admission_json) as SafeSubmit;
+      return { link: admitted.status === "already_indexed"
+        ? { kind: "brain-submit" as const, requestId: input.requestId, jobId: null, documentId: admitted.document_id }
+        : { kind: "brain-submit" as const, requestId: input.requestId, jobId: admitted.job_id, documentId: null } };
+    }
+    const admissions = JSON.parse(row.admission_json) as SafeSource[];
+    const runIds = [...new Set(admissions.flatMap(admission => admission.run_id === null ? [] : [admission.run_id]))].sort((a, b) => a - b);
+    if (runIds.length > 1000) throw new Error("Brain source Run set exceeds 1000 identities; unavailable");
+    return { link: { kind: "brain-sources" as const, requestId: input.requestId, runIds } };
   } finally { cache.close(); }
 }

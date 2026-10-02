@@ -1,6 +1,6 @@
 import { chmod, mkdir } from "node:fs/promises";
 import { z } from "zod";
-import { completionReceipt, operation, stateDir, stateDependencies, stateDependencyInput, stateHash, requireStateOperator, type PackageApi } from "@stack/api";
+import { completionReceipt, operation, stateDir, stateDependencies, stateDependencyInput, stateHash, requireStateOperator, completionIdentityInput, workerCompletionLink, type PackageApi } from "@stack/api";
 import { WorkerSupervisor } from "./src/supervisor.js";
 import { WorkerManager } from "./src/manager.js";
 import { workerSettingsOperations } from "./src/settings.js";
@@ -236,6 +236,9 @@ export const topics = {
   worker_progress: "Scoped UI invalidation for structured transcript, tool and session metadata progress. Subscribe with a Worker ID and refresh Worker detail/history reads. This is separate from Bot wakeups on worker_changed.",
   worker_turn_changed: "Exact admitted turn or permission state changed. Scope request:<UUID> is valid before admission; re-read worker_turn_observation. Does not publish transcript/token progress.",
 } as const;
+export const workerCompletionIdentity = operation({ name: "worker_completion_identity_get", description: "Private-socket local operator: exact request-bound Worker and turn identity for one Bot Chat request UUID, never the latest turn. Identifiers only, never prompt, transcript or Work data. Not exposed through MCP or WebSocket.",
+  input: completionIdentityInput, output: z.strictObject({ link: workerCompletionLink.nullable() }), annotations: { readOnlyHint: true },
+  async call(ctx: WorkersContext, input, invocation) { requireStateOperator(invocation); return { link: ctx.manager.completionIdentity(input) }; } });
 export const workerWorkList = operation({ name: "worker_work_list", description: "Page immutable work associations captured with Worker turn admission, with separately observed native phases. Bot callers see their own Workers; operators see all. Old scope revisions remain evidence. Restart pagination on workers_changed. Removed Worker records no longer appear; HUD semantic work and notes remain independent.",
   input: z.strictObject({ workItemId: id, after: z.number().int().nonnegative().default(0), limit: z.number().int().min(1).max(50).default(30) }),
   output: workAdmissionPage, annotations: { readOnlyHint: true },
@@ -248,7 +251,7 @@ export const workerTurnContext = operation({ name: "worker_turn_context", descri
 const packageApi: PackageApi<WorkersContext, keyof typeof topics> = {
    operations: [workerAccountStateDependencies, workerBotDependencies, workerWorkspaceList, workerWorkspaceRead, ...workerStateOperations, ...workerSettingsOperations, workerCatalog, workerRuntimeList, workerAccountDrain, workerStart, workerList, workerStatus, workerRead,
     workerDetail, workerTurnList, workerRecordList, workerRecordRead, workerToolList, workerDiff,
-      workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove, workerWorkList, workerTurnContext, workerTurnObservation, workerEventReceive, workerEventList],
+      workerSend, workerRespond, workerCancel, workerResume, workerClose, workerRemove, workerWorkList, workerTurnContext, workerTurnObservation, workerEventReceive, workerEventList, workerCompletionIdentity],
   events: {
     topics,
     scope: { description: "Worker ID for worker_changed/worker_progress; request:<UUID> for exact worker_turn_changed, valid before admission. Bot reads retain exact ownership fences; progress is for UI, not Bot wakeups.",

@@ -282,6 +282,13 @@ export class WorkerManager {
     const receipts = this.ledger.eventReceipts(id), total = this.ledger.eventReceiptCount(id);
     return { receipts, limit: 128 as const, total, truncated: total > receipts.length };
   }
+  /** Exact request-bound turn identity for the local operator; never the latest turn. */
+  completionIdentity(input: { botId: string; threadId: string; requestId: string }) {
+    const turn = this.ledger.turnByRequestId(input.requestId);
+    const origin = this.ledger.turnOrigin(input.requestId);
+    if (!turn || origin?.botId !== input.botId || origin.threadId !== input.threadId || this.ledger.worker(turn.workerId)?.botId !== input.botId) return null;
+    return { kind: "worker" as const, requestId: input.requestId, workerId: turn.workerId, turnId: turn.id };
+  }
   private drainEvents(id: string) {
     if (this.closing || this.eventRuns.has(id) || this.maintenanceWorkers.has(id) || this.loading.has(id) || this.ledger.eventBlocked(id)) return;
     const run = this.dispatchEvent(id).finally(() => {

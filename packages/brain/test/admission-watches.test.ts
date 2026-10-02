@@ -7,6 +7,7 @@ import test from "node:test";
 import { z } from "zod";
 import { botInstance, botMcpUrl, invocationContext, McpEventSubscriptions, operation, serveMcp, serveSocket, socketCall, socketPath, type EventValue, type InvocationContext } from "@stack/api";
 import { api, createBrainContext, closeBrainContext } from "../api.js";
+import { brainCompletionIdentityInput } from "../src/admission-watches.js";
 import { ResearchStore, RESEARCH_SCHEMA_VERSION } from "../src/store.js";
 import { ResearchCache } from "../src/db.js";
 import { SourceRegistry } from "../src/sources.js";
@@ -154,4 +155,54 @@ test("Brain v14 migration adds content-free admission bindings while read-only r
     assert.equal(Number(store.db.query("SELECT value FROM meta WHERE key='schema_version'").get().value), RESEARCH_SCHEMA_VERSION);
     assert.equal(store.db.query("SELECT count(*) AS n FROM admission_bindings").get().n, 0);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("completion identity reads return exact admission links for the local operator only", async () => {
+  const root = await mkdtemp(join(tmpdir(), "stack-brain-identity-"));
+  const env = { HOME: root, STACK_STATE_DIR: root, STACK_BRAIN_SHARE_PORT: "0" };
+  const ctx = await createBrainContext(env, { pollMs: 60_000, extract: async () => { throw new Error("no network"); } });
+  const dbPath = ctx.dbPath;
+  const identity = api.operations.find((op) => op.name === "brain_completion_identity_get")!;
+  const read = (input: Record<string, unknown>, invocation?: InvocationContext) =>
+    identity.call(ctx, brainCompletionIdentityInput.parse(input), invocation);
+  const bind = (requestId: string, operation: string, safe: unknown, botId = "bot-1", threadId = "chat") =>
+    ctx.store.db.query("INSERT INTO admission_bindings(request_id,operation,bot_id,thread_id,input_digest,admission_json,created_at) VALUES (?,?,?,?,?,?,?)")
+      .run(requestId, operation, botId, threadId, "CANARY-INTENT-DIGEST", JSON.stringify(safe), new Date().toISOString());
+  const source = (run_id: number | null) => ({ source_database_id: 1, status: run_id === null ? "not_due" : "queued", run_id, job_id: null, scheduled_for: null, dry_run: false });
+  try {
+    const job = randomUUID();
+    bind(job, "submit", { version: 1, status: "queued", job_id: 7, intent_hash: "CANARY-INTENT", state: "queued" });
+    const queued = await read({ requestId: job, botId: "bot-1", threadId: "chat", operation: "submit" });
+    assert.deepEqual(queued, { link: { kind: "brain-submit", requestId: job, jobId: 7, documentId: null } },
+      "a still-pending job resolves its admission identity");
+    assert.ok(!JSON.stringify(queued).includes("CANARY"));
+
+    const indexed = randomUUID();
+    bind(indexed, "submit", { version: 1, status: "already_indexed", document_id: 42 });
+    assert.deepEqual(await read({ requestId: indexed, botId: "bot-1", threadId: "chat", operation: "submit" }),
+      { link: { kind: "brain-submit", requestId: indexed, jobId: null, documentId: 42 } });
+
+    const empty = randomUUID();
+    bind(empty, "sources_sync", [source(null), source(null)]);
+    assert.deepEqual(await read({ requestId: empty, botId: "bot-1", threadId: "chat", operation: "sources_sync" }),
+      { link: { kind: "brain-sources", requestId: empty, runIds: [] } });
+
+    const thousand = randomUUID();
+    bind(thousand, "sources_sync", Array.from({ length: 1000 }, (_, n) => source(1000 - n)).concat([source(5), source(7)]));
+    const bounded = await read({ requestId: thousand, botId: "bot-1", threadId: "chat", operation: "sources_sync" });
+    assert.equal((bounded.link as { runIds: number[] }).runIds.length, 1000, "the complete fixed Run set, deduplicated");
+    assert.deepEqual((bounded.link as { runIds: number[] }).runIds.slice(0, 3), [1, 2, 3], "ascending");
+
+    const over = randomUUID();
+    bind(over, "sources_sync", Array.from({ length: 1001 }, (_, n) => source(n + 1)));
+    await assert.rejects(read({ requestId: over, botId: "bot-1", threadId: "chat", operation: "sources_sync" }), /exceeds 1000/);
+
+    for (const miss of [{ requestId: job, botId: "bot-1", threadId: "chat", operation: "sources_sync" },
+      { requestId: job, botId: "other", threadId: "chat", operation: "submit" },
+      { requestId: job, botId: "bot-1", threadId: "other", operation: "submit" },
+      { requestId: randomUUID(), botId: "bot-1", threadId: "chat", operation: "submit" }])
+      assert.deepEqual(await read(miss), { link: null });
+    await assert.rejects(read({ requestId: job, botId: "bot-1", threadId: "chat", operation: "submit" },
+      { transport: "mcp", botId: "bot-1", instance: "launch-1", threadId: "chat", sessionId: "s" }), /local operator/);
+  } finally { await closeBrainContext(ctx); await rm(root, { recursive: true, force: true }); }
 });

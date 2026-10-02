@@ -175,6 +175,12 @@ export class Profiles {
 
   handoffs(caller: BrowserCaller | null): Handoff[] { return structuredClone(this.ledger.handoffs.filter((h) => !caller || h.botId === caller.botId)); }
 
+  /** Exact Chat-bound handoff identity in any state; identifiers only. */
+  completionIdentity(input: { botId: string; threadId: string; requestId: string }) {
+    const handoff = this.ledger.handoffs.find((h) => h.botId === input.botId && h.threadId === input.threadId && h.requestId === input.requestId);
+    return handoff ? { kind: "browse" as const, requestId: input.requestId, handoffId: handoff.id } : null;
+  }
+
   private async changed(): Promise<void> { await this.save(); this.onHandoffChange?.(); }
 
   async requestHandoff(input: HandoffRequest, invocation?: InvocationContext): Promise<Handoff> {

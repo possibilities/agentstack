@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { withStateInventory } from "@stack/api";
 import { brainStateCategories } from "./src/state-categories.js";
-import { completionReceipt, operation, operatorInvocation, type PackageApi, type StandaloneContext } from "@stack/api";
+import { completionReceipt, operation, operatorInvocation, requireStateOperator, type PackageApi, type StandaloneContext } from "@stack/api";
 import { egressPolicy } from "@stack/scrape/network";
 import { ResearchEgress, grantScope, grantRecord, jobNetworkPolicy } from "./src/egress.js";
 import { ArtifactStore } from "./src/artifacts.js";
@@ -23,7 +23,7 @@ import { parseShareRequest } from "./src/share.js";
 import { ResearchStore } from "./src/store.js";
 import { runWorker, type WorkerOptions, type WorkerResult } from "./src/worker.js";
 import { BrainState, brainStateOperations } from "./src/state.js";
-import { admitWatched, brainWatches, completionInput, readCompletion, sourcesCompletion, sourcesCompletionInput, submissionCompletion } from "./src/admission-watches.js";
+import { admitWatched, brainCompletionIdentityInput, brainCompletionIdentityOutput, brainWatches, completionInput, readCompletion, readCompletionIdentity, sourcesCompletion, sourcesCompletionInput, submissionCompletion } from "./src/admission-watches.js";
 
 export interface BrainContext {
   env: NodeJS.ProcessEnv;
@@ -242,6 +242,9 @@ const packageApi: PackageApi<BrainContext, BrainTopic> = {
     operation({ name: "sources_sync_completion", description: "Read the fixed discovery Run set bound to requestId. Null until every admitted Run has a terminal outcome; no-admission/dry-run is immediate. Bounded paged summaries contain counts/outcomes, no raw warnings, URLs or content. This is discovery/admission settlement, not child indexing. Bot/thread must match its origin. Structurally read-only, no reveal audit.",
       input: sourcesCompletionInput, output: sourcesCompletion, annotations: { readOnlyHint: true },
       async call(ctx, input, invocation) { return sourcesCompletion.parse(readCompletion(ctx.dbPath, "sources_sync", input, invocation)); } }),
+    operation({ name: "brain_completion_identity_get", description: "Private-socket local operator: exact Brain admission identity for one Bot Chat request UUID and watched operation. Identifiers only — job, document or the complete fixed Run set — never intent, URL, content or idempotency keys. Not exposed through MCP or WebSocket.",
+      input: brainCompletionIdentityInput, output: brainCompletionIdentityOutput, annotations: { readOnlyHint: true },
+      async call(ctx, input, invocation) { requireStateOperator(invocation); return brainCompletionIdentityOutput.parse(readCompletionIdentity(ctx.dbPath, input)); } }),
     ...brainStateOperations,
     operation({ name: "egress_grant_create", description: "Operator-only socket grant for one URL submission root or exact Research source definition version. Allows only explicit TCP IP/port destinations in addition to public egress. Children inherit the scope; existing sources receive no implicit grants. Revoke an existing grant before changing destinations.",
       input: z.strictObject({ scope: grantScope, policy: egressPolicy }), output: grantRecord,

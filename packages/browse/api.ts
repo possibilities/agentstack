@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { operation, stateDependencies, stateDependencyInput, stateHash, requireStateOperator, type PackageApi } from "@stack/api";
+import { operation, stateDependencies, stateDependencyInput, stateHash, requireStateOperator, completionIdentityInput, browseCompletionLink, type PackageApi } from "@stack/api";
 import { Backend, cleanupSchema } from "./src/backend.js";
 import { BrowserSystem } from "./src/system.js";
 import { Profiles, profileSchema, bindingSchema } from "./src/profiles.js";
@@ -66,6 +66,14 @@ export const browserHandoffCompletion = operation({
       if (caller.botId !== input.botId || caller.threadId !== input.threadId) throw new Error("completion read belongs to another Chat");
     }
     return { result: ctx.profiles.handoffs(null).find((h) => h.botId === input.botId && h.threadId === input.threadId && h.requestId === input.requestId && h.state === "resolved") ?? null };
+  },
+});
+export const browserCompletionIdentity = operation({
+  name: "browser_completion_identity_get", description: "Private-socket local operator: exact Browser handoff identity for one Bot Chat request UUID, in any state including pending. Identifiers only, never message, note or profile data. Not exposed through MCP or WebSocket.",
+  input: completionIdentityInput, output: z.strictObject({ link: browseCompletionLink.nullable() }), annotations: { readOnlyHint: true },
+  async call(ctx: BrowserContext, input, invocation) {
+    requireStateOperator(invocation);
+    return { link: ctx.profiles.completionIdentity(input) };
   },
 });
 const handoffActionOutput = z.strictObject({ handoff: handoffSchema, controlUrl: z.string().nullable() });
@@ -283,7 +291,7 @@ export const topics = {
 } as const;
 const packageApi: PackageApi<BrowserContext, keyof typeof topics> = {
   operations: [...browserFactoryOperations, ...browseStateOperations, browseBotDependencies, browserStatus, browserProfileList, browserProfileCreate, browserProfileDelete, browserControllerList, browserControllerSelect, browserControllerLaunch, browserControllerClose, browserBotRelease,
-    browserHandoffRequest, browserHandoffGet, browserHandoffList, browserHandoffCompletion, browserHandoffTake, browserHandoffFinish, browserHandoffCancel,
+    browserHandoffRequest, browserHandoffGet, browserHandoffList, browserHandoffCompletion, browserCompletionIdentity, browserHandoffTake, browserHandoffFinish, browserHandoffCancel,
     browserSessionGet, browserSessionList, browserSessionClose, browserSessionReconcile, browserResearchAcquire,
     browserToolStatus, browserToolDetect, browserToolCheck, browserToolPolicy, browserToolInstall, browserToolAccept, browserToolUninstall,
     hypemanDetect, hypemanLocationSet, hypemanEnable, hypemanInstall, hypemanUninstall],

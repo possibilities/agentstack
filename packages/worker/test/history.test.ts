@@ -10,7 +10,7 @@ import { WorkerManager } from "../src/manager.js";
 import { WorkerSupervisor, type Runtime } from "../src/supervisor.js";
 import type { AcpProcess } from "../src/acp.js";
 import { LOCAL_OPERATOR_ID, ownsWorker } from "../src/owner.js";
-import { api, workerCancel, workerRead, workerSend, workerStart, workerStatus, workerTurnList } from "../api.js";
+import { api, workerCancel, workerCompletionIdentity, workerRead, workerSend, workerStart, workerStatus, workerTurnList } from "../api.js";
 import type { InvocationContext } from "@stack/api";
 
 const intent = (accountId: string = randomUUID()) => ({ requestId: randomUUID(), botId: "fixture-bot", threadId: "root",
@@ -392,4 +392,38 @@ test("session metadata outside turns, runtime fencing, permission ownership and 
       assert.equal((await reopened.detail(worker.id)).freshness.stale, true);
     } finally { await end?.(); await reopened.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("completion identity resolves the exact request-bound turn for the local operator only", async () => {
+  const root = await mkdtemp(join(tmpdir(), "as-worker-identity-"));
+  const env = { STACK_STATE_DIR: root };
+  const supervisor = new WorkerSupervisor(root, env);
+  const manager = new WorkerManager(root, supervisor, env);
+  const ctx = { supervisor, manager };
+  try {
+    const first = intent();
+    const { worker, turn } = manager.ledger.reserve({ ...first, task: "CANARY-INTENT first task" });
+    manager.ledger.setWorkerPhase(worker.id, "idle");
+    const followUpRequest = randomUUID();
+    const followUp = manager.ledger.reserveTurn(worker.id, followUpRequest, "CANARY-PROMPT follow-up", worker.model, worker.effort,
+      undefined, null, { botId: first.botId, threadId: first.threadId }).turn;
+    assert.equal(manager.ledger.worker(worker.id)?.currentTurnId, followUp.id, "the newer turn is current");
+    const read = (input: { botId: string; threadId: string; requestId: string }, invocation?: InvocationContext) => workerCompletionIdentity.call(ctx, input, invocation);
+    const firstLink = { link: { kind: "worker", requestId: first.requestId, workerId: worker.id, turnId: turn.id } };
+    assert.deepEqual(await read({ botId: first.botId, threadId: first.threadId, requestId: first.requestId }), firstLink,
+      "the pending start turn resolves while queued");
+    assert.deepEqual(await read({ botId: first.botId, threadId: first.threadId, requestId: followUpRequest }),
+      { link: { kind: "worker", requestId: followUpRequest, workerId: worker.id, turnId: followUp.id } },
+      "each request resolves its own turn, never the latest");
+    for (const miss of [{ botId: "other", threadId: first.threadId, requestId: first.requestId },
+      { botId: first.botId, threadId: "other", requestId: first.requestId },
+      { botId: first.botId, threadId: first.threadId, requestId: randomUUID() }])
+      assert.deepEqual(await read(miss), { link: null });
+    assert.ok(!JSON.stringify([firstLink]).includes("CANARY"), "identity links never carry task or prompt text");
+    await assert.rejects(read({ botId: first.botId, threadId: first.threadId, requestId: first.requestId },
+      { transport: "mcp", botId: first.botId, instance: "launch-1", threadId: first.threadId, sessionId: "s" }), /local operator/);
+    manager.ledger.removeWorker(worker.id);
+    assert.deepEqual(await read({ botId: first.botId, threadId: first.threadId, requestId: first.requestId }), { link: null }, "a removed Worker retains no identity");
+    assert.deepEqual(await read({ botId: first.botId, threadId: first.threadId, requestId: followUpRequest }), { link: null });
+  } finally { await manager.close(); await rm(root, { recursive: true, force: true }); }
 });
