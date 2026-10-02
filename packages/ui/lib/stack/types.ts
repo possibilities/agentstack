@@ -231,6 +231,9 @@ export type WorkerSession = { id: string; botId: string; threadId: string; accou
 export type WorkerListTurn = Pick<WorkerTurn, "id" | "phase" | "stopReason" | "issue" | "dispatchedAt" | "createdAt" | "updatedAt" | "workContext">;
 /** A worker_list row: the Worker plus its latest turn and pending permission count. */
 export type WorkerListItem = WorkerSession & { turn: WorkerListTurn | null; pendingPermissions: number };
+/** Recorded claim survives Worker removal; collected claims must never be adopted again. */
+export type WorkerBranch = { workerId: string; repo: string; branch: string; baseCommit: string; collectedAt: number | null };
+export type WorkerBranchPage = { branches: WorkerBranch[]; revision: string; nextOffset: number | null };
 export type WorkerDiffFile = { path: string; oldPath: string | null;
   status: "added" | "modified" | "deleted" | "renamed" | "copied" | "typechange" | "unmerged" | "untracked" | "unknown";
   additions: number | null; deletions: number | null; binary: boolean };

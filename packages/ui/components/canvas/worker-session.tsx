@@ -16,13 +16,14 @@ import type { RoleCatalog, WorkerDiff, WorkerDiffFile, WorkerDetail, WorkerPermi
 import { appendBySeq, conversation, localOperator, settingsMismatch, span, workerAttention, workerLabel, workerOrigin, type ConversationItem, type PlanEntry } from "@/lib/stack/workers";
 import { cn } from "@/lib/utils";
 import { Markdown } from "./chat-window";
-import { CopyButton, NodeLink, Row, StatusDot, Time } from "./primitives";
+import { ContentCleared, CopyButton, NodeLink, Row, StatusDot, Time } from "./primitives";
 import { RecordTree } from "./record-tree";
 import { useNow, useStack, useStore, useWorkbench, useWorkerWindows } from "./provider";
 import { phaseTitle, phaseTone } from "./worker-windows";
 import { Window } from "./window";
 import { WorkerSettingsTab } from "./worker-settings";
 import { WorkContextLink } from "./hud-shared";
+import { WorkerMaintenance, WorkerSessionMaintenance } from "./worker-maintenance";
 
 type Tab = "conversation" | "changes" | "files" | "turns" | "tools" | "records" | "session" | "settings";
 const tabs: Array<[Tab, string]> = [["conversation", "Conversation"], ["changes", "Changes"], ["files", "Files"], ["turns", "Turns"], ["tools", "Tools"], ["records", "Records"], ["session", "Session"], ["settings", "Settings"]];
@@ -147,7 +148,7 @@ async function readTools(store: StackStore, id: string, pages: number): Promise<
 
 /**
  * One Worker: what it was asked, what it did, and what it is waiting for. Its Bot answers and steers it; the
- * window reads, except for its managed model and effort settings (ADR 0130).
+  * window reads, except for managed settings and explicit local state maintenance.
  */
 export function WorkerWindow({ id }: { id: string }) {
   const { windows, workerWindows } = useWorkerWindows();
@@ -286,8 +287,8 @@ function Summary({ worker, status, statusError }: { worker: WorkerSession; statu
         <span className="font-medium">{phaseTitle[worker.phase]}</span>
         {active && started ? <span className="text-[0.72rem] text-muted-foreground tabular-nums">turn {span(now - started)}</span> : null}
         {turn && !active ? <span className="truncate text-[0.72rem] text-muted-foreground">last turn {turn.phase}{turn.stopReason ? ` · ${turn.stopReason}` : ""}</span> : null}
-        <span className="ml-auto flex shrink-0 items-center gap-1 text-[0.68rem] text-muted-foreground" title="Bots start and steer Workers; this window edits only saved model and effort settings">
-          <LockIcon className="size-3" />Read only · settings
+        <span className="ml-auto flex items-center gap-1 text-[0.68rem] text-muted-foreground" title="Bots start and steer Workers; this window offers managed settings and explicit local state maintenance, never lifecycle or permission controls">
+          <LockIcon className="size-3 shrink-0" />Observe · settings · maintenance
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-1">
@@ -396,7 +397,8 @@ function ConversationTab({ worker, generation }: { worker: WorkerSession; genera
   const names = useMemo(() => new Map((tools.data?.tools ?? []).map((tool) => [tool.toolCallId, tool])), [tools.data]);
   const turns = useMemo(() => conversation(transcript.entries, names), [transcript.entries, names]);
   return (
-    <Scroller follow={transcript.entries.length}>
+     <Scroller follow={transcript.entries.length}>
+       <ContentCleared at={worker.contentClearedAt} />
       {turns.map((turn, index) => (
         <section key={turn.turnId} aria-label={`Turn ${index + 1}`} className="flex flex-col gap-2">
           <div className="flex items-center gap-2 text-[0.64rem] font-medium tracking-[0.08em] text-muted-foreground uppercase">
@@ -458,7 +460,7 @@ const fileStatus: Record<WorkerDiffFile["status"], { letter: string; className: 
   typechange: { letter: "T", className: "text-warning" }, unmerged: { letter: "U", className: "text-warning" }, unknown: { letter: "?", className: "text-muted-foreground" },
 };
 
-/** What the Worker changed in its retained worktree against its base commit, read through worker_diff. Nothing here writes to the worktree. */
+/** Changes against the base, with an explicit closed-Worker reset through the owner plan/receipt flow. */
 function ChangesTab({ worker, generation }: { worker: WorkerSession; generation: number }) {
   const store = useStore();
   const [shown, setShown] = useState<{ path: string | null } | null>(null);
@@ -528,8 +530,9 @@ function ChangesTab({ worker, generation }: { worker: WorkerSession; generation:
             patch.data ? <Patch diff={patch.data} /> : <FeedFooter loading={!patch.error} error={patch.error} hasMore={false} count={0} noun="patch" />
           ) : null}
         </>
-      )}
-    </Scroller>
+       )}
+       <WorkerMaintenance worker={worker} kind="git_reset" />
+     </Scroller>
   );
 }
 
@@ -649,8 +652,9 @@ function RecordsTab({ worker, generation }: { worker: WorkerSession; generation:
   const kinds = [...new Set(feed.entries.map((entry) => entry.kind))].sort();
   const shown = kind ? feed.entries.filter((entry) => entry.kind === kind) : feed.entries;
   return (
-    <Scroller>
-      <div className="flex flex-wrap items-center gap-2">
+     <Scroller>
+       <ContentCleared at={worker.contentClearedAt} />
+       <div className="flex flex-wrap items-center gap-2">
         <NativeSelect size="sm" aria-label="Turn" className="min-w-0 flex-1" value={turnId} onChange={(event) => setTurnId(event.target.value)}>
           <NativeSelectOption value="">All turns</NativeSelectOption>
           {(turns.data ?? []).map((turn, index) => <NativeSelectOption key={turn.id} value={turn.id}>Turn {index + 1} · {turn.phase}</NativeSelectOption>)}
@@ -794,6 +798,7 @@ function SessionTab({ worker, generation }: { worker: WorkerSession; generation:
               {data.metadata.map((record) => <RecordRow key={record.seq} worker={worker} record={record} />)}
             </ul>
           </section>
+          <WorkerSessionMaintenance worker={worker} />
         </>
       )}
     </Scroller>

@@ -14,11 +14,42 @@ registerHooks({
 
 const { appendBySeq, conversation, filterWorkers, groupWorkers, parsePlan, parseToolLine, settingsMismatch, workerAttention, workerLabel, workerNote, workerOrigin } = await import("../lib/stack/workers.ts");
 const { WorkerWindowStore, primaryWorker } = await import("../lib/stack/worker-windows.ts");
+const { workerBranchSelection, workerNativeDisclosure, workerNativePreconditions } = await import("../lib/stack/worker-maintenance.ts");
 
 const session = (id, phase, extra = {}) => ({ id, botId: "bot-1", threadId: "t", accountId: "w1", provider: "claude", model: "opus", effort: "high",
   repo: "/src/stack/", cwd: null, branch: null, baseCommit: null, sourceDirty: false, roleRevision: 1, sessionId: null, runtimeInstance: null,
   phase, currentTurnId: null, issue: null, createdAt: 1, updatedAt: 1, ...extra });
 const entry = (seq, turnId, kind, text) => ({ seq, workerId: "w", turnId, kind, text, at: seq });
+
+test("branch maintenance selects only current recorded claims and never infers unmerged consent", () => {
+  const rows = [{ workerId: "a", collectedAt: null }, { workerId: "b", collectedAt: null }, { workerId: "retired", collectedAt: 10 }];
+  assert.equal(workerBranchSelection(rows, [], []), null);
+  assert.equal(workerBranchSelection(rows, ["foreign"], []), null);
+  assert.equal(workerBranchSelection(rows, ["retired"], []), null);
+  assert.deepEqual(workerBranchSelection(rows, ["a", "b"], []), { kind: "branch", ids: ["a", "b"], allowUnmerged: [] });
+  assert.deepEqual(workerBranchSelection(rows, ["a", "b", "a"], ["b"]), { kind: "branch", ids: ["a", "b"], allowUnmerged: ["b"] });
+  assert.equal(workerBranchSelection(rows, ["a"], ["b"]), null, "consent for a different claim is not silently reused");
+  assert.equal(workerBranchSelection(rows, Array.from({ length: 101 }, (_, n) => String(n)), []), null);
+});
+
+test("native purge requires known idle and disabled observations, and shows only the owner's exact disclosure", () => {
+  const worker = session("a", "closed", { sessionId: "ses_root", cwd: "/exact/worktree" });
+  const observed = { account: { enabled: false, removing: false, provider: "claude" }, accountKnown: true,
+    signInKnown: true, signingIn: false, runtimeKnown: true, runtimes: [] };
+  assert.deepEqual(workerNativePreconditions(worker, observed).map((condition) => condition.state), ["Met", "Met", "Met", "Met"]);
+  for (const [change, index, expected] of [[{ accountKnown: false }, 1, "Unknown"], [{ signInKnown: false }, 2, "Unknown"],
+    [{ signingIn: true }, 2, "Not met"], [{ runtimeKnown: false }, 3, "Unknown"],
+    [{ account: { enabled: true, provider: "claude" } }, 1, "Not met"], [{ account: { enabled: false, removing: true, provider: "claude" } }, 1, "Not met"],
+    [{ runtimes: [{ id: "w1", state: "stopped", pid: null, pids: [123] }] }, 3, "Not met"]]) {
+    assert.equal(workerNativePreconditions(worker, { ...observed, ...change })[index].state, expected);
+  }
+  assert.equal(workerNativePreconditions({ ...worker, sessionId: null }, observed)[0].state, "Not met");
+  assert.equal(workerNativePreconditions({ ...worker, phase: "idle" }, observed)[0].state, "Not met");
+  const disclosure = "Exact native sessions and verified descendants selected: ses_full_root, ses_full_child";
+  assert.equal(workerNativeDisclosure({ retained: ["Independent copies remain", disclosure] }), disclosure);
+  assert.equal(workerNativeDisclosure({ retained: ["Exact native sessions and verified descendants selected: "] }), null);
+  assert.equal(workerNativeDisclosure({ retained: ["Native session ses_root"] }), null, "the UI cannot substitute a root-only record");
+});
 
 test("Workers are named by repository and short ID, and the local operator by role", () => {
   assert.equal(workerLabel(session("0fd9d71a-8b46", "idle")), "stack · 0fd9d7");

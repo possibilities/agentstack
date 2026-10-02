@@ -163,8 +163,10 @@ export function StateMaintenance<Extra extends Record<string, string> = Record<s
   return <StateFlowView controls={controls} label={label} applyLabel={applyLabel} unavailable={unavailable} className={className} />;
 }
 
-export function StateFlowView({ controls, label, applyLabel = "Apply this plan", unavailable, className }: {
-  controls: StateFlowControls; label: string; applyLabel?: string; unavailable?: string | null; className?: string;
+export function StateFlowView({ controls, label, applyLabel = "Apply this plan", unavailable, className, receiptOnlyRecovery = false }: {
+   controls: StateFlowControls; label: string; applyLabel?: string; unavailable?: string | null; className?: string;
+   /** External effects must be inspected, not rearmed, after an uncertain admission or an unsettled receipt. */
+   receiptOnlyRecovery?: boolean;
 }) {
   const now = useNow(15_000);
   const { flow } = controls;
@@ -218,7 +220,7 @@ export function StateFlowView({ controls, label, applyLabel = "Apply this plan",
             <AlertTitle>Result not confirmed</AlertTitle>
             <AlertDescription className="flex flex-col gap-1">
               <span>{flow.error}</span>
-              <span>The request may not have reached the owner. Read its receipt again, or send exactly the same request again; the owner admits one request ID once. Choosing differently needs a new plan.</span>
+              <span>{receiptOnlyRecovery ? "Inspect the exact resources and read this request’s receipt again. No resend or new plan is offered while the result is unconfirmed." : "The request may not have reached the owner. Read its receipt again, or send exactly the same request again; the owner admits one request ID once. Choosing differently needs a new plan."}</span>
             </AlertDescription>
           </Alert>
           <div className="flex flex-col rounded-lg border bg-background/60 p-2.5">
@@ -229,8 +231,8 @@ export function StateFlowView({ controls, label, applyLabel = "Apply this plan",
           </div>
           <div className="flex flex-wrap gap-1.5">
             <Button size="sm" variant="outline" onClick={controls.readReceipt}><RefreshCwIcon data-icon="inline-start" />Read receipt</Button>
-            <Button size="sm" variant="outline" disabled={!!unavailable} onClick={controls.retry}><RotateCwIcon data-icon="inline-start" />Send identical request</Button>
-            {prepareButton("Prepare a new plan", "ghost")}
+            {!receiptOnlyRecovery ? <Button size="sm" variant="outline" disabled={!!unavailable} onClick={controls.retry}><RotateCwIcon data-icon="inline-start" />Send identical request</Button> : null}
+            {!receiptOnlyRecovery ? prepareButton("Prepare a new plan", "ghost") : null}
           </div>
         </>
       ) : null}
@@ -238,9 +240,9 @@ export function StateFlowView({ controls, label, applyLabel = "Apply this plan",
         <>
           <StateReceiptView receipt={flow.receipt} now={now} />
           <div className="flex flex-wrap gap-1.5">
-            {flow.receipt.status === "running" ? <Button size="sm" variant="outline" onClick={controls.readReceipt}><RefreshCwIcon data-icon="inline-start" />Read receipt again</Button> : null}
-            {flow.receipt.status === "partial" || flow.receipt.status === "unknown" || flow.receipt.status === "blocked" ? prepareButton("Prepare a new plan", "ghost") : null}
-            <Button size="sm" variant="ghost" onClick={controls.reset}>Close receipt</Button>
+            {flow.receipt.status === "running" || (receiptOnlyRecovery && (flow.receipt.status === "partial" || flow.receipt.status === "unknown")) ? <Button size="sm" variant="outline" onClick={controls.readReceipt}><RefreshCwIcon data-icon="inline-start" />Read receipt again</Button> : null}
+            {flow.receipt.status === "blocked" || (!receiptOnlyRecovery && (flow.receipt.status === "partial" || flow.receipt.status === "unknown")) ? prepareButton("Prepare a new plan", "ghost") : null}
+            {!receiptOnlyRecovery || flow.receipt.status === "completed" || flow.receipt.status === "blocked" ? <Button size="sm" variant="ghost" onClick={controls.reset}>Close receipt</Button> : null}
           </div>
         </>
       ) : null}
