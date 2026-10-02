@@ -834,6 +834,9 @@ export type BrowserHandoff = {
 };
 /** `browser_handoff_take` / `browser_handoff_finish`. `controlUrl` is a human input grant: keep it in memory only. */
 export type BrowserHandoffAction = { handoff: BrowserHandoff; controlUrl: string | null };
+/** Verified owned provider volumes; byte sizes are deliberately not measured by this inventory. */
+export type BrowserVolume = { id: string; name?: string; tags?: Record<string, string>; providerRevision: string; blockedBy: string[] };
+export type BrowserVolumePage = { volumes: BrowserVolume[]; revision: string; nextOffset: number | null };
 export type BrowserHandoffObservation = { result: BrowserHandoff | null };
 export type BrowserHandoffRequest = BrowserHandoff & { subscription: CompletionReceipt | null; observation: BrowserHandoffObservation | null };
 /** `browser_status`: provider policy and counts; it does not probe Hypeman or promise launch capacity. */

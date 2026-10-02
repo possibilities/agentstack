@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 import { CopyButton, Empty, Flash, NodeCard, NodeLink, NodeTitle, Row, StatusDot, Time, type Tone } from "./primitives";
 import { useStack, useStore, useViewerWindows, useWorkbench } from "./provider";
 import { useBrowseBlocked } from "./browse-handoffs";
+import { BrowseMaintenanceFence, BrowseVolumes, ProfileMaintenanceDialog, browseMaintenanceOperations } from "./browse-maintenance";
+import { localOperations } from "@/lib/stack/state";
 import { Elapsed, fieldLabel } from "./scrape-shared";
 import { footerButton, Section, Window } from "./window";
 
@@ -82,10 +84,12 @@ function DeleteProfileDialog({ profile, open, onOpenChange }: { profile: Browser
 }
 
 function ProfileRow({ profile, controllers }: { profile: BrowserProfile; controllers: BrowserController[] }) {
-  const { browserControllers, browserHandoffs } = useStack();
+  const state = useStack();
+  const { browserControllers, browserHandoffs } = state;
   const { viewers } = useViewerWindows();
   const { goTo } = useWorkbench();
   const [deleting, setDeleting] = useState(false);
+  const [maintenance, setMaintenance] = useState<"reset" | "site" | null>(null);
   const node = { kind: "browser-profile" as const, id: profile.id };
   const held = heldBy(profile.id, browserHandoffs.data);
   const block = deleteBlock(profile, browserControllers.data, browserHandoffs.data);
@@ -108,6 +112,8 @@ function ProfileRow({ profile, controllers }: { profile: BrowserProfile; control
               <DropdownMenuContent align="end">
                 <DropdownMenuGroup>
                   <DropdownMenuItem onClick={() => goTo({ kind: "browser-viewer", id: viewers.open(profile.id) })}><EyeIcon />Open in a new viewer</DropdownMenuItem>
+                  {localOperations(state, "browse", Object.values(browseMaintenanceOperations.reset)).available ? <DropdownMenuItem onClick={() => setMaintenance("reset")}>Reset profile…</DropdownMenuItem> : null}
+                  {localOperations(state, "browse", Object.values(browseMaintenanceOperations.site)).available ? <DropdownMenuItem onClick={() => setMaintenance("site")}>Clear site data…</DropdownMenuItem> : null}
                   <DropdownMenuItem variant="destructive" disabled={Boolean(block)} title={block ?? undefined} onClick={() => setDeleting(true)}><Trash2Icon />{block ?? "Delete profile…"}</DropdownMenuItem>
                 </DropdownMenuGroup>
               </DropdownMenuContent>
@@ -120,8 +126,10 @@ function ProfileRow({ profile, controllers }: { profile: BrowserProfile; control
           <span className="ml-auto font-mono" title={profile.id}>{shortId(profile.id)}</span>
         </p>
         {profile.error ? <p className="text-[0.68rem] break-words text-destructive">{profile.error}</p> : null}
+        <BrowseMaintenanceFence profile={profile} />
       </NodeCard>
       {deleting ? <DeleteProfileDialog profile={profile} open={deleting} onOpenChange={setDeleting} /> : null}
+      {maintenance ? <ProfileMaintenanceDialog profile={profile} kind={maintenance} onClose={() => setMaintenance(null)} /> : null}
     </li>
   );
 }
@@ -407,6 +415,7 @@ export function ToolchainWindow() {
                 </Button>
               </form>
             </div>
+            <BrowseVolumes />
           </Section>
           <AlertDialog open={removing} onOpenChange={(next) => { if (!uninstall.pending) setRemoving(next); }}>
             <AlertDialogContent>

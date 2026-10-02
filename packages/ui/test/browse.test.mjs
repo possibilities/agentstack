@@ -6,7 +6,7 @@ import test from "node:test";
 registerHooks({ resolve(specifier, context, next) {
   return next(context.parentURL?.includes("/lib/stack/") && specifier.startsWith("./") && !extname(specifier) ? `${specifier}.ts` : specifier, context);
 } });
-const { botHandoff, browseCallError, browseLocalReason, controllerKey, deleteBlock, groupHandoffs, groupProfiles, heldBy, intentFor, loadIntent, saveIntent } = await import("../lib/stack/browse.ts");
+const { botHandoff, browseCallError, browseLocalReason, controllerKey, deleteBlock, groupHandoffs, groupProfiles, heldBy, intentFor, loadIntent, saveIntent, siteDataOrigins, handoffContentSelection, volumeSelection } = await import("../lib/stack/browse.ts");
 const { ViewerWindowStore, primaryViewer } = await import("../lib/stack/browse-viewers.ts");
 
 const handoff = (patch = {}) => ({ id: "h1", profileId: "p1", botId: "bot-1", threadId: "t", instance: "i", requestId: "r", targetId: null, targetStatus: "unspecified", message: "Sign in to GitHub",
@@ -22,6 +22,23 @@ function memory() {
 test("browse is never available remotely", () => {
   assert.equal(browseLocalReason(undefined), null);
   assert.equal(browseLocalReason({ scope: "control", scopes: [] }), "Available only on the local UI");
+});
+
+test("site-data scope accepts only exact HTTP(S) origins without silently widening page URLs", () => {
+  assert.deepEqual(siteDataOrigins("https://example.com\nhttp://localhost:8080\nhttps://example.com"), { origins: ["http://localhost:8080", "https://example.com"], error: null });
+  for (const text of ["", "https://example.com/", "https://example.com/path", "https://name:secret@example.com", "https://@example.com", "https://example.com?", "https://example.com#", "file:///path", "https://example.com\\path", "not a URL", Array(51).fill("https://example.com").join("\n")]) {
+    assert.ok(siteDataOrigins(text).error, text);
+    assert.deepEqual(siteDataOrigins(text).origins, [], "invalid scope cannot leak a normalized origin");
+  }
+});
+
+test("maintenance selections exclude open/cleared handoffs and referenced/mounted/missing volumes", () => {
+  const rows = [handoff({ id: "resolved", state: "resolved" }), handoff({ id: "cleared", state: "resolved", contentClearedAt: "2026-10-01T00:00:00Z" }), handoff()];
+  assert.equal(handoffContentSelection(rows, ["resolved"]), true);
+  for (const ids of [[], ["cleared"], ["h1"], ["missing"], ["resolved", "resolved"]]) assert.equal(handoffContentSelection(rows, ids), false);
+  const volumes = [{ id: "orphan", blockedBy: [] }, { id: "mounted", blockedBy: ["mounted"] }, { id: "receipt", blockedBy: ["referenced"] }];
+  assert.equal(volumeSelection(volumes, ["orphan"]), true);
+  for (const ids of [[], ["mounted"], ["receipt"], ["missing"], ["orphan", "orphan"], Array(101).fill("orphan")]) assert.equal(volumeSelection(volumes, ids), false);
 });
 
 test("a timeout or dropped connection is an unknown outcome; a stale revision is its own case", () => {

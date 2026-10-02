@@ -1,4 +1,32 @@
-import type { BrowserController, BrowserHandoff, BrowserProfile, BrowserToolchain } from "./types";
+import type { BrowserController, BrowserHandoff, BrowserProfile, BrowserToolchain, BrowserVolume } from "./types";
+
+export type SiteDataCategory = "cookies" | "storage" | "cache";
+
+/** Validate the entered scope before any owner call; never turn a page URL into a wider origin. */
+export function siteDataOrigins(text: string): { origins: string[]; error: string | null } {
+  const values = text.trim() ? text.trim().split(/\s*\n\s*/) : [];
+  if (!values.length || values.length > 50) return { origins: [], error: "Enter 1–50 exact HTTP(S) origins, one per line." };
+  const origins: string[] = [];
+  for (const value of values) {
+    try {
+      const url = new URL(value);
+      if (value.length > 2048 || !/^https?:\/\/[^/?#@\\\s]+$/i.test(value) || url.username || url.password || !url.hostname) throw new Error();
+      origins.push(url.origin);
+    } catch { return { origins: [], error: "Use exact credential-free HTTP(S) origins, without paths, query strings or fragments." }; }
+  }
+  return { origins: [...new Set(origins)].sort(), error: null };
+}
+
+/** An old selection must not silently include missing, open or already-redacted history. */
+export function handoffContentSelection(rows: readonly BrowserHandoff[], ids: readonly string[]): boolean {
+  return ids.length > 0 && ids.length <= 100 && new Set(ids).size === ids.length
+    && ids.every((id) => !!id && rows.some((row) => row.id === id && row.state === "resolved" && !row.contentClearedAt));
+}
+
+export function volumeSelection(rows: readonly BrowserVolume[], ids: readonly string[]): boolean {
+  return ids.length > 0 && ids.length <= 100 && new Set(ids).size === ids.length
+    && ids.every((id) => !!id && rows.some((row) => row.id === id && row.blockedBy.length === 0));
+}
 
 /** Remote Access sessions never receive `browse`: headful browser control stays on the local UI. */
 export function browseLocalReason(remote: unknown): string | null {
