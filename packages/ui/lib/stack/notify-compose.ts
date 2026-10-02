@@ -42,7 +42,8 @@ export function composeErrors(input: NotificationInput, kind: NotificationKind, 
       if (!value && (schema.required?.includes(key) || key === "title" || key === "message" || key === "reply")) errors[key] = "Enter a value.";
       if (typeof rule.minLength === "number" && value.length < rule.minLength) errors[key] = `Use at least ${rule.minLength} characters.`;
       if (typeof rule.maxLength === "number" && value.length > rule.maxLength) errors[key] = `Use at most ${rule.maxLength} characters.`;
-    } else if (schema.required?.includes(key) && value === undefined) errors[key] = "Enter a value.";
+    // Published schemas include defaulted properties in `required`; omission still uses the API default.
+    } else if (schema.required?.includes(key) && fields[key].default === undefined && value === undefined) errors[key] = "Enter a value.";
   }
   if (kind === "question") {
     const actions = input.actions ?? [];

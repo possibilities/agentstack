@@ -41,6 +41,7 @@ function ComposeForm({ endpoint, operation, unavailable }: { endpoint: string; o
   const [draft, setDraft] = useState<NotificationDraft | null>(null);
   const current = useRef<NotificationDraft | null>(null);
   const key = useRef<string | null>(null);
+  const savedRaw = useRef<string | null>(null);
   const pending = useRef(false);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -60,7 +61,9 @@ function ComposeForm({ endpoint, operation, unavailable }: { endpoint: string; o
     const restore = () => {
       if (pending.current) return;
       try {
-        const saved = readNotificationDraft(localStorage.getItem(key.current!));
+        const raw = localStorage.getItem(key.current!);
+        savedRaw.current = raw;
+        const saved = readNotificationDraft(raw);
         current.current = saved; setDraft(saved); setRecoveryError(null); setError(null);
       } catch (error) { setRecoveryError(errorMessage(error)); }
       setReady(true);
@@ -75,8 +78,12 @@ function ComposeForm({ endpoint, operation, unavailable }: { endpoint: string; o
   const hold = (next: NotificationDraft | null) => { current.current = next; setDraft(next); };
   const persist = (next: NotificationDraft | null) => {
     if (!key.current) throw new Error("The draft destination is not ready.");
-    if (next) localStorage.setItem(key.current, JSON.stringify(next));
+    // Never overwrite a newer tab's intent, including when our acknowledgement arrives late.
+    if (localStorage.getItem(key.current) !== savedRaw.current) throw new Error("The saved draft changed in another tab. Reload Compose before continuing.");
+    const raw = next ? JSON.stringify(next) : null;
+    if (raw) localStorage.setItem(key.current, raw);
     else localStorage.removeItem(key.current);
+    savedRaw.current = raw;
   };
   const edit = (change: Partial<ComposeValues>) => {
     // Also enforce this outside DOM disabled state: unknown intent is never editable.
@@ -93,8 +100,6 @@ function ComposeForm({ endpoint, operation, unavailable }: { endpoint: string; o
     if (Object.keys(composeErrors(exact, held.values.kind, operation.inputSchema)).length) return;
     const frozen: NotificationDraft = { ...held, input: exact };
     try {
-      // Another tab's draft must not be overwritten or sent from this stale form.
-      if (localStorage.getItem(key.current!) !== JSON.stringify(held)) throw new Error("The saved draft changed in another tab. Reload Compose before sending.");
       // Persist uncertainty BEFORE dispatch, including the exact payload; reload never silently re-arms it.
       persist(frozen);
     } catch (error) { setError(errorMessage(error)); return; }
@@ -103,7 +108,7 @@ function ComposeForm({ endpoint, operation, unavailable }: { endpoint: string; o
       const result = await store.notify<NotificationSend>("notification_send", { ...exact });
       const sent: NotificationDraft = { ...frozen, sent: true };
       hold(sent);
-      try { persist(sent); } catch { setError("Sent — stored, but the local receipt could not be saved. Reload retains the same ID for an identical retry."); }
+      try { persist(sent); } catch { setError("Sent — stored, but the local receipt could not be saved. Reload to inspect the retained draft; this send’s ID stays unchanged."); }
       actions.open(result.id);
       goTo({ kind: "notification", id: result.id });
     } catch (error) {
@@ -115,7 +120,7 @@ function ComposeForm({ endpoint, operation, unavailable }: { endpoint: string; o
     if (pending.current) return;
     try {
       persist(null); hold(null); setRecoveryError(null); setError(null); setValidated(false); setDiscarding(false);
-    } catch { setError("Could not discard the saved draft. Nothing has been changed or resent."); }
+    } catch { setError("Could not discard the saved draft, or it changed in another tab. Reload to inspect it. Nothing has been changed or resent."); }
   };
   const control = (name: keyof typeof labels) => {
     const rule = composeSchema(fields[name]);
