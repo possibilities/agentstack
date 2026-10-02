@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { localOperation, stateOperations } from "@/lib/stack/state";
 import { errorMessage } from "./auth-actions";
-import { StateFlowView, useStateFlow } from "./state-flow";
+import { Choice, StateFlowView, useStateFlow } from "./state-flow";
 import { Row } from "./primitives";
 import { useStack, useStore } from "./provider";
 import { Section, Window } from "./window";
@@ -120,17 +120,6 @@ function useRows<T>(operation: string, generation: number) {
     .then((value) => setRows((held) => ({ items: offset && held ? [...held.items, ...value.results] : value.results, next: value.next_offset })), (cause: unknown) => setError(errorMessage(cause)));
   useEffect(() => { void load(0); }, [generation]);
   return { rows, error, load };
-}
-
-function Choice<T extends string>({ label, value, options, disabled, onChange }: { label: string; value: T | null; options: [T, string][]; disabled: boolean; onChange(value: T): void }) {
-  return (
-    <div role="radiogroup" aria-label={label} className="flex flex-col gap-0.5 text-xs">
-      <span className="text-muted-foreground">{label}</span>
-      {options.map(([option, text]) => (
-        <label key={option} className="flex items-center gap-1.5"><input type="radio" checked={value === option} disabled={disabled} onChange={() => onChange(option)} />{text}</label>
-      ))}
-    </div>
-  );
 }
 
 function PostsClear({ unavailable, generation, onDone }: { unavailable: string | null; generation: number; onDone(): void }) {

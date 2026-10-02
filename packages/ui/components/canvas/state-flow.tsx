@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import { ClipboardListIcon, RefreshCwIcon, RotateCwIcon, XIcon } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { ClipboardListIcon, RefreshCwIcon, RotateCwIcon, WrenchIcon, XIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -244,6 +244,51 @@ export function StateFlowView({ controls, label, applyLabel = "Apply this plan",
           </div>
         </>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * The collapsed "Maintenance" disclosure an owner view puts at the end of a record's detail. Nothing destructive shows
+ * until it is opened, but it opens itself, and stays open, while a flow inside it is past idle: a retained running,
+ * partial or unknown receipt must never hide behind a closed disclosure.
+ */
+export function MaintenanceDisclosure({ children, active = false, aside, className, onOpenChange }: {
+  children: React.ReactNode; active?: boolean; aside?: string; className?: string;
+  /** Lets a view show row selection controls only while maintenance is open. */
+  onOpenChange?(open: boolean): void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details open={open || active} onToggle={(event) => { setOpen(event.currentTarget.open); onOpenChange?.(event.currentTarget.open); }} className={cn("group/maintenance rounded-lg border border-dashed", className)}>
+      <summary className="flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-[0.72rem] text-muted-foreground select-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+        <WrenchIcon aria-hidden className="size-3.5" />Maintenance
+        {aside ? <span className="ml-auto text-[0.66rem]">{aside}</span> : null}
+      </summary>
+      <div className="flex flex-col gap-2 border-t border-dashed p-2.5">{children}</div>
+    </details>
+  );
+}
+
+/**
+ * An explicit choice between named options, unset until the operator picks one. A hint sits beneath its option and is
+ * announced with it. Disabled while a flow is past idle, so a displayed plan never disagrees with what is chosen.
+ */
+export function Choice<T extends string>({ label, value, options, disabled, onChange }: {
+  label: string; value: T | null; options: [T, React.ReactNode, string?, boolean?][]; disabled: boolean; onChange(value: T): void;
+}) {
+  const id = useId();
+  return (
+    <div role="radiogroup" aria-label={label} className="flex flex-col gap-1 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      {options.map(([option, text, note, off]) => (
+        <div key={option} className="flex flex-col gap-0.5">
+          <label className="flex items-center gap-1.5">
+            <input type="radio" name={`${id}-${label}`} checked={value === option} disabled={disabled || off} aria-describedby={note ? `${id}-${option}` : undefined} onChange={() => onChange(option)} />{text}
+          </label>
+          {note ? <p id={`${id}-${option}`} className="pl-5 text-[0.68rem] text-pretty text-muted-foreground">{note}</p> : null}
+        </div>
+      ))}
     </div>
   );
 }

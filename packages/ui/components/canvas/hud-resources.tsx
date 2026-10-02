@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import { providerTitle, shortId, workerAccountLabels } from "@/lib/stack/derive";
-import { admissionView, chatIdentity, isTerminal, rowIndex } from "@/lib/stack/hud";
+import { admissionView, chatIdentity, isTerminal, rowIndex, workTitle } from "@/lib/stack/hud";
 import type { WorkAdmission, WorkFocus, WorkItem, WorkResources } from "@/lib/stack/types";
 import { workerLabel } from "@/lib/stack/workers";
 import { cn } from "@/lib/utils";
@@ -65,7 +65,7 @@ export function ResourcesWindow() {
   const missing = Boolean(resources.error && /work_not_found/.test(resources.error));
 
   return (
-    <Window id="hud-resources" title="Resources" subtitle={item ? item.title : "hud"} icon={NetworkIcon} accent="hud"
+    <Window id="hud-resources" title="Resources" subtitle={item ? workTitle(item) : "hud"} icon={NetworkIcon} accent="hud"
       status={status.hud} endpoint={endpoints.hud} updatedAt={resources.at} error={missing ? null : resources.error} empty={!data}>
       {!id ? <HudPlaceholder title="Choose work" hint="Its Chats, Workers and linked resources appear here." icon={NetworkIcon} />
         : missing ? <HudPlaceholder title="This item no longer exists" icon={NetworkIcon} />
@@ -227,7 +227,7 @@ function Focus({ data, item, readOnly }: { data: WorkResources; item: WorkItem |
   const focus = current?.key === targetKey ? current.focus : null;
   const { hudTree } = useStack();
   const titles = new Map((hudTree.data?.rows ?? []).map((row) => [row.item.id, row.item.title]));
-  const closed = item ? isTerminal(item.state) : false;
+  const closed = item ? isTerminal(item.state) || Boolean(item.contentClearedAt) : false;
   return (
     <Section title={`Chat focus · ${data.focuses.total}`}>
       {data.focuses.entries.length ? (
@@ -259,7 +259,7 @@ function Focus({ data, item, readOnly }: { data: WorkResources; item: WorkItem |
           <div className="flex items-center gap-1.5">
             <CrosshairIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             <NativeSelect size="sm" value={botId} aria-label="Bot chat" disabled={closed || request.running || request.held} onChange={(event) => setBotId(event.target.value)} className="min-w-0 flex-1">
-              <NativeSelectOption value="">{closed ? "Closed work can't be focused" : candidates.length ? "Focus a Bot’s main chat on this…" : "No Bot has a main thread"}</NativeSelectOption>
+              <NativeSelectOption value="">{closed ? (item?.contentClearedAt ? "Cleared work can't be focused" : "Closed work can't be focused") : candidates.length ? "Focus a Bot’s main chat on this…" : "No Bot has a main thread"}</NativeSelectOption>
               {candidates.map((value) => <NativeSelectOption key={value.id} value={value.id}>{value.id}{value.state === "stopped" ? " (stopped)" : ""}</NativeSelectOption>)}
             </NativeSelect>
             <Button size="sm" disabled={!target || !focus || focus.workItemId === item.id || request.running || request.held}

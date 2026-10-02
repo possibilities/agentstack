@@ -14,7 +14,7 @@ registerHooks({
   },
 });
 
-const { absentStore, botBlockers, botStateKey, botStateOperations, coveredBy, decodeChunk, firstPage, nextPage, purgeable, quarantined, toggleSelection, workspaceOwned } = await import("../lib/stack/bot-state.ts");
+const { absentStore, botBlockers, botStateKey, botStateOperations, coveredBy, decodeChunk, firstPage, nextPage, purgeable, quarantined, queueBodyLimit, queueUnclearable, retiredGenerations, toggleSelection, workspaceOwned } = await import("../lib/stack/bot-state.ts");
 
 const b64 = (text) => Buffer.from(text).toString("base64");
 const entry = (category, extra = {}) => ({ id: `bot:alpha:${category}`, ownerPackage: "bots", subject: { kind: "bot", id: "alpha" }, kind: "workspace", authority: "authoritative",
@@ -84,4 +84,32 @@ test("ownership, blockers and purgeable generations come from the owner's read",
   assert.equal(purgeable({ ...generation, active: true }), false);
   assert.equal(purgeable({ ...generation, ownership: "shared" }), false, "legacy shared history is never purged wholesale");
   assert.equal(purgeable({ ...generation, purgedAt: "2026-09-30T01:00:00.000Z" }), false);
+});
+
+test("queue-body clearing applies through its own operation, and its recovery slots survive a changed selection", async () => {
+  const calls = [];
+  const ops = botStateOperations(async (pkg, name, args) => { calls.push([pkg, name, args]); return {}; }, "alpha", { kind: "queue_bodies_clear", selection: { ids: ["a", "b"] } });
+  await ops.prepare();
+  await ops.apply({ planId: "p", expectedRevision: "r", requestId: "q", botId: "alpha" });
+  assert.deepEqual(calls, [["bots", "bot_state_plan", { botId: "alpha", action: { kind: "queue_bodies_clear", selection: { ids: ["a", "b"] } } }],
+    ["bots", "bot_queue_bodies_clear", { planId: "p", expectedRevision: "r", requestId: "q", botId: "alpha" }]]);
+  const ids = (list) => botStateKey("inc-1", { kind: "queue_bodies_clear", selection: { ids: list } });
+  const generation = (id) => botStateKey("inc-1", { kind: "queue_bodies_clear", selection: { generation: id } });
+  assert.equal(ids(["a"]), ids(["a", "b"]), "the row selection is frozen while a flow is past idle, so the slot never depends on it");
+  assert.equal(generation("g1"), generation("g2"), "nor does the generation, so a retained receipt returns after a reload without the choice");
+  assert.notEqual(ids(["a"]), generation("g1"));
+  assert.notEqual(ids(["a"]), botStateKey("inc-2", { kind: "queue_bodies_clear", selection: { ids: ["a"] } }), "a reused Bot ID has another incarnation");
+  assert.notEqual(ids(["a"]), botStateKey("inc-1", { kind: "log_clear" }));
+});
+
+test("only terminal entries still holding a body are selectable, unknown stays unknown, and only retired generations qualify", () => {
+  const entry = (state, extra = {}) => ({ state, contentClearedAt: null, ...extra });
+  for (const state of ["sent", "unknown", "cancelled"]) assert.equal(queueUnclearable(entry(state)), null, `${state} is clearable`);
+  for (const state of ["pending", "dispatching"]) assert.match(queueUnclearable(entry(state)), /Cancel or reconcile it first/);
+  assert.equal(queueUnclearable(entry("sent", { contentClearedAt: "2026-10-01T00:00:00.000Z" })), "Body already cleared");
+  assert.equal(queueBodyLimit, 100);
+  const generation = (id, extra = {}) => ({ generation: id, mainThreadId: null, active: false, ownership: "stack", createdAt: "", retiredAt: "2026-09-30T00:00:00.000Z", purgedAt: null, ...extra });
+  assert.deepEqual(retiredGenerations([generation("old"), generation("now", { active: true, retiredAt: null }), generation("purged", { purgedAt: "2026-10-01T00:00:00.000Z" }),
+    generation("shared", { ownership: "shared" })]).map((row) => row.generation), ["old", "purged", "shared"],
+    "queue bodies follow the generation, so a purged or legacy-shared one still qualifies; the active one never does");
 });

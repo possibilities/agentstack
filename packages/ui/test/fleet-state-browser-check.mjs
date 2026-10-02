@@ -1,6 +1,7 @@
 // Optional rendered check of Fleet's Bot state window after pnpm test (and a ui build, or NEXT_MODE=dev).
 // The real auth and bots APIs run against a disposable state directory and HOME with the fake app-server runtime;
-// Worker, Browse, Proc and Serve dependency answers come from fixture sockets. No live state is read or changed.
+// Worker, Browse, Proc and Serve dependency answers come from fixture sockets. Queue entries are seeded through the owner's
+// own ChatIndex. No live state is read or changed.
 // PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/fleet-state-browser-check.mjs
 // CHROME_BIN may override the local headless Chrome executable; FLEET_STATE_EVIDENCE_DIR keeps the screenshots.
 import assert from "node:assert/strict";
@@ -11,6 +12,7 @@ import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } fro
 import { join } from "node:path";
 import { operation, publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath, stateDependencies, stateDependencyInput } from "@stack/api";
 import { api as botsApi } from "../../bots/dist/api.js";
+import { ChatIndex } from "../../bots/dist/src/chats.js";
 import { StateStore } from "../../bots/dist/src/store.js";
 import { RoleStore } from "../../roles/dist/src/index.js";
 import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, serveFixture, ui } from "./browser-fixture.mjs";
@@ -68,7 +70,7 @@ const loseResponse = () => {
 };
 
 const sockets = [];
-let websocket, next, browser, auth, bots;
+let websocket, next, browser, auth, bots, queue;
 let log = "";
 let failed = false;
 try {
@@ -84,6 +86,18 @@ try {
   await call("chat_upload_chunk", { botId: "alpha", id: uploadId, offset: 0, data: body.toString("base64") });
   await call("chat_upload_finish", { botId: "alpha", id: uploadId });
   await call("bot_stop", { id: "alpha" });
+  // Queue admissions of every outcome, seeded through the owner's own index: bodies hold distinctive secrets so clearing is provable.
+  const seedStore = new StateStore(dir);
+  const { incarnation, generation: firstGeneration } = seedStore.stateIdentity("alpha");
+  seedStore.close();
+  queue = new ChatIndex(dir, (id) => join(dir, "history", id));
+  const thread = "thread-queue-fixture";
+  const queued = { sent: crypto.randomUUID(), unknown: crypto.randomUUID(), cancelled: crypto.randomUUID(), pending: crypto.randomUUID(), legacy: crypto.randomUUID() };
+  queue.enqueue("alpha", thread, queued.sent, [{ type: "text", text: "Sent secret body" }], firstGeneration); queue.setQueued(queued.sent, "sent", "turn-1");
+  queue.enqueue("alpha", thread, queued.unknown, [{ type: "text", text: "Unknown secret body" }], firstGeneration); queue.setQueued(queued.unknown, "unknown");
+  queue.enqueue("alpha", thread, queued.cancelled, [{ type: "text", text: "Cancelled secret body" }], firstGeneration); queue.setQueued(queued.cancelled, "cancelled");
+  queue.enqueue("alpha", thread, queued.pending, [{ type: "text", text: "Pending secret body" }], firstGeneration);
+  queue.enqueue("alpha", thread, queued.legacy, [{ type: "text", text: "Unattributed legacy body" }]); queue.setQueued(queued.legacy, "cancelled");
   // Workspace files: selected, sibling, nested, markup, binary, a symlink out of the workspace and a cleanup quarantine.
   const cwd = alpha.cwd;
   await writeFile(join(cwd, "notes.txt"), "remove me\n");
@@ -230,6 +244,59 @@ try {
   await panel.getByText("may be the only copy", { exact: false }).waitFor();
   await shot("recovery", panel);
 
+  // Queue: receipts keep identity, size, digest and generation; maintenance clears bodies only, and unknown stays unknown.
+  await tab("Queue").click();
+  const entries = panel.getByRole("list", { name: "Queue receipts" });
+  const entryRow = (id) => entries.locator("li", { hasText: id });
+  await entryRow(queued.unknown).getByText("unknown", { exact: true }).waitFor();
+  await entryRow(queued.sent).getByText(`generation ${firstGeneration.slice(0, 8)}`).waitFor();
+  await entryRow(queued.legacy).getByText("no generation recorded").waitFor();
+  assert.equal(await panel.getByRole("checkbox", { name: /Select queue entry/ }).count(), 0, "no selection controls until maintenance is opened");
+  await panel.locator("summary", { hasText: "Maintenance" }).click();
+  assert.equal(await panel.getByRole("checkbox", { name: `Select queue entry ${queued.pending}` }).isDisabled(), true, "a pending entry blocks body cleanup and can't be selected");
+  await panel.getByRole("checkbox", { name: `Select queue entry ${queued.sent}` }).check();
+  await panel.getByRole("checkbox", { name: `Select queue entry ${queued.unknown}` }).check();
+  // A dependency owner reports open work: the plan is blocked and cannot apply, until a new plan after it closes.
+  dependency.blocked = ["Close Worker w-17 (running) before Bot maintenance"];
+  await panel.getByRole("button", { name: "Prepare clearing bodies of 2 selected" }).click();
+  await panel.getByRole("region", { name: /bots plan queue_bodies_clear/ }).getByText("Close Worker w-17 (running) before Bot maintenance").waitFor();
+  assert.equal(await panel.getByRole("button", { name: "Clear these bodies" }).first().isDisabled(), true, "a blocked plan cannot apply");
+  await shot("queue-plan-blocked", panel);
+  dependency.blocked = [];
+  await panel.getByRole("button", { name: "Prepare a new plan" }).click();
+  await panel.getByRole("region", { name: /bots plan queue_bodies_clear/ }).getByText(queued.unknown).waitFor();
+  await shot("queue-plan-preview", panel);
+  await panel.getByRole("button", { name: "Clear these bodies" }).first().click();
+  await panel.getByText("Completed for the declared scope only.").waitFor();
+  await entryRow(queued.unknown).getByText("Content cleared", { exact: false }).waitFor();
+  await entryRow(queued.unknown).getByText("unknown", { exact: true }).waitFor();
+  await entryRow(queued.sent).getByText("Content cleared", { exact: false }).waitFor();
+  assert.deepEqual([queue.queued(queued.unknown).input, queue.queued(queued.unknown).state, queue.queued(queued.sent).input], [[], "unknown", []], "bodies cleared, the unknown outcome kept");
+  assert.equal(queue.queued(queued.unknown).bytes > 0 && Boolean(queue.queued(queued.unknown).admissionDigest), true, "original size and digest kept");
+  assert.deepEqual(queue.queued(queued.cancelled).input, [{ type: "text", text: "Cancelled secret body" }], "a sibling that was not selected keeps its body");
+  assert.equal(await entries.getByRole("checkbox", { name: `Select queue entry ${queued.unknown}` }).isDisabled(), true, "a cleared body can't be selected again");
+  await shot("queue-cleared", panel);
+  await panel.getByRole("button", { name: "Close receipt" }).first().click();
+
+  // An unknown receipt from an earlier session returns after a reload, in a disclosure that opens itself.
+  const interrupted = await call("bot_state_plan", { botId: "alpha", action: { kind: "queue_bodies_clear", selection: { ids: [queued.cancelled] } } });
+  const interruptedInput = { planId: interrupted.id, expectedRevision: interrupted.revision, requestId: crypto.randomUUID(), botId: "alpha" };
+  queue.maintenance.begin(interruptedInput, interrupted);
+  queue.maintenance.finish(interruptedInput.requestId, "unknown", [{ resource: queued.cancelled, outcome: "unknown", detail: "Fixture: the owner cannot say whether the body was cleared" }]);
+  await page.evaluate(([key, input]) => {
+    for (const name of Object.keys(localStorage)) if (!name.startsWith("stack.state-flow.")) localStorage.removeItem(name);
+    localStorage.setItem(key, JSON.stringify({ input, at: Date.now() }));
+  }, [`stack.state-flow.bots:${incarnation}:queue_bodies_clear:ids`, interruptedInput]);
+  await page.goto(`${origin}/fleet`);
+  await page.locator('[data-node="bot:alpha"]').getByRole("button", { name: "State" }).click();
+  await tab("Queue").click();
+  await panel.getByText("Unknown. The owner cannot say what happened.", { exact: false }).waitFor();
+  await panel.getByText("Fixture: the owner cannot say whether the body was cleared").waitFor();
+  assert.equal(await panel.locator("details[open]").count(), 1, "the retained receipt is never hidden behind a closed disclosure");
+  assert.deepEqual(queue.queued(queued.cancelled).input, [{ type: "text", text: "Cancelled secret body" }], "an unknown receipt is never rerun");
+  await shot("queue-unknown-recovered", panel);
+  await panel.getByRole("button", { name: "Close receipt" }).first().click();
+
   // Conversation: history retention is an explicit choice, then reset retires the root and adds a generation.
   await tab("Conversation").click();
   const generations = panel.getByRole("list", { name: "History generations" });
@@ -252,6 +319,24 @@ try {
   await panel.getByRole("button", { name: "Prepare purge of this generation" }).click();
   await panel.getByRole("button", { name: "Purge this history" }).click();
   await generations.getByText("History bytes are gone", { exact: false }).waitFor();
+
+  // A retired generation: its entries clear together; entries recorded without a generation are not guessed.
+  await tab("Queue").click();
+  await panel.locator("summary", { hasText: "Maintenance" }).click().catch(() => undefined);
+  const retired = panel.getByRole("combobox", { name: "Retired generation" });
+  await retired.selectOption({ value: firstGeneration });
+  await panel.getByRole("button", { name: "Prepare clearing this generation's bodies" }).click();
+  const generationPlan = panel.getByRole("region", { name: /bots plan queue_bodies_clear/ });
+  await generationPlan.getByText(queued.pending).waitFor();
+  assert.equal(await generationPlan.getByText(queued.legacy).count(), 0, "an entry without a recorded generation isn't selected");
+  await shot("queue-generation-plan", panel);
+  await panel.getByRole("button", { name: "Clear these bodies" }).last().click();
+  await panel.getByText("Completed for the declared scope only.").waitFor();
+  assert.deepEqual(queue.queued(queued.pending).input, [], "the generation's cancelled entry body is cleared");
+  assert.equal(queue.queued(queued.pending).state, "cancelled", "reset had already cancelled it; clearing keeps that outcome");
+  assert.deepEqual(queue.queued(queued.legacy).input, [{ type: "text", text: "Unattributed legacy body" }], "the unattributed entry keeps its body");
+  await shot("queue-generation-cleared", panel);
+  await panel.getByRole("button", { name: "Close receipt" }).last().click();
 
   // A durable start fence left by an unresolved cleanup: inspect, then release explicitly.
   const fenced = crypto.randomUUID();
@@ -296,7 +381,7 @@ try {
   await tab("Overview").click();
   await shot("bot-state-dark", panel);
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "dependency-blocked then clear, markup shown as text, binary metadata, symlink not followed, quarantine marked, stale file revision refused with nothing removed, explicit replan then exact clear with sibling kept, launch values only on reveal, upload read and removal, lost apply response recovered from the same request's receipt, recovery metadata only, explicit history choice, reset retain then retired purge, start fence inspected and released, external workspace read-only, running Bot blocked, Bot ID reuse shows a clean incarnation, dark" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "queue receipts with digest/generation and no selection controls until maintenance opens, pending entry unselectable, blocked queue plan cannot apply, exact-ID body clear keeping size/digest/unknown outcome and an unselected sibling, unknown receipt recovered after reload in a self-opening disclosure and never rerun, retired-generation clear leaving an unattributed entry alone; dependency-blocked then clear, markup shown as text, binary metadata, symlink not followed, quarantine marked, stale file revision refused with nothing removed, explicit replan then exact clear with sibling kept, launch values only on reveal, upload read and removal, lost apply response recovered from the same request's receipt, recovery metadata only, explicit history choice, reset retain then retired purge, start fence inspected and released, external workspace read-only, running Bot blocked, Bot ID reuse shows a clean incarnation, dark" }, null, 2));
 } catch (error) {
   failed = true;
   const page = browser?.contexts()[0]?.pages()[0];
@@ -308,6 +393,7 @@ try {
   if (next && next.exitCode === null) { next.kill("SIGTERM"); await new Promise((resolve) => next.once("exit", resolve)); }
   await websocket?.close();
   await Promise.all(sockets.map((socket) => socket.close()));
+  queue?.close();
   await bots?.close();
   await auth?.close();
   if (savedHome === undefined) delete process.env.HOME; else process.env.HOME = savedHome;

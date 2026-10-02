@@ -121,6 +121,15 @@ export function Time({ at, className }: { at: number | null; className?: string 
   );
 }
 
+/**
+ * The muted marker that stands where an owner has cleared content, with when. A reader shows this in place of a
+ * body, never an empty string. `at` is an ISO instant or epoch milliseconds, whichever the owner's record carries.
+ */
+export function ContentCleared({ at, label = "Content cleared", className }: { at: string | number | null | undefined; label?: string; className?: string }) {
+  const ms = typeof at === "string" ? Date.parse(at) : at ?? null;
+  return <span className={cn("text-muted-foreground italic", className)}>{label}{ms !== null && Number.isFinite(ms) ? <> <Time at={ms} /></> : null}</span>;
+}
+
 /** Label/value row; the label carries the schema description as a tooltip. */
 export function Row({ label, hint, children, copy, mono, className }: {
   label: string;

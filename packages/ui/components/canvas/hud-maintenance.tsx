@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { chatIdentity } from "@/lib/stack/hud";
-import { localOperation, stateOperations } from "@/lib/stack/state";
-import type { WorkFocus } from "@/lib/stack/types";
+import { chatIdentity, historyItems, historyKey, historyLimit, type HistoryChoice, type HistoryScope } from "@/lib/stack/hud";
+import { localOperation, localOperations, stateOperations } from "@/lib/stack/state";
+import type { WorkFocus, WorkItem } from "@/lib/stack/types";
 import { shortId } from "@/lib/stack/derive";
-import { StateFlowView, useStateFlow } from "./state-flow";
+import { Choice, MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
 import { useStack, useStore } from "./provider";
 import { Section } from "./window";
 
@@ -74,5 +74,65 @@ export function RetiredFocusSection() {
       ) : rows ? <p className={hint}>No retired focus records.</p> : null}
       {rows?.nextCursor ? <Button size="xs" variant="ghost" className="self-start" disabled={loading} onClick={() => load(rows.nextCursor)}>Load more</Button> : null}
     </Section>
+  );
+}
+
+const historyOperations = ["hud_history_plan", "hud_history_clear", "hud_state_receipt_get"] as const;
+const scopes: [HistoryScope, string, string][] = [
+  ["journal_bodies", "Journal bodies",
+    "Clears collaboration notes, results, decisions, references and the before and after values of edits. The item's title, objective, metadata and state stay, and its journal keeps accepting entries."],
+  ["item_and_journal", "Item and journal (permanent tombstone)",
+    "Also replaces the title, objective, summary, next action, labels, links and agent metadata with a tombstone for good. A tombstone can't be edited, reopened, focused or dispatched; create new Work instead."],
+];
+
+/**
+ * Clear stored text from one Work item, or from it and its subtree, at the end of the item's detail. This never
+ * completes, cancels or reopens work, and a native Worker completion never does either. Identity, hierarchy, state and
+ * dependency IDs stay. Open Worker admissions and live Chat focus block a plan; the shared plan review lists them.
+ */
+export function WorkHistory({ item }: { item: WorkItem }) {
+  const state = useStack();
+  const store = useStore();
+  const { hudTree, hudGeneration, status, remote } = state;
+  const [scope, setScope] = useState<HistoryScope | null>(null);
+  const [choice, setChoice] = useState<HistoryChoice>("item");
+  const rows = hudTree.data?.rows;
+  const items = useMemo(() => historyItems(rows ?? [], item, choice, hudTree.data?.complete ?? false), [rows, item, choice, hudTree.data?.complete]);
+  const controls = useStateFlow({
+    operations: stateOperations(store.call, "hud", { plan: "hud_history_plan", apply: "hud_history_clear", receipt: "hud_state_receipt_get" }, { items: items.ids, scope: scope ?? "journal_bodies" }),
+    recoveryKey: historyKey(item.id), observe: hudGeneration,
+    // A completed receipt empties the selection it applied to; partial and unknown ones keep it for inspection.
+    onReceipt: (receipt) => { if (receipt.status === "completed") { setScope(null); setChoice("item"); } },
+  });
+  const access = localOperations(state, "hud", historyOperations);
+  if (remote || !access.available) return null;
+  const idle = controls.flow.phase === "idle";
+  const unavailable = status.hud !== "open" ? "The hud connection is not open."
+    : !scope ? "Choose what to clear."
+    : items.partial ? "The Work tree is only partly loaded, so this subtree can't be listed exactly. Load the rest of the tree in Work first."
+    : items.overLimit ? `This selection has ${items.ids.length} items. One plan selects at most ${historyLimit}; choose a smaller subtree.`
+    : !items.ids.length ? "Nothing to clear: everything selected is already a tombstone."
+    : null;
+  const children = rows?.find((row) => row.item.id === item.id)?.childCount ?? 0;
+  const count = `${items.ids.length} item${items.ids.length === 1 ? "" : "s"}`;
+  return (
+    <MaintenanceDisclosure active={!idle} aside="clear stored text">
+      <p className={hint}>
+        Clears stored text only. It never completes, cancels or reopens work. Identity, hierarchy, state and dependency IDs stay, and so do Worker-captured Work context, native transcripts and other owners&rsquo; copies.
+        Open Worker admissions and live Chat focus block a plan.
+      </p>
+      <Choice<HistoryScope> label="What to clear" value={scope} disabled={!idle} onChange={setScope} options={scopes} />
+      <Choice<HistoryChoice> label="Which items" value={choice} disabled={!idle} onChange={setChoice} options={[
+        ["item", "This item", scope === "item_and_journal" && children ? `It has ${children} descendant${children === 1 ? "" : "s"}. A tombstone needs them cleared first or selected together.` : undefined],
+        ["subtree", "This item and its subtree", `Selects the item and every descendant in one plan, at most ${historyLimit} items.`],
+      ]} />
+      {idle ? (
+        <p className={hint} role="status">
+          Selects {count}{choice === "subtree" ? ": this item and its descendants" : ""}{items.cleared ? `; ${items.cleared} already cleared ${items.cleared === 1 ? "item is" : "items are"} left out` : ""}.
+        </p>
+      ) : null}
+      <StateFlowView controls={controls} label={`Prepare clearing ${count}`}
+        applyLabel={scope === "item_and_journal" ? "Tombstone these items" : "Clear these journals"} unavailable={unavailable} />
+    </MaintenanceDisclosure>
   );
 }

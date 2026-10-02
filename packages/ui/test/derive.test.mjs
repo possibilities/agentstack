@@ -14,7 +14,7 @@ registerHooks({
   },
 });
 
-const { workerAccountLabels, providerTitle, relativeTime, untilTime, modelName, usageRows, catalogIdentity, catalogRows, splitArgs, inferErrorText, inferAdmission } = await import("../lib/stack/derive.ts");
+const { workerAccountLabels, providerTitle, relativeTime, untilTime, modelName, usageRows, catalogIdentity, catalogRows, splitArgs, inferErrorText, inferAdmission, discoversOnSelect, catalogClearInput } = await import("../lib/stack/derive.ts");
 
 const bot = (id, linkedAccounts = []) => ({ id, enabled: true, removing: false, linkedAccounts });
 const worker = (id, provider, extra = {}) => ({ id, provider, enabled: true, ready: true, removing: false, linkedAccounts: [], ...extra });
@@ -120,4 +120,19 @@ test("infer codes explain ledger outcomes and separate refused admission from un
     assert.equal(admission.uncertain, true);
     assert.match(admission.text, /same request ID/);
   }
+});
+
+test("choosing an account discovers its models only before a catalog clear, and never for a view-only session", () => {
+  const base = { accountId: "a", observed: false, cleared: false, viewOnly: false };
+  assert.equal(discoversOnSelect(base), true, "the first selection with nothing cached discovers, as before");
+  assert.equal(discoversOnSelect({ ...base, observed: true }), false, "a cached catalog is not discovered again");
+  assert.equal(discoversOnSelect({ ...base, cleared: true }), false, "after a clear, selecting an uncached account never discovers it");
+  assert.equal(discoversOnSelect({ ...base, cleared: true, observed: true }), false);
+  assert.equal(discoversOnSelect({ ...base, viewOnly: true }), false);
+  assert.equal(discoversOnSelect({ ...base, accountId: "" }), false, "no account, nothing to discover");
+});
+
+test("a catalog clear names its accounts, and only the all-accounts scope omits them", () => {
+  assert.deepEqual(catalogClearInput("account", "acct-1"), { accountIds: ["acct-1"] });
+  assert.deepEqual(catalogClearInput("all", "acct-1"), {}, "omission selects every observation");
 });

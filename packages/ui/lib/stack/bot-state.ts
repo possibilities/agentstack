@@ -20,16 +20,22 @@ export type BotStateAction =
   | { kind: "log_clear" }
   | { kind: "launch_args_clear" }
   | { kind: "upload_remove"; uploadId: string }
-  | { kind: "recovery_discard"; directory: string };
+  | { kind: "recovery_discard"; directory: string }
+  | { kind: "queue_bodies_clear"; selection: { ids: string[] } | { generation: string } };
 
 /** The Bot's own plan, apply (`bot_<kind>`) and receipt operations for one exact action. Every apply carries `botId`. */
 export function botStateOperations(call: <T>(pkg: string, name: string, args?: Record<string, unknown>) => Promise<T>, botId: string, action: BotStateAction): StateOperations<{ botId: string }> {
   return stateOperations<{ botId: string }>(call, "bots", { plan: "bot_state_plan", apply: `bot_${action.kind}`, receipt: "bot_state_receipt_get" }, { botId, action });
 }
 
-/** One recovery slot per incarnation and decision; a reused Bot ID has another incarnation and so no old receipt. */
+/**
+ * One recovery slot per incarnation and decision; a reused Bot ID has another incarnation and so no old receipt. Queue
+ * selections have one slot each for exact IDs and for a retired generation: the selection is frozen while a flow is past
+ * idle, so a retained receipt is always shown for the decision that made it, even after a reload.
+ */
 export function botStateKey(incarnation: string, action: BotStateAction): string {
-  const detail = action.kind === "workspace_clear" ? ("all" in action.selection ? ":all" : ":paths") : action.kind === "history_clear" ? `:${action.generation}` : action.kind === "upload_remove" ? `:${action.uploadId}` : action.kind === "recovery_discard" ? `:${action.directory}` : "";
+  const detail = action.kind === "workspace_clear" ? ("all" in action.selection ? ":all" : ":paths") : action.kind === "history_clear" ? `:${action.generation}` : action.kind === "upload_remove" ? `:${action.uploadId}` : action.kind === "recovery_discard" ? `:${action.directory}`
+    : action.kind === "queue_bodies_clear" ? ("ids" in action.selection ? ":ids" : ":generation") : "";
   return `bots:${incarnation}:${action.kind}${detail}`;
 }
 
@@ -86,6 +92,23 @@ export function botBlockers(state: BotStateRead | null): string[] {
 export function purgeable(generation: BotHistoryGeneration): boolean {
   return !generation.active && generation.ownership === "stack" && !generation.purgedAt;
 }
+
+/** One queue-body plan selects at most this many exact entries. */
+export const queueBodyLimit = 100;
+
+/**
+ * Why one entry cannot be selected for an exact-ID queue-body plan, or null when it can. Pending and dispatching entries
+ * block the plan until they are cancelled or reconciled, and a cleared body has nothing left to clear. An unknown
+ * admission is clearable but stays unknown: it is never a retry hint.
+ */
+export function queueUnclearable(entry: Pick<BotQueueEntry, "state" | "contentClearedAt">): string | null {
+  if (entry.contentClearedAt) return "Body already cleared";
+  if (entry.state === "pending" || entry.state === "dispatching") return "Pending and dispatching entries block body cleanup. Cancel or reconcile it first.";
+  return null;
+}
+
+/** Generations a queue-body plan can name: retired ones of this incarnation. The active generation never qualifies. */
+export const retiredGenerations = (rows: readonly BotHistoryGeneration[]): BotHistoryGeneration[] => rows.filter((row) => !row.active && row.retiredAt !== null);
 
 export const queueWords: Record<BotQueueEntry["state"], string> = {
   pending: "Waiting to send", dispatching: "Sending now", sent: "Admitted to Codex", cancelled: "Cancelled; never sent",

@@ -7,11 +7,11 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import { ancestorsOf, appendOrder, attentionKinds, isTerminal, priorities, rowIndex, stateView, treeWindow, workStates, type TreeView } from "@/lib/stack/hud";
+import { ancestorsOf, appendOrder, attentionKinds, isTerminal, priorities, rowIndex, stateView, treeWindow, workStates, workTitle, type TreeView } from "@/lib/stack/hud";
 import { nodeKey, type WorkItem, type WorkState } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { AttentionChip, HudPlaceholder, hudReadOnly, PriorityMark, RequestNotice, StateMark, useHudRequest } from "./hud-shared";
-import { Flash } from "./primitives";
+import { ContentCleared, Flash } from "./primitives";
 import { useHudView, useStack, useStore, useWorkbench } from "./provider";
 import { footerButton, Window } from "./window";
 
@@ -129,7 +129,7 @@ function TreeRow({ item, depth, childCount, open, unmet, context, collapsed, sel
       style={{ paddingLeft: 4 + depth * 14 }}>
       <Flash id={key} />
       {childCount ? (
-        <button type="button" onClick={onToggle} aria-label={`${collapsed ? "Expand" : "Collapse"} ${item.title}`}
+        <button type="button" onClick={onToggle} aria-label={`${collapsed ? "Expand" : "Collapse"} ${workTitle(item)}`}
           className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
           <ChevronRightIcon className={cn("size-3.5 transition-transform", !collapsed && "rotate-90")} />
         </button>
@@ -137,7 +137,7 @@ function TreeRow({ item, depth, childCount, open, unmet, context, collapsed, sel
       <button type="button" onClick={onSelect} className="flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-sm text-left focus-visible:outline-2 focus-visible:outline-ring">
         <span className="flex w-full min-w-0 items-center gap-1.5">
           <StateMark state={item.state} className="mt-px" />
-          <span className={cn("min-w-0 truncate text-[0.8rem] font-medium", isTerminal(item.state) && "text-muted-foreground line-through decoration-muted-foreground/40")}>{item.title}</span>
+          <span className={cn("min-w-0 truncate text-[0.8rem] font-medium", isTerminal(item.state) && "text-muted-foreground line-through decoration-muted-foreground/40")}>{item.contentClearedAt ? <ContentCleared at={item.contentClearedAt} className="font-normal" /> : item.title}</span>
           <PriorityMark priority={item.priority} />
           <AttentionChip attention={item.attention} className="ml-auto" />
         </span>
@@ -150,7 +150,7 @@ function TreeRow({ item, depth, childCount, open, unmet, context, collapsed, sel
         ) : null}
       </button>
       {childCount ? (
-        <button type="button" onClick={onFocus} aria-label={`Show only ${item.title} and its descendants`} title="Show only this subtree"
+        <button type="button" onClick={onFocus} aria-label={`Show only ${workTitle(item)} and its descendants`} title="Show only this subtree"
           className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 group-hover/work:opacity-100 hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-ring [@media(hover:none)]:opacity-100">
           <CrosshairIcon className="size-3.5" />
         </button>

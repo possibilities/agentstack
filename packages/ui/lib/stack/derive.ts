@@ -220,3 +220,23 @@ export function inferAdmission(message: string): { text: string; uncertain: bool
   if (inferRefusals.has(message)) return { text: inferErrorText(message), uncertain: false };
   return { text: `The request may not have started (${message}). Resending uses the same request ID, so it cannot start twice.`, uncertain: true };
 }
+
+/**
+ * Whether choosing an account in the Lab starts model discovery for it.
+ *
+ * The rule: choosing an account discovers its models only when none are cached, and only until the operator has cleared
+ * the model catalog in this window. Discovery contacts the account's provider, and clearing says the catalogs are not
+ * wanted for now; a re-selection that quietly refilled them would undo that. After a clear, discovery is an explicit
+ * action only (the Discover models control). A view-only remote session never discovers.
+ */
+export function discoversOnSelect(input: { accountId: string; observed: boolean; cleared: boolean; viewOnly: boolean }): boolean {
+  return input.accountId !== "" && !input.observed && !input.cleared && !input.viewOnly;
+}
+
+/** Which catalog observations one clear evicts: the chosen account's, or every account's. */
+export type CatalogScope = "account" | "all";
+
+/** `infer_catalog_clear` input: omission selects every observation, so only "all" may omit the account list. */
+export function catalogClearInput(scope: CatalogScope, accountId: string): { accountIds?: string[] } {
+  return scope === "all" ? {} : { accountIds: [accountId] };
+}

@@ -106,6 +106,19 @@ export function localOperation(state: { remote?: unknown; catalog: { data: Packa
   return { available: true };
 }
 
+/**
+ * Whether one control may be used: every operation it calls must be selected on the live WebSocket. A plan, its apply
+ * and its receipt read are three independent selections, so a control that checked only the plan could prepare a
+ * plan it could never apply or read back.
+ */
+export function localOperations(state: Parameters<typeof localOperation>[0], pkg: string, names: readonly string[]): LocalAccess {
+  for (const name of names) {
+    const access = localOperation(state, pkg, name);
+    if (!access.available) return access;
+  }
+  return { available: true };
+}
+
 /** Where each owner's existing controls live. The State window links there rather than acting itself. */
 export const ownerHomes: Record<string, { space: SpaceId; title: string }> = {
   bots: { space: "fleet", title: "Fleet" }, worker: { space: "workers", title: "Workers" }, signal: { space: "signal", title: "Signal" },
@@ -125,11 +138,11 @@ export const ownerGaps: Record<string, string> = {
   roles: "Retained injection-launch cleanup and standalone settings-receipt retirement are not supported.",
   auth: "Cache-only clearing is not supported; account removal is the control.",
   access: "History and session-specific retirement are not supported; revocation is the control.",
-  hud: "Work and journal body purge is not supported.",
-  bots: "Queued-body purge is not supported.",
+  hud: "Physical media and backup erasure, and other owners' copies such as Worker-captured Work context, are out of scope.",
+  bots: "Native Codex queue and history copies and backups are out of scope. Queue entries without a recorded generation can be cleared by exact ID only.",
   signal: "Checkpoint reset is not supported.",
-  infer: "Catalog-only clearing is not supported.",
-  proc: "Payload redaction of removed schedules is not supported.",
+  infer: "Catalog eviction is memory-only and leaves no receipt. It never refreshes models or touches dispatched requests, traces or credentials.",
+  proc: "Definition redaction covers removed schedules only. Active and Brain-protected schedules, captured executions and process output are separate selections.",
   content: "Vault or Git-history purge and temporary publication collection are not supported; remotes and backups keep copies.",
 };
 

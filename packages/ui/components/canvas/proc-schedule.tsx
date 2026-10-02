@@ -1,6 +1,6 @@
 "use client";
 
-import { ProcClear } from "./proc-maintenance";
+import { ProcClear, ProcScheduleRedaction } from "./proc-maintenance";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CalendarClockIcon, ChevronRightIcon, EyeIcon, PauseIcon, PlayIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -11,7 +11,7 @@ import { shortId } from "@/lib/stack/derive";
 import { blockedCopy, cadence, errorCopy, executionView, ownerOf, scheduleTitle } from "@/lib/stack/proc";
 import { nodeKey, type ProcAction, type ProcExecution, type ProcSchedule } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
-import { CopyButton, Empty, Flash, NodeLink, NodeTitle, Row, StatusDot, Time } from "./primitives";
+import { ContentCleared, CopyButton, Empty, Flash, NodeLink, NodeTitle, Row, StatusDot, Time } from "./primitives";
 import { Due, OwnerChip, ProcPlaceholder, procUnavailable, RetryIn, Since, useProcSnapshot } from "./proc-shared";
 import { useShowProcRun } from "./proc-runs";
 import { fieldLabel, Raw } from "./scrape-shared";
@@ -89,6 +89,7 @@ export function ProcScheduleWindow() {
               ) : null}
               {older.error ? <p className="px-0.5 text-[0.7rem] text-destructive">{older.error}</p> : null}
             </section>
+            {schedule.removedAt ? <ProcScheduleRedaction key={schedule.id} id={schedule.id} onReceipt={() => setEpoch((value) => value + 1)} /> : null}
           </>
         )}
     </Window>
@@ -136,6 +137,8 @@ function ScheduleSummary({ schedule }: { schedule: ProcSchedule }) {
         <Row label="Created"><Since at={schedule.createdAt} /></Row>
         <Row label="Updated"><Since at={schedule.updatedAt} /></Row>
         {schedule.removedAt ? <Row label="Removed"><Since at={schedule.removedAt} /></Row> : null}
+        {schedule.contentClearedAt ? <Row label="Definition"><ContentCleared at={schedule.contentClearedAt} label="Redacted" /></Row> : null}
+        {schedule.specDigest ? <Row label="Spec digest" hint="A digest of the definition as it was before it was redacted. It is kept so the original can be told apart, not recovered." mono copy={schedule.specDigest}>{shortId(schedule.specDigest, 16)}</Row> : null}
       </dl>
       {schedule.id === "00000000-0000-4000-8000-000000000001" ? (
         <p className="text-[0.72rem] text-pretty text-muted-foreground">
@@ -151,12 +154,12 @@ function ScheduleSummary({ schedule }: { schedule: ProcSchedule }) {
 function ScheduleAction({ schedule }: { schedule: ProcSchedule }) {
   const action = schedule.action;
   if (action.type === "api") {
-    return <ApiAction action={action} />;
+    return <ApiAction action={action} cleared={schedule.contentClearedAt ?? null} />;
   }
-  return <ProcessAction key={schedule.id} process={action.process} />;
+  return <ProcessAction key={schedule.id} process={action.process} cleared={schedule.contentClearedAt ?? null} />;
 }
 
-function ApiAction({ action }: { action: Extract<ProcAction, { type: "api" }> }) {
+function ApiAction({ action, cleared }: { action: Extract<ProcAction, { type: "api" }>; cleared: string | null }) {
   const [expanded, setExpanded] = useState(false);
   const json = useMemo(() => JSON.stringify(action.input, null, 2), [action.input]);
   const long = json.length > 400;
@@ -169,17 +172,19 @@ function ApiAction({ action }: { action: Extract<ProcAction, { type: "api" }> })
         </NodeLink>
       </p>
       <span className={fieldLabel}>Input</span>
-      <div className="relative">
-        <Raw value={json} className={cn(!expanded && long && "max-h-40")} />
-        {long ? (
-          <Button variant="ghost" size="sm" className="mt-1" onClick={() => setExpanded((value) => !value)}>{expanded ? "Collapse" : "Show all"}</Button>
-        ) : null}
-      </div>
+      {cleared ? <p className="px-0.5 text-[0.75rem]"><ContentCleared at={cleared} /></p> : (
+        <div className="relative">
+          <Raw value={json} className={cn(!expanded && long && "max-h-40")} />
+          {long ? (
+            <Button variant="ghost" size="sm" className="mt-1" onClick={() => setExpanded((value) => !value)}>{expanded ? "Collapse" : "Show all"}</Button>
+          ) : null}
+        </div>
+      )}
     </section>
   );
 }
 
-function ProcessAction({ process }: { process: Extract<ProcAction, { type: "process" }>["process"] }) {
+function ProcessAction({ process, cleared }: { process: Extract<ProcAction, { type: "process" }>["process"]; cleared: string | null }) {
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const env = process.env ?? {};
   const keys = Object.keys(env);
@@ -193,10 +198,13 @@ function ProcessAction({ process }: { process: Extract<ProcAction, { type: "proc
       <h3 className="px-0.5 text-[0.68rem] font-medium tracking-[0.08em] text-muted-foreground uppercase">Action · process</h3>
       <dl className="flex flex-col">
         <Row label="Command" mono copy={process.command}>{process.command}</Row>
-        <Row label="Working directory" mono copy={process.cwd ?? null}>{process.cwd ?? "—"}</Row>
+        <Row label="Working directory" mono={!cleared} copy={process.cwd ?? null}>{cleared ? <span className="text-muted-foreground italic">Cleared</span> : process.cwd ?? "—"}</Row>
         <Row label="Timeout">{process.timeoutMs === null ? "none" : `${Math.round(process.timeoutMs / 1_000)}s`}</Row>
         <Row label="Keep output">{process.retainOutput ? "yes" : "no"}</Row>
       </dl>
+      {cleared ? (
+        <p className="px-0.5 text-[0.75rem]"><ContentCleared at={cleared} label="Arguments, environment and working directory cleared" /></p>
+      ) : null}
       {process.args.length ? (
         <div className="flex flex-col gap-0.5">
           <span className={fieldLabel}>Arguments</span>

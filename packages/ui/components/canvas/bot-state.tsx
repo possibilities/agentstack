@@ -8,20 +8,20 @@ import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { botBlockers, purgeable, queueWords, workspaceOwned, type BotHistoryGeneration, type BotLaunch, type BotQueueEntry, type BotStateRead } from "@/lib/stack/bot-state";
+import { botBlockers, purgeable, queueBodyLimit, queueUnclearable, queueWords, retiredGenerations, workspaceOwned, type BotHistoryGeneration, type BotLaunch, type BotQueueEntry, type BotStateRead } from "@/lib/stack/bot-state";
 import { relativeTime, shortId } from "@/lib/stack/derive";
 import { orientationLabel, orientationMeaning, orientationPhase } from "@/lib/stack/orientation";
 import { formatBytes } from "@/lib/stack/resources";
-import { localOperation } from "@/lib/stack/state";
+import { localOperation, localOperations } from "@/lib/stack/state";
 import type { Bot, StateReceipt } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
 import { BotLifecycleControls } from "./bot-actions";
 import { BotAction, hintClass, labelClass, MoreButton, Pill, ReadError, useBotAction, useBotPages, useBotRead, ViewHeader, type BotScope } from "./bot-state-shared";
 import { LogView, RecoveryView, UploadsView, WorkspaceView } from "./bot-state-files";
-import { StateFlowView, StateReceiptView } from "./state-flow";
+import { MaintenanceDisclosure, StateFlowView, StateReceiptView } from "./state-flow";
 import { StateEntryDetails } from "./state-windows";
-import { CopyButton, Empty, NodeLink } from "./primitives";
+import { ContentCleared, CopyButton, Empty, NodeLink } from "./primitives";
 import { useChatWindows, useNow, useProcWindows, useStack, useStore, useWorkbench, useWorkerWindows } from "./provider";
 import { Window } from "./window";
 
@@ -316,13 +316,34 @@ function ConversationView({ scope, bot }: { scope: BotScope; bot: Bot }) {
   );
 }
 
-/** Content-free queue receipts across roots. The active root's messages stay in its chat. */
+/**
+ * Content-free queue receipts across roots. The active root's messages stay in its chat. Maintenance clears queued
+ * message bodies only: every entry keeps its original size, digest, destination and outcome, and an unknown admission
+ * stays unknown. Nothing here retries, resends or resolves an entry.
+ */
 function QueueView({ scope }: { scope: BotScope }) {
+  const state = useStack();
   const store = useStore();
+  const now = useNow(60_000);
   const pages = useBotPages<BotQueueEntry>((offset, revision) => store.call<{ entries: BotQueueEntry[]; revision: string; nextOffset: number | null }>("bots", "bot_queue_history",
     { botId: scope.botId, offset, limit: 100, ...(revision ? { revision } : {}) }).then((page) => ({ items: page.entries, revision: page.revision, nextOffset: page.nextOffset })), scope.incarnation, scope.observe);
+  const generations = useBotPages<BotHistoryGeneration>((offset, revision) => store.call<{ generations: BotHistoryGeneration[]; revision: string; nextOffset: number | null }>("bots", "bot_history_list",
+    { botId: scope.botId, offset, limit: 100, ...(revision ? { revision } : {}) }).then((page) => ({ items: page.generations, revision: page.revision, nextOffset: page.nextOffset })), scope.incarnation, scope.observe);
+  const [maintaining, setMaintaining] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [generation, setGeneration] = useState<string | null>(null);
+  // A completed receipt empties the selection it applied to; partial and unknown results keep it for inspection.
+  const byIds = useBotAction(scope, { kind: "queue_bodies_clear", selection: { ids: selected } }, (receipt) => { if (receipt.status === "completed") setSelected([]); });
+  const byGeneration = useBotAction(scope, { kind: "queue_bodies_clear", selection: { generation: generation ?? "" } }, (receipt) => { if (receipt.status === "completed") setGeneration(null); });
+  const access = localOperations(state, "bots", ["bot_state_plan", "bot_queue_bodies_clear", "bot_state_receipt_get"]);
+  const unavailable = scope.unavailable ?? (access.available ? null : access.reason);
+  const idle = byIds.flow.phase === "idle" && byGeneration.flow.phase === "idle";
+  const entries = pages.page?.items ?? [];
   const counts = new Map<string, number>();
-  for (const entry of pages.page?.items ?? []) counts.set(entry.state, (counts.get(entry.state) ?? 0) + 1);
+  for (const entry of entries) counts.set(entry.state, (counts.get(entry.state) ?? 0) + 1);
+  const retired = retiredGenerations(generations.page?.items ?? []);
+  const complete = pages.page?.nextOffset === null;
+  const inGeneration = (id: string) => entries.filter((entry) => entry.generation === id).length;
   return (
     <div className="flex flex-col gap-2">
       <ViewHeader title="Queue receipts" loading={pages.loading} onRefresh={pages.refresh}>
@@ -330,20 +351,62 @@ function QueueView({ scope }: { scope: BotScope }) {
       </ViewHeader>
       <p className={hintClass}>Identities and sizes only, across current and retired roots. The current root&rsquo;s queued messages are in its chat.</p>
       <ReadError error={pages.error} what="Queue history" />
-      {pages.page ? pages.page.items.length ? (
+      {pages.page ? entries.length ? (
         <ul aria-label="Queue receipts" className="flex flex-col">
-          {pages.page.items.map((entry) => (
-            <li key={entry.id} className="flex min-w-0 items-center gap-2 px-1 py-0.5 text-xs" title={queueWords[entry.state]}>
-              <span className={cn("w-20 shrink-0", entry.state === "unknown" && "text-warning", entry.state === "cancelled" && "text-muted-foreground")}>{entry.state}</span>
-              <code className="min-w-0 truncate font-mono text-[0.66rem]">{entry.id}</code>
-              <span className="ml-auto shrink-0 font-mono text-[0.66rem] text-muted-foreground" title={`Thread ${entry.threadId}`}>{shortId(entry.threadId)}</span>
-              <span className="w-14 shrink-0 text-right text-muted-foreground tabular-nums">{formatBytes(entry.bytes)}</span>
-            </li>
-          ))}
+          {entries.map((entry) => {
+            const blocked = queueUnclearable(entry);
+            const chosen = selected.includes(entry.id);
+            return (
+              <li key={entry.id} className="flex flex-col gap-0.5 rounded-md px-1 py-1 hover:bg-muted/40" title={queueWords[entry.state]}>
+                <span className="flex min-w-0 items-center gap-2 text-xs">
+                  {maintaining || !idle ? (
+                    <input type="checkbox" aria-label={`Select queue entry ${entry.id}`} className="size-3.5 shrink-0 accent-destructive" checked={chosen} title={blocked ?? undefined}
+                      disabled={!idle || blocked !== null || (!chosen && selected.length >= queueBodyLimit)}
+                      onChange={() => setSelected(chosen ? selected.filter((id) => id !== entry.id) : [...selected, entry.id])} />
+                  ) : null}
+                  <span className={cn("w-20 shrink-0", entry.state === "unknown" && "text-warning", entry.state === "cancelled" && "text-muted-foreground")}>{entry.state}</span>
+                  <code className="min-w-0 truncate font-mono text-[0.66rem]">{entry.id}</code>
+                  <span className="ml-auto shrink-0 font-mono text-[0.66rem] text-muted-foreground" title={`Thread ${entry.threadId}`}>{shortId(entry.threadId)}</span>
+                  <span className="w-14 shrink-0 text-right text-muted-foreground tabular-nums" title={`Original size: ${entry.bytes.toLocaleString()} bytes`}>{formatBytes(entry.bytes)}</span>
+                </span>
+                <span className="group/row flex min-w-0 flex-wrap items-center gap-x-2.5 text-[0.66rem] text-muted-foreground">
+                  <span className="flex items-center" title={entry.admissionDigest}>digest <code className="ml-1 font-mono">{shortId(entry.admissionDigest, 12)}</code><CopyButton value={entry.admissionDigest} label="admission digest" className="size-5" /></span>
+                  <span title={entry.generation ?? undefined}>{entry.generation ? <>generation <code className="font-mono">{shortId(entry.generation)}</code></> : "no generation recorded"}</span>
+                  {entry.contentClearedAt ? <ContentCleared at={entry.contentClearedAt} /> : null}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       ) : <p className="text-xs text-muted-foreground">No queue entries recorded.</p> : null}
       {counts.get("unknown") ? <p className="text-xs text-warning">{queueWords.unknown}</p> : null}
       {pages.page ? <MoreButton nextOffset={pages.page.nextOffset} loading={pages.loading} onMore={pages.more} restarted={pages.page.restarted} /> : null}
+      <MaintenanceDisclosure active={!idle} aside="clear queued bodies" onOpenChange={setMaintaining}>
+        <p className={hintClass}>
+          Clears queued message bodies only. Each entry keeps its original size, admission digest, destination and sent, unknown or cancelled outcome, and a cleared entry can never be sent.
+          An unknown admission stays unknown: clearing it is not a retry. Codex&rsquo;s own queue and history, Signal, Infer and other owners&rsquo; copies are separate and stay.
+          The plan lists what blocks it, such as a running Bot or a pending entry.
+        </p>
+        <section aria-label="Selected entries" className="flex flex-col gap-1.5">
+          <span className={labelClass}>Selected entries · {selected.length}</span>
+          <p className={hintClass}>Tick terminal entries above. At most {queueBodyLimit} per plan; pending, dispatching and already cleared entries can&rsquo;t be selected.</p>
+          <StateFlowView controls={byIds} label={`Prepare clearing bodies of ${selected.length} selected`} applyLabel="Clear these bodies" unavailable={unavailable ?? (selected.length ? null : "Select entries to clear first.")} />
+        </section>
+        <section aria-label="Retired generation" className="flex flex-col gap-1.5 border-t border-dashed pt-2">
+          <span className={labelClass}>A retired generation</span>
+          <NativeSelect size="sm" aria-label="Retired generation" value={generation ?? ""} disabled={!idle} onChange={(event) => setGeneration(event.target.value || null)}>
+            <NativeSelectOption value="">{retired.length ? "Choose a retired generation" : "No retired generations"}</NativeSelectOption>
+            {retired.map((row) => (
+              <NativeSelectOption key={row.generation} value={row.generation}>
+                {shortId(row.generation)} · retired {relativeTime(Date.parse(row.retiredAt!), now)}{complete ? ` · ${inGeneration(row.generation)} queued` : ""}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <ReadError error={generations.error} what="History generations" />
+          <p className={hintClass}>Selects every entry recorded for that generation. Entries recorded before generations were attributed aren&rsquo;t included; tick those above.</p>
+          <StateFlowView controls={byGeneration} label="Prepare clearing this generation's bodies" applyLabel="Clear these bodies" unavailable={unavailable ?? (generation ? null : "Choose a retired generation first.")} />
+        </section>
+      </MaintenanceDisclosure>
     </div>
   );
 }

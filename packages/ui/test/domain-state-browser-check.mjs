@@ -1,7 +1,9 @@
 // Optional rendered check of owner maintenance in existing spaces after pnpm test (and a ui build, or NEXT_MODE=dev):
 // Signal captured content, correlated and Lab Infer payloads, Inbox dismissed content, Content storage, Xcom in
-// System and the System State owner links. The real notify API runs on a disposable state directory; Signal, Infer,
-// Content and Xcom are fixture sockets whose plans, applies and receipts go through the real StateJournal.
+// System, the System State owner links, HUD Work history, Proc removed-schedule redaction and the Lab Infer model
+// catalog clear. The real notify, hud and proc APIs run on a disposable state directory (Worker and Bot answers for
+// HUD dependencies are fixture sockets); Signal, Infer, Content and Xcom are fixture sockets whose plans, applies and
+// receipts go through the real StateJournal.
 // PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/domain-state-browser-check.mjs
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -9,6 +11,7 @@ import { createRequire } from "node:module";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { publishedJsonSchema, serveApi, serveSocket, serveWebSocket, socketCall, socketPath, StateJournal } from "@stack/api";
+import { ProcStore } from "../../proc/dist/src/store.js";
 import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gatewayRoot, root, serveFixture, ui } from "./browser-fixture.mjs";
 
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
@@ -68,6 +71,38 @@ const xcomStatus = () => {
     head: { started_at: null, cursor: "c1", pages: 1, last_start: null, stop_reason: null }, backfill: { started_at: null, cursor: null, pages: 0, last_start: null, stop_reason: null } };
 };
 
+// Proc: removed schedules seeded into the owner's store before the real API opens it. One holds a secret-bearing
+// definition, one is Brain-protected (the plan refuses it), one has an unknown receipt left by an earlier session, and
+// one is still active (no maintenance is offered for it).
+const procIds = { removed: uuid(), brain: uuid(), unknown: uuid(), active: uuid() };
+const procSeed = new ProcStore(join(dir, "proc"));
+const processSpec = (label, enabled) => ({ label, firstAt: new Date(Date.now() - 3_600_000).toISOString(), everyMs: null, enabled,
+  action: { type: "process", process: { command: "/bin/echo", args: ["--token", "s3cret-arg"], cwd: "/tmp/removed-cwd", env: { API_TOKEN: "s3cret-env" }, timeoutMs: null, retainOutput: true } } });
+procSeed.createSchedule(procIds.removed, processSpec("Nightly sync", false));
+procSeed.createSchedule(procIds.brain, { label: "Brain source wake-up", firstAt: new Date(Date.now() - 3_600_000).toISOString(), everyMs: null, enabled: false,
+  action: { type: "api", package: "notify", operation: "notification_send", input: { title: "brain-input" } } });
+procSeed.createSchedule(procIds.unknown, processSpec("Old backup", false));
+procSeed.createSchedule(procIds.active, processSpec("Still scheduled", false));
+for (const id of [procIds.removed, procIds.brain, procIds.unknown]) procSeed.removeSchedule(id, 1);
+procSeed.db.prepare("UPDATE schedules SET system=1 WHERE id=?").run(procIds.brain);
+const unknownPlan = procSeed.historyPlan("schedule_definition", [procIds.unknown]);
+const unknownInput = { planId: unknownPlan.id, expectedRevision: unknownPlan.revision, requestId: uuid() };
+procSeed.maintenance.begin(unknownInput, unknownPlan);
+procSeed.maintenance.finish(unknownInput.requestId, "unknown", [{ resource: procIds.unknown, outcome: "unknown", detail: "Fixture: the owner cannot say whether the redaction ran" }]);
+
+// HUD: work and Worker/Bot answers for its dependency checks. The real HUD API owns the plans, tombstones and receipts.
+const hudIds = { epic: uuid(), design: uuid(), spike: uuid(), build: uuid(), pilot: uuid() };
+const hudWorker = { open: true, id: "22222222-0000-4000-8000-000000000001", turn: "44444444-0000-4000-8000-000000000001" };
+// Stable timestamps: the owner binds the plan to what the Worker reports, so a moving clock would stale every plan.
+const hudStarted = Date.now() - 60_000;
+const hudAdmission = () => ({ sequence: 1, workerId: hudWorker.id, turnId: hudWorker.turn, context: { workItemId: hudIds.build, scopeRevision: 1, source: "explicit" }, botId: "bot-1", threadId: "main-bot-1",
+  accountId: "33333333-0000-4000-8000-000000000001", provider: "codex", model: "gpt-fixture", effort: "medium", workerPhase: hudWorker.open ? "running" : "closed",
+  turnPhase: hudWorker.open ? "running" : "completed", current: true, createdAt: hudStarted, updatedAt: hudStarted });
+// Infer: two Bot accounts, each with a cached model catalog; `discoveries` records every explicit or implicit discovery.
+const inferAccounts = [uuid(), uuid()];
+const inferModelsFixture = [{ id: "gpt-fixture", defaultEffort: "medium", supportedEfforts: ["low", "medium", "high"] }];
+const inferCatalog = { observed: new Map(inferAccounts.map((accountId) => [accountId, { accountId, models: inferModelsFixture, observedAt: at(), discovering: false, error: null }])), discoveries: [], clears: [] };
+
 const publishers = {};
 const handlers = {
   attention_status: () => signal.status,
@@ -86,7 +121,25 @@ const handlers = {
   signal_state_receipt_get: (input) => signal.owner.receipt(input),
   attention_infer_requests: () => ({ requestIds: [correlated], nextOffset: null }),
   infer_request_list: () => ({ requests: infer.requests }),
-  infer_model_list: () => ({ accounts: [] }),
+  infer_model_list: () => ({ accounts: [...inferCatalog.observed.values()] }),
+  infer_discover: ({ accountId }) => {
+    inferCatalog.discoveries.push(accountId);
+    inferCatalog.observed.set(accountId, { accountId, models: inferModelsFixture, observedAt: at(), discovering: false, error: null });
+    queueMicrotask(() => publishers.infer?.("infer_changed"));
+    return inferCatalog.observed.get(accountId);
+  },
+  infer_catalog_clear: (input) => {
+    inferCatalog.clears.push(input);
+    const cleared = input.accountIds ?? [...inferCatalog.observed.keys()];
+    for (const accountId of cleared) inferCatalog.observed.delete(accountId);
+    queueMicrotask(() => publishers.infer?.("infer_changed"));
+    return { cleared };
+  },
+  account_list: () => ({ accounts: inferAccounts.map((id) => ({ id, enabled: true, removing: false, linkedAccounts: [] })) }), worker_account_list: () => ({ accounts: [] }),
+  account_login_current: () => ({ login: null }), worker_account_login_current: () => ({ logins: [] }),
+  worker_work_list: ({ workItemId }) => ({ entries: workItemId === hudIds.build ? [hudAdmission()] : [], nextCursor: null }),
+  chat_records: () => ({ records: [] }),
+  bot_list: () => ({ bots: [{ id: "bot-1", state: "running", pid: 321, cwd: "/fixture/workspace", url: null, account: null, runningAccount: null, mainThreadId: "main-bot-1", recoveryIssue: null, roleRevision: null, settings: null }] }),
   infer_history_plan: ({ requestIds }) => infer.owner.plan("history_clear", { requestIds }, { revision: JSON.stringify(requestIds.map((id) => infer.requests.find((row) => row.requestId === id)?.contentClearedAt ?? null)),
     resources: requestIds.map((id) => `request ${id}`), blockedBy: requestIds.filter((id) => infer.requests.find((row) => row.requestId === id)?.state === "running").map((id) => `Request ${id} is still running`),
     retained: ["Request identity, account, model, usage and outcome"] }),
@@ -156,13 +209,19 @@ const loseResponse = () => {
 };
 
 const sockets = [];
-let websocket, next, browser, notify;
+let websocket, next, browser, notify, hud, proc;
 let log = "";
 let failed = false;
 try {
   notify = await serveApi({ name: "notify", transport: "socket", env, root });
+  hud = await serveApi({ name: "hud", transport: "socket", env, root });
+  proc = await serveApi({ name: "proc", transport: "socket", env, root });
+  // The HUD owner reads these two directly from their sockets for its dependency checks; the gateway does not select them.
+  for (const [name, operations] of [["worker", ["worker_work_list"]], ["bots", ["bot_list", "chat_records"]]]) {
+    sockets.push(await serveSocket({ info: { name, description: name, transportDescription: "Fixture", path: socketPath(name, env) }, context: {}, operations: fixtureOperations(operations, handlers) }));
+  }
   const notifyCall = (name, args = {}) => socketCall(socketPath("notify", env), "tools/call", { name, arguments: args });
-  const names = ["serve", "api", "notify", "signal", "infer", "content", "xcom"];
+  const names = ["serve", "api", "notify", "signal", "infer", "content", "xcom", "auth", "hud", "proc"];
   websocket = await serveWebSocket({ env, root: await gatewayRoot(dir, names), port: 0 });
   const doc = async (name) => fixtureDoc(name, name === "api" ? null : (await import(`../../${name}/dist/api.js`)).api, websocket.url, publishedJsonSchema);
   const catalog = await Promise.all(names.map(doc));
@@ -180,7 +239,8 @@ try {
   await socketFor("serve", serve.names);
   await socketFor("api", ["docs_snapshot"]);
   await socketFor("signal", ["attention_status", "attention_control", "attention_history_plan", "attention_history_clear", "signal_state_receipt_get", "attention_infer_requests"]);
-  await socketFor("infer", ["infer_request_list", "infer_model_list", "infer_history_plan", "infer_history_clear", "infer_state_receipt_get"]);
+  await socketFor("infer", ["infer_request_list", "infer_model_list", "infer_discover", "infer_catalog_clear", "infer_history_plan", "infer_history_clear", "infer_state_receipt_get"]);
+  await socketFor("auth", ["account_list", "worker_account_list", "account_login_current", "worker_account_login_current"]);
   await socketFor("content", ["blob_stage_list", "blob_stage_abort", "content_blob_list", "content_storage_plan", "content_storage_collect", "content_state_receipt_get"]);
   // Xcom selects explicit WebSocket operations, so the fixture answers each (reads it does not model fail explicitly).
   const xcomNames = ["xcom_state_read", "xcom_status", "xcom_list", "xcom_get", "xcom_users", "xcom_articles_pending", "xcom_control", "xcom_history_plan", "xcom_history_clear", "xcom_state_receipt_get"];
@@ -202,7 +262,7 @@ try {
   await page.addInitScript(loseResponse);
   await authorizeBrowser(page, origin, env);
   const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("pageerror", (error) => errors.push(`${error.message} (${page.url()})`));
   const shot = (name, locator) => (locator ?? page).screenshot({ path: join(evidence, `${name}.png`), animations: "disabled" });
   const go = async (space) => { await page.goto(`${origin}/${space}`); await page.getByRole("button", { name: /Fit bench/ }).click().catch(() => undefined); };
   const completed = (scope) => scope.getByText("Completed for the declared scope only.");
@@ -317,8 +377,209 @@ try {
   await cw.getByText("Removal interrupted; inspect .stack-clear quarantine").waitFor();
   await shot("content-partial", cw);
 
+  // HUD Work history. The real HUD API owns plans, tombstones and receipts; Workers and Bots answer its dependency checks.
+  const hudCall = (name, args) => socketCall(socketPath("hud", env), "tools/call", { name, arguments: args });
+  await hudCall("work_batch", { requestId: uuid(), changes: [
+    { action: "create", id: hudIds.epic, title: "Ship maintenance", objective: "Epic objective body", state: "active" },
+    { action: "create", id: hudIds.design, parentId: hudIds.epic, order: 0, title: "Design the controls", objective: "Design objective body", state: "review" },
+    { action: "create", id: hudIds.spike, parentId: hudIds.design, order: 0, title: "Spike the plan", objective: "Spike objective body", state: "active" },
+    { action: "create", id: hudIds.build, parentId: hudIds.epic, order: 10, title: "Build the windows", objective: "Build objective body", state: "active" },
+    { action: "create", id: hudIds.pilot, title: "Pilot with a live Chat", objective: "Pilot objective body", state: "planned" },
+  ] });
+  await hudCall("work_note_add", { requestId: uuid(), id: hudIds.spike, expectedRevision: 1, kind: "result", body: "Spike findings: the secret-body of this result" });
+  await hudCall("work_focus_set", { requestId: uuid(), target: { botId: "bot-1", mainThreadId: "main-bot-1", threadId: "main-bot-1" }, expectedRevision: 0, workItemId: hudIds.pilot });
+  await go("");
+  const tree = page.locator('[data-window="hud-work"]');
+  const item = page.locator('[data-window="hud-item"]');
+  const timeline = page.locator('[data-window="hud-timeline"]');
+  const treeRow = (id) => tree.locator(`[data-node="work-item:${id}"]`);
+  const pick = (id, title) => treeRow(id).getByRole("button", { name: new RegExp(`^(Planned|Active|Blocked|Waiting|Paused|Review|Completed|Cancelled) ${title}`) }).click();
+  const maintenance = (scope) => scope.locator("summary", { hasText: "Maintenance" });
+  const openMaintenance = async (scope) => { const summary = maintenance(scope); if (!(await scope.locator("details[open]").count())) await summary.click(); };
+
+  // A leaf's journal bodies: the plan names the exact item and the retained copies; nothing is chosen for the operator.
+  await pick(hudIds.spike, "Spike the plan");
+  await timeline.getByText("Spike findings: the secret-body of this result").waitFor();
+  await item.getByText("Spike objective body").waitFor();
+  await openMaintenance(item);
+  assert.equal(await item.getByRole("button", { name: /^Prepare clearing/ }).isDisabled(), true, "the scope is explicit: nothing is clearable until it is chosen");
+  await item.getByText("Choose what to clear.").waitFor();
+  await item.getByRole("radio", { name: "Journal bodies" }).check();
+  await item.getByRole("button", { name: "Prepare clearing 1 item" }).click();
+  await item.getByText("Exact resources", { exact: false }).waitFor();
+  await item.getByText(`work:${hudIds.spike}`).waitFor();
+  await item.getByRole("region", { name: "hud plan journal_bodies" }).getByText("Worker-captured Work context", { exact: false }).waitFor();
+  await shot("hud-plan-preview", item);
+  await item.getByRole("button", { name: "Clear these journals" }).click();
+  await completed(item).waitFor();
+  await timeline.getByText("Journal bodies, references and edit values cleared").waitFor();
+  assert.ok(!(await timeline.innerText()).includes("secret-body"), "the cleared body is gone from the reader and replaced by a marker");
+  await timeline.getByText("Content cleared", { exact: false }).first().waitFor();
+  await item.getByText("Spike objective body").waitFor();
+  assert.equal((await hudCall("work_get", { id: hudIds.spike })).objective, "Spike objective body", "journal-only clearing keeps the current item");
+  await shot("hud-journal-cleared", timeline);
+  await item.getByRole("button", { name: "Close receipt" }).click();
+
+  // A tombstone alone is refused until its children are cleared or selected together; a Worker admission still blocks the subtree.
+  await pick(hudIds.epic, "Ship maintenance");
+  await item.getByText("Epic objective body").waitFor();
+  await openMaintenance(item);
+  await item.getByRole("radio", { name: "Item and journal (permanent tombstone)" }).check();
+  await item.getByText("A tombstone needs them cleared first or selected together.", { exact: false }).waitFor();
+  await item.getByRole("button", { name: "Prepare clearing 1 item" }).click();
+  await item.getByText(/Clear child .* first or explicitly select it in this batch/).first().waitFor();
+  assert.equal(await item.getByRole("button", { name: "Tombstone these items" }).isDisabled(), true, "a blocked plan cannot apply");
+  await shot("hud-plan-blocked", item);
+  await item.getByRole("button", { name: "Discard plan" }).click();
+  await item.getByRole("radio", { name: "This item and its subtree" }).check();
+  await item.getByText("Selects 4 items: this item and its descendants.").waitFor();
+  await item.getByRole("button", { name: "Prepare clearing 4 items" }).click();
+  await item.getByText(`Close Worker ${hudWorker.id}; admission ${hudWorker.turn} holds Work ${hudIds.build}`).waitFor();
+  assert.equal(await item.getByRole("button", { name: "Tombstone these items" }).isDisabled(), true);
+  await shot("hud-subtree-blocked", item);
+  // The Worker closes; a new plan is an explicit decision, and applying it tombstones exactly the subtree.
+  hudWorker.open = false;
+  await item.getByRole("button", { name: "Prepare a new plan" }).click();
+  await item.getByText("Exact resources", { exact: false }).waitFor();
+  assert.equal(await item.getByText("Blocked by").count(), 0);
+  await item.getByRole("button", { name: "Tombstone these items" }).click();
+  await completed(item).waitFor();
+  await item.getByText("Cleared work.", { exact: false }).waitFor();
+  await treeRow(hudIds.epic).getByText("Content cleared").waitFor();
+  assert.equal(await item.getByRole("button", { name: "Edit title" }).count(), 0, "a tombstone can't be edited");
+  const tombstone = await hudCall("work_get", { id: hudIds.epic });
+  assert.equal(tombstone.title, "[cleared]");
+  assert.equal(tombstone.state, "active", "semantic state is retained, and clearing never completes work");
+  assert.equal((await hudCall("work_get", { id: hudIds.pilot })).title, "Pilot with a live Chat", "work outside the selection is untouched");
+  await shot("hud-tombstoned", item);
+  await item.getByRole("button", { name: "Close receipt" }).click();
+
+  // Live Chat focus blocks a plan; the control never pre-filters or clears it.
+  await pick(hudIds.pilot, "Pilot with a live Chat");
+  await item.getByText("Pilot objective body").waitFor();
+  await openMaintenance(item);
+  await item.getByRole("radio", { name: "Journal bodies" }).check();
+  await item.getByRole("button", { name: "Prepare clearing 1 item" }).click();
+  await item.getByText("Clear live Chat focus bot-1/main-bot-1 before Work maintenance").waitFor();
+  await item.getByRole("button", { name: "Discard plan" }).click();
+
+  // Proc: only a removed schedule offers redaction; the owner's plan refuses a Brain-protected one.
+  await go("proc");
+  const schedules = page.locator('[data-window="proc-schedules"]');
+  const detail = page.locator('[data-window="proc-schedule"]');
+  await schedules.getByRole("button", { name: /^Removed/ }).click();
+  const scheduleRow = (id) => schedules.locator(`[data-schedule="${id}"]`);
+  await scheduleRow(procIds.removed).click();
+  await detail.getByText("s3cret-arg").waitFor();
+  await openMaintenance(detail);
+  await detail.getByText("a digest of the original definition stay", { exact: false }).waitFor();
+  await detail.getByRole("button", { name: "Prepare redaction" }).click();
+  await detail.getByText("Exact resources", { exact: false }).waitFor();
+  await detail.getByText("Captured execution actions, results, argv summaries and output are independent selections", { exact: false }).waitFor();
+  await shot("proc-plan-preview", detail);
+  await detail.getByRole("button", { name: "Redact this definition" }).click();
+  await completed(detail).waitFor();
+  await detail.getByText("Arguments, environment and working directory cleared", { exact: false }).waitFor();
+  await detail.getByText("Redacted", { exact: false }).first().waitFor();
+  const digestRow = detail.locator("dt", { hasText: "Spec digest" });
+  await digestRow.waitFor();
+  assert.ok(!(await detail.innerText()).includes("s3cret"), "redacted arguments and environment are gone from the reader");
+  const redacted = await socketCall(socketPath("proc", env), "tools/call", { name: "proc_schedule_get", arguments: { id: procIds.removed, includeRemoved: true } });
+  assert.deepEqual([redacted.action.process.args, redacted.action.process.env, redacted.label, Boolean(redacted.specDigest)], [[], undefined, "Nightly sync", true], "the label and digest stay");
+  await shot("proc-redacted", detail);
+  await detail.getByRole("button", { name: "Close receipt" }).click();
+  await scheduleRow(procIds.brain).click();
+  await detail.getByText("brain-input").waitFor({ state: "attached" }).catch(() => undefined);
+  await openMaintenance(detail);
+  await detail.getByRole("button", { name: "Prepare redaction" }).click();
+  await detail.getByText("Protected Brain schedules remain Brain-controlled").waitFor();
+  await shot("proc-protected-refused", detail);
+  await detail.getByRole("button", { name: "Cancel" }).click();
+
+  // An unknown receipt left by an earlier session returns after a reload, inside a disclosure that opens itself.
+  // A persisted schedule selection renders "Reading schedule…" on the client where the server rendered "Choose a schedule" (an
+  // existing Proc hydration difference this change does not touch), so keep only the recovery slots across this load.
+  await page.evaluate(([key, input]) => {
+    for (const name of Object.keys(localStorage)) if (!name.startsWith("stack.state-flow.")) localStorage.removeItem(name);
+    localStorage.setItem(key, JSON.stringify({ input, at: Date.now() }));
+  }, [`stack.state-flow.proc:schedule_definition:${procIds.unknown}`, unknownInput]);
+  await go("proc");
+  await schedules.getByRole("button", { name: /^Removed/ }).click();
+  await scheduleRow(procIds.unknown).click();
+  await detail.getByText("Unknown. The owner cannot say what happened.", { exact: false }).waitFor();
+  await detail.getByText("Fixture: the owner cannot say whether the redaction ran").waitFor();
+  assert.equal(await detail.locator("details[open]").count(), 1, "the retained receipt is never hidden behind a closed disclosure");
+  await shot("proc-unknown-recovered", detail);
+  // An active schedule has no maintenance: removal comes first and is a separate decision.
+  await schedules.getByRole("button", { name: /^Off/ }).click();
+  await scheduleRow(procIds.active).click();
+  await detail.getByText("Still scheduled").first().waitFor();
+  assert.equal(await maintenance(detail).count(), 0);
+
+  // Lab Infer catalog: a direct, memory-only eviction with an inline two-step confirm; nothing rediscovers by itself.
+  await go("lab");
+  const inference = page.locator('[data-window="inference"]');
+  await inference.getByLabel("Account", { exact: true }).selectOption({ index: 1 });
+  await inference.getByText("1 model", { exact: false }).waitFor();
+  assert.deepEqual(inferCatalog.discoveries, [], "a cached catalog is not discovered again");
+  await openMaintenance(inference);
+  assert.equal(await inference.getByRole("button", { name: "Clear model catalog…" }).isDisabled(), true, "the scope is explicit");
+  await inference.getByRole("radio", { name: /^This account/ }).check();
+  await inference.getByRole("button", { name: "Clear model catalog…" }).click();
+  await inference.getByRole("group", { name: "Confirm clearing the model catalog" }).waitFor();
+  assert.deepEqual(inferCatalog.clears, [], "the first step clears nothing");
+  await shot("infer-catalog-confirm", inference);
+  await inference.getByRole("button", { name: "Clear catalog" }).press("Enter"); // the bench chrome overlaps the window's lower edge
+  await inference.getByText("Cleared model observations for 1 account.", { exact: false }).waitFor();
+  assert.deepEqual(inferCatalog.clears, [{ accountIds: [inferAccounts[0]] }]);
+  assert.equal(inferCatalog.observed.has(inferAccounts[1]), true, "the other account's catalog stays");
+  await inference.getByText("Model catalog cleared. Nothing is discovered until you choose Discover models.").waitFor();
+  // Re-selecting accounts after a clear never discovers; only the explicit control does.
+  await inference.getByLabel("Account", { exact: true }).selectOption({ index: 2 });
+  await inference.getByLabel("Account", { exact: true }).selectOption({ index: 1 });
+  await wait(400);
+  assert.deepEqual(inferCatalog.discoveries, [], "no discovery after a clear, even on re-selection");
+  await shot("infer-catalog-cleared", inference);
+  await inference.getByRole("button", { name: "Discover models", exact: true }).click();
+  await inference.getByText("1 model", { exact: false }).waitFor();
+  assert.deepEqual(inferCatalog.discoveries, [inferAccounts[0]], "the explicit control discovers exactly once");
+  await inference.getByRole("button", { name: "Dismiss" }).click();
+  await inference.getByRole("radio", { name: /^All accounts/ }).check();
+  await inference.getByRole("button", { name: "Clear model catalog…" }).click();
+  await inference.getByRole("button", { name: "Clear catalog" }).press("Enter"); // the bench chrome overlaps the window's lower edge
+  await inference.getByText("Cleared model observations for 2 accounts.", { exact: false }).waitFor();
+  assert.deepEqual(inferCatalog.clears.at(-1), {}, "all accounts omit the account list");
+  assert.equal(inferCatalog.observed.size, 0);
+
+  // Narrow and dark renderings of the new controls.
+  await go("");
+  await pick(hudIds.pilot, "Pilot with a live Chat");
+  await openMaintenance(item);
+  await item.getByRole("radio", { name: "Item and journal (permanent tombstone)" }).check();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await shot("hud-maintenance-dark", item);
+  await page.emulateMedia({ colorScheme: "light" });
+  // Narrow: resize the window by its grip; the maintenance copy and radios reflow without horizontal overflow.
+  const narrow = async (scope, name) => {
+    const grip = scope.locator('span[title^="Resize"]').first();
+    const edge = await grip.boundingBox();
+    await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(edge.x - 150, edge.y + edge.height / 2, { steps: 8 });
+    await page.mouse.up();
+    assert.ok((await scope.boundingBox()).width < 400, `${name} resized narrow`);
+    assert.ok(await scope.locator("[data-scroll]").evaluate((body) => body.scrollWidth <= body.clientWidth), `${name} has no horizontal overflow`);
+    await shot(`${name}-narrow`, scope);
+  };
+  await narrow(item, "hud-maintenance");
+  await page.evaluate(() => { for (const name of Object.keys(localStorage)) if (!name.startsWith("stack.state-flow.")) localStorage.removeItem(name); });
+  await go("proc");
+  await schedules.getByRole("button", { name: /^Removed/ }).click();
+  await scheduleRow(procIds.unknown).click();
+  await narrow(detail, "proc-maintenance");
+
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "owner gaps and links; Xcom pause observed until drained, explicit reimport/author choices, exact post removal; Signal pause required, draining read blocks, replan and whole-scope clear advancing generation; correlated Infer clear as separate selection; Lab running and cleared requests unselectable, lost response recovered from same receipt; Inbox real notify clear keeps outcome and open record; Content stage revision refusal, referenced blob unselectable, partial receipt kept uncertain" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "HUD journal-body plan with retained copies, explicit scope, tombstone refused until children are selected, Worker and live-Chat blockers shown by the plan, subtree tombstone with markers and read-only item, Proc removed-schedule redaction with digest and cleared markers, protected schedule refused by the plan, unknown receipt recovered after reload in a self-opening disclosure, active schedule offers no maintenance, Lab catalog clear with scope choice, inline confirm and count and no implicit rediscovery, dark and narrow; owner gaps and links; Xcom pause observed until drained, explicit reimport/author choices, exact post removal; Signal pause required, draining read blocks, replan and whole-scope clear advancing generation; correlated Infer clear as separate selection; Lab running and cleared requests unselectable, lost response recovered from same receipt; Inbox real notify clear keeps outcome and open record; Content stage revision refusal, referenced blob unselectable, partial receipt kept uncertain" }, null, 2));
 } catch (error) {
   failed = true;
   const page = browser?.contexts()[0]?.pages()[0];
@@ -331,6 +592,9 @@ try {
   await websocket?.close();
   await Promise.all(sockets.map((socket) => socket.close()));
   await notify?.close();
+  await hud?.close();
+  await proc?.close();
+  procSeed.db.close();
   for (const item of [signal, infer, content, xcom]) item.owner.journal.close();
   if (!(failed && evidence.startsWith(dir))) await rm(dir, { recursive: true, force: true });
 }

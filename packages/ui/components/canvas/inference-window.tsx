@@ -1,6 +1,6 @@
 "use client";
 
-import { inferClearNote, inferPlanLimit, useInferClear } from "./infer-maintenance";
+import { CatalogClear, inferClearNote, inferPlanLimit, useInferClear } from "./infer-maintenance";
 import { StateFlowView } from "./state-flow";
 import { useEffect, useId, useState } from "react";
 import { CircleCheckIcon, CircleHelpIcon, CircleXIcon, KeyRoundIcon, PlayIcon, RefreshCwIcon, SparklesIcon } from "lucide-react";
@@ -10,7 +10,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { accountLabels, inferAdmission, inferErrorText } from "@/lib/stack/derive";
+import { accountLabels, discoversOnSelect, inferAdmission, inferErrorText } from "@/lib/stack/derive";
 import type { InferEffort, InferRequest, InferRequestState, InferRequestSummary } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
@@ -62,6 +62,8 @@ export function InferenceWindow() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
+  // Set once the operator clears the model catalog here: from then on, discovery is only ever an explicit action.
+  const [catalogCleared, setCatalogCleared] = useState(false);
   // A completed clear empties the selection; partial or unknown results keep it for inspection.
   const clear = useInferClear(selected, "lab", () => setSelected([]));
   const locked = clear.controls.flow.phase !== "idle";
@@ -113,10 +115,11 @@ export function InferenceWindow() {
     store.infer("infer_discover", { accountId: id }).catch((cause) => setDiscoverError(inferErrorText(errorMessage(cause))));
   };
 
-  // Choosing an account discovers its models only when none are cached; the refresh control repeats it.
+  // Choosing an account discovers its models only when none are cached, and never after the operator cleared the catalog
+  // here (see discoversOnSelect). The discover control repeats or starts it explicitly.
   const selectAccount = (id: string) => {
     setAccountId(id);
-    if (id && remote?.scope !== "view" && !inferModels.data?.some((item) => item.accountId === id)) discover(id);
+    if (discoversOnSelect({ accountId: id, observed: Boolean(inferModels.data?.some((item) => item.accountId === id)), cleared: catalogCleared, viewOnly: remote?.scope === "view" })) discover(id);
     else setDiscoverError(null);
   };
 
@@ -169,15 +172,15 @@ export function InferenceWindow() {
                 ))}
               </NativeSelect>
               <Tooltip>
-                <TooltipTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label="Discover models again"
+                <TooltipTrigger render={<Button type="button" size="icon-sm" variant="ghost" aria-label={observation ? "Discover models again" : "Discover models"}
                    disabled={!accountId || !connected || observation?.discovering || remote?.scope === "view"} title={remote?.scope === "view" ? "Requires ui:control" : undefined} onClick={() => discover(accountId)} />}>
                   {observation?.discovering ? <Spinner /> : <RefreshCwIcon />}
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Discover models again</TooltipContent>
+                <TooltipContent side="bottom">{observation ? "Discover models again" : "Discover models"}</TooltipContent>
               </Tooltip>
             </div>
           </div>
-          {accountId && (observation || discoverError) ? (
+          {accountId && (observation || discoverError || (catalogCleared && !observation)) ? (
             <div className="flex flex-col gap-1.5">
               {observation ? (
                 <div className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-1.5">
@@ -206,7 +209,7 @@ export function InferenceWindow() {
                   : observation?.discovering ? "Discovering models…"
                   : observation?.error ? <span className="text-destructive">{inferErrorText(observation.error)}</span>
                   : observation ? <>{offered.length} model{offered.length === 1 ? "" : "s"} · observed <Time at={observation.observedAt ? Date.parse(observation.observedAt) : null} /></>
-                  : null}
+                  : "Model catalog cleared. Nothing is discovered until you choose Discover models."}
               </p>
             </div>
           ) : null}
@@ -321,6 +324,7 @@ export function InferenceWindow() {
           </ul>
         </Section>
       ) : null}
+      <CatalogClear accountId={accountId} accountLabel={label} cached={inferModels.data?.length ?? 0} onCleared={() => { setCatalogCleared(true); setDiscoverError(null); }} />
     </Window>
   );
 }

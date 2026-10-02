@@ -6,16 +6,16 @@ import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import { activityWord, noteKinds, rowIndex, scopedNotes, valueText, type NoteKind } from "@/lib/stack/hud";
+import { activityWord, noteKinds, rowIndex, scopedNotes, valueText, workTitle, type NoteKind } from "@/lib/stack/hud";
 import type { WorkActivity, WorkItem } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { ActorName, HudPlaceholder, hudReadOnly, ReferenceLink, RequestNotice, useHudRequest } from "./hud-shared";
-import { Time } from "./primitives";
+import { ContentCleared, Time } from "./primitives";
 import { useHudView, useStack, useStore } from "./provider";
 import { Window } from "./window";
 
 type Page = { entries: WorkActivity[]; nextCursor: number; hasMore: boolean };
-type History = { id: string | null; entries: WorkActivity[]; cursor: number; hasMore: boolean; loading: boolean; error: string | null };
+type History = { id: string | null; generation: number; entries: WorkActivity[]; cursor: number; hasMore: boolean; loading: boolean; error: string | null };
 /** Pages read per catch-up before asking; each is at most 100 entries. */
 const catchUpPages = 10;
 
@@ -30,8 +30,8 @@ export function TimelineWindow() {
   const { view } = useHudView();
   const id = view.selectedId;
   const item = id ? rowIndex(hudTree.data?.rows ?? []).get(id)?.item ?? null : null;
-  const [history, setHistory] = useState<History>({ id: null, entries: [], cursor: 0, hasMore: false, loading: false, error: null });
-  const flight = useRef<{ id: string | null; running: boolean; again: boolean }>({ id: null, running: false, again: false });
+  const [history, setHistory] = useState<History>({ id: null, generation: 0, entries: [], cursor: 0, hasMore: false, loading: false, error: null });
+  const flight = useRef<{ id: string | null; generation: number; running: boolean; again: boolean }>({ id: null, generation: 0, running: false, again: false });
   const current = useRef(history);
   current.current = history;
 
@@ -41,7 +41,8 @@ export function TimelineWindow() {
     if (state.running) { state.again = true; return; }
     state.running = true;
     const key = state.id;
-    setHistory((value) => value.id === key ? { ...value, loading: true } : value);
+    const mine = (value: History) => value.id === key && value.generation === state.generation;
+    setHistory((value) => mine(value) ? { ...value, loading: true } : value);
     try {
       let cursor = current.current.id === key ? current.current.cursor : 0;
       const added: WorkActivity[] = [];
@@ -52,25 +53,29 @@ export function TimelineWindow() {
         cursor = result.nextCursor;
         more = result.hasMore;
       }
-      if (flight.current.id === key) setHistory((value) => value.id === key
+      if (flight.current === state) setHistory((value) => mine(value)
         ? { ...value, entries: [...value.entries, ...added.filter((entry) => !value.entries.some((known) => known.sequence === entry.sequence))], cursor, hasMore: more, loading: false, error: null }
         : value);
     } catch (error) {
-      if (flight.current.id === key) setHistory((value) => value.id === key ? { ...value, loading: false, error: error instanceof Error ? error.message : String(error) } : value);
+      if (flight.current === state) setHistory((value) => mine(value) ? { ...value, loading: false, error: error instanceof Error ? error.message : String(error) } : value);
     } finally {
       state.running = false;
       if (state.again && flight.current === state) { state.again = false; void readForward(catchUpPages); }
     }
   }, [store]);
 
+  // The journal is read forward only, so bodies already held would outlive a content clear. The item's content generation
+  // advances with every clear: when it changes, the held entries are dropped and read again from the start.
+  const contentGeneration = item?.contentGeneration ?? 0;
   useEffect(() => {
-    if (flight.current.id !== id) {
-      flight.current = { id, running: false, again: false };
-      setHistory({ id, entries: [], cursor: 0, hasMore: false, loading: false, error: null });
-      current.current = { id, entries: [], cursor: 0, hasMore: false, loading: false, error: null };
+    if (flight.current.id !== id || flight.current.generation !== contentGeneration) {
+      flight.current = { id, generation: contentGeneration, running: false, again: false };
+      const fresh = { id, generation: contentGeneration, entries: [], cursor: 0, hasMore: false, loading: false, error: null };
+      setHistory(fresh);
+      current.current = fresh;
     }
     if (id) void readForward(catchUpPages);
-  }, [id, id ? hudItemGenerations[id] : 0, readForward]);
+  }, [id, contentGeneration, id ? hudItemGenerations[id] : 0, readForward]);
 
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
@@ -82,9 +87,9 @@ export function TimelineWindow() {
   const shown = history.id === id ? history : null;
 
   return (
-    <Window id="hud-timeline" title="Timeline" subtitle={item ? item.title : "hud"} icon={HistoryIcon} accent="hud" bleed
+    <Window id="hud-timeline" title="Timeline" subtitle={item ? workTitle(item) : "hud"} icon={HistoryIcon} accent="hud" bleed
       count={shown?.entries.length ?? null} status={status.hud} endpoint={endpoints.hud} error={shown?.error ?? null}
-      footer={item && !readOnly ? <NoteComposer item={item} /> : undefined}>
+      footer={item && !readOnly && !item.contentClearedAt ? <NoteComposer item={item} /> : undefined}>
       <div ref={scroller} data-scroll onScroll={(event) => {
         const element = event.currentTarget;
         pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
@@ -135,8 +140,10 @@ function Entry({ entry, currentScope }: { entry: WorkActivity; currentScope: num
       {earlierScope ? (
         <p className="text-[0.68rem] text-pretty text-warning">Recorded for scope {entry.scopeRevision}; the objective, parent or dependencies have changed since (now {currentScope}). It is evidence about the earlier scope.</p>
       ) : null}
+      {entry.kind === "maintenance" ? <p className="text-[0.72rem]"><ContentCleared at={entry.contentClearedAt} label="Journal bodies, references and edit values cleared" /></p>
+        : entry.contentClearedAt ? <p><ContentCleared at={entry.contentClearedAt} /></p> : null}
       {entry.body !== null ? <p className={cn("text-pretty whitespace-pre-wrap", entry.kind === "focus" && "text-muted-foreground")}>{entry.body}</p> : null}
-      {entry.changes.length ? (
+      {entry.changes.length && !entry.contentClearedAt ? (
         <dl className="flex flex-col gap-0.5">
           {entry.changes.map((change, index) => (
             <div key={index} className="flex min-w-0 gap-1.5 text-[0.72rem]">

@@ -33,11 +33,14 @@ const servers = [];
 let browser, next, page, log = "";
 try {
   servers.push(await serveApi({ name: "content", transport: "socket", env, root }));
+  // HUD and Proc own local-only maintenance controls; the remote gateway must neither offer nor forward them.
+  servers.push(await serveApi({ name: "hud", transport: "socket", env, root }));
+  servers.push(await serveApi({ name: "proc", transport: "socket", env, root }));
   const verify = async () => {}; // Simulated Tailscale status/self/whois; production never injects this.
   servers.push(await serveHttp({ host: "127.0.0.1", port: documentPort, tls, handle: handler({ store, env, origin: "documents", verify }), forceCloseConnections: true }));
   servers.push(await serveHttp({ host: "127.0.0.1", port: artifactPort, tls, handle: handler({ store, env, origin: "artifacts", verify }), forceCloseConnections: true }));
   servers.push(await startRemoteUi({ store, env, host: "127.0.0.1", port: remotePort,
-    root: await gatewayRoot(dir, ["content"]), verify }, tls));
+    root: await gatewayRoot(dir, ["content", "hud", "proc"]), verify }, tls));
   const document = await contentCall("new", { title: "Remote note" });
   const bytes = Buffer.from("remote item bytes");
   const item = await contentCall("item_put", { collection: null, name: "remote.txt", kind: "document", mediaType: "text/plain", content: bytes.toString("utf8") });
@@ -130,6 +133,27 @@ try {
   await page.locator('[data-remote-scope="control"]').waitFor();
   await page.waitForFunction(() => [...document.querySelectorAll('[data-window="content-documents"] button')].some(button => button.textContent?.includes("New document") && !button.disabled));
   assert.equal(await documents.getByRole("button", { name: "New document" }).isEnabled(), true);
+  // Local-only maintenance: with control scope the HUD item is editable, yet no Maintenance disclosure is offered, and the
+  // gateway refuses the plan operations of the four maintenance controls this UI exposes locally.
+  const workId = randomUUID();
+  await socketCall(socketPath("hud", env), "tools/call", { name: "work_create", arguments: { requestId: randomUUID(), id: workId, title: "Remote work", objective: "Remote objective" } });
+  await page.goto(`${origin}/`);
+  await page.locator('[data-remote-scope="control"]').waitFor();
+  await page.locator('[data-window="hud-work"]').getByRole("button", { name: /Remote work/ }).first().click();
+  const remoteItem = page.locator('[data-window="hud-item"]');
+  await remoteItem.getByRole("button", { name: "Edit title" }).waitFor();
+  assert.equal(await remoteItem.locator("summary", { hasText: "Maintenance" }).count(), 0, "a remote session is not offered HUD history maintenance");
+  const refused = await page.evaluate(() => new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${location.origin.replace(/^https:/, "wss:")}/websocket`);
+    const calls = [["hud", "hud_history_plan", { items: ["00000000-0000-4000-8000-000000000001"], scope: "journal_bodies" }],
+      ["proc", "proc_history_plan", { kind: "schedule_definition", ids: ["00000000-0000-4000-8000-000000000001"] }]];
+    const results = [];
+    ws.onopen = () => calls.forEach(([pkg, name, args], index) => ws.send(JSON.stringify({ id: index + 1, method: "tools/call", params: { package: pkg, name, arguments: args } })));
+    ws.onmessage = (event) => { results.push(JSON.parse(event.data)); if (results.length === calls.length) { resolve(results); ws.close(); } };
+    ws.onerror = () => reject(new Error("remote socket failed"));
+  }));
+  for (const result of refused) assert.ok(result.error, "the remote gateway refuses local-only maintenance operations");
+  await page.goto(`${origin}/content`);
   store.updateGrant(grant.id, 2, ["ui:view", "content:read"], []);
   await page.locator('[data-remote-scope="view"]').waitFor();
   assert.equal(await documents.getByRole("button", { name: "New document" }).isDisabled(), true);
@@ -137,7 +161,7 @@ try {
   const afterRevoke = await context.request.get(`${origin}/content`);
   assert.equal(afterRevoke.status(), 401, "revoked browser cookie cannot load a new UI page");
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ ok: true, assertions: "plain-browser persisted-secret pairing and local approval, remote TLS session, UI hydration, read-only/control UI transitions, refused WebSocket mutation, revocation, document/item/immutable artifact one-use handoffs, opaque artifact origin", state: dir }));
+  console.log(JSON.stringify({ ok: true, assertions: "plain-browser persisted-secret pairing and local approval, remote TLS session, UI hydration, read-only/control UI transitions, refused WebSocket mutation, HUD item with no Maintenance disclosure and refused history plans over control scope, revocation, document/item/immutable artifact one-use handoffs, opaque artifact origin", state: dir }));
 } finally {
   await browser?.close();
   if (next) { next.kill("SIGTERM"); await new Promise(resolve => next.once("exit", resolve)); }

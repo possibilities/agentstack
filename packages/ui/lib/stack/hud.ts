@@ -196,6 +196,46 @@ export function openDescendants(id: string, rows: WorkTreeRow[]): WorkItem[] {
   return descendantsOf(id, rows).map((row) => row.item).filter((item) => !isTerminal(item.state));
 }
 
+/** A title as text. A tombstone's replacement "[cleared]" reads as what it is rather than as a title someone wrote. */
+export const workTitle = (item: Pick<WorkItem, "title" | "contentClearedAt">): string => item.contentClearedAt ? "Content cleared" : item.title;
+
+/** What `hud_history_plan` clears: collaboration bodies only, or the item itself as a permanent tombstone as well. */
+export type HistoryScope = "journal_bodies" | "item_and_journal";
+export type HistoryChoice = "item" | "subtree";
+/** One plan selects at most this many items. */
+export const historyLimit = 100;
+
+export type HistoryItems = {
+  /** The exact items one plan would select: tombstoned items already hold nothing to clear and are left out. */
+  ids: string[];
+  /** Tombstoned items inside the choice, left out. */
+  cleared: number;
+  /** The loaded rows may not include the whole subtree, so a subtree choice would silently select less than it says. */
+  partial: boolean;
+  overLimit: boolean;
+};
+
+/**
+ * The exact items a history plan selects for one item: only itself, or itself and every descendant. Descendants come
+ * from the loaded hierarchy, so a subtree reaching the end of a partly loaded tree is reported rather than guessed.
+ * Items already tombstoned are excluded; the plan still checks every descendant, so nothing is cleared by omission.
+ */
+export function historyItems(rows: WorkTreeRow[], item: WorkItem, choice: HistoryChoice, complete: boolean): HistoryItems {
+  const start = rows.findIndex((row) => row.item.id === item.id);
+  const below = choice === "subtree" ? descendantsOf(item.id, rows).map((row) => row.item) : [];
+  const chosen = [item, ...below];
+  const open = chosen.filter((entry) => !entry.contentClearedAt);
+  // A subtree that ends at the last loaded row may continue in rows that were never read.
+  const partial = choice === "subtree" && (start < 0 || (!complete && start + below.length === rows.length - 1));
+  return { ids: open.map((entry) => entry.id), cleared: chosen.length - open.length, partial, overLimit: open.length > historyLimit };
+}
+
+/**
+ * One recovery slot per item. The scope and choice are frozen while a flow is past idle, so a retained running, partial
+ * or unknown receipt is always shown for the decision that made it, whichever scope that was.
+ */
+export const historyKey = (id: string): string => `hud:history:${id}`;
+
 /** A new parent may not be the item itself or one of its descendants. */
 export function parentChoices(id: string | null, rows: WorkTreeRow[]): WorkItem[] {
   const excluded = new Set(id ? [id, ...descendantsOf(id, rows).map((row) => row.item.id)] : []);

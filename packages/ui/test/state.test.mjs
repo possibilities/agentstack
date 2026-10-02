@@ -15,7 +15,7 @@ registerHooks({
 });
 
 const { applyInput, clearRecovery, continueInventory, continueSubscriptions, groupByOwner, linkNeedsSelection, loadInventory, loadSubscriptions,
-  localOperation, measured, planReadiness, readRecovery, relationshipNode, saveRecovery, StateFlowController, stateOperations } = await import("../lib/stack/state.ts");
+  localOperation, localOperations, measured, ownerGaps, planReadiness, readRecovery, relationshipNode, saveRecovery, StateFlowController, stateOperations } = await import("../lib/stack/state.ts");
 
 const entry = (id, owner, extra = {}) => ({ id, ownerPackage: owner, subject: null, kind: "storage", authority: "authoritative", location: "server", ownership: "stack",
   revision: null, observedAt: "2026-09-30T00:00:00.000Z", coverage: "partial", items: null, bytes: null, sensitivity: "content", relationships: [], reads: [], actions: [],
@@ -96,6 +96,28 @@ test("state operations are local-only and follow the live WebSocket selection", 
   assert.match(localOperation({ catalog }, "serve", "serve_subscription_remove").reason, /does not expose serve_subscription_remove/);
   assert.match(localOperation({ catalog }, "bots", "bots_state_read").reason, /not in API discovery/);
   assert.match(localOperation({ catalog: { data: null } }, "serve", "serve_state_list").reason, /discovery/);
+});
+
+test("a control needs its plan, apply and receipt operations, not only the plan", () => {
+  const websocket = (operations) => ({ name: "hud", transports: [{ type: "websocket", operations }] });
+  const names = ["hud_history_plan", "hud_history_clear", "hud_state_receipt_get"];
+  assert.deepEqual(localOperations({ catalog: { data: [websocket(names)] } }, "hud", names), { available: true });
+  const withoutApply = localOperations({ catalog: { data: [websocket(["hud_history_plan", "hud_state_receipt_get"])] } }, "hud", names);
+  assert.equal(withoutApply.available, false);
+  assert.match(withoutApply.reason, /does not expose hud_history_clear/, "a plan that could never be applied is not offered");
+  assert.match(localOperations({ catalog: { data: [websocket(names.slice(0, 2))] } }, "hud", names).reason, /hud_state_receipt_get/, "nor one whose receipt could not be read back");
+  assert.equal(localOperations({ catalog: { data: [websocket(names)] }, remote: { scope: "control" } }, "hud", names).available, false, "remote Access never gets state controls");
+});
+
+test("the shipped controls replace the four obsolete unsupported-coverage sentences with what remains out of scope", () => {
+  for (const owner of ["hud", "bots", "infer", "proc"]) assert.doesNotMatch(ownerGaps[owner], /is not supported\.$/, `${owner} no longer claims its shipped control is unsupported`);
+  assert.match(ownerGaps.hud, /backup erasure.*other owners' copies/);
+  assert.match(ownerGaps.bots, /Native Codex queue and history copies/);
+  assert.match(ownerGaps.infer, /memory-only and leaves no receipt/);
+  assert.match(ownerGaps.proc, /removed schedules only/);
+  // Other owners' sentences are not part of this change.
+  assert.equal(ownerGaps.signal, "Checkpoint reset is not supported.");
+  assert.match(ownerGaps.content, /^Vault or Git-history purge/);
 });
 
 test("inventory links with empty arguments are drill-downs, and relationships link only known records", () => {

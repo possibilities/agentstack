@@ -9,13 +9,14 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { shortId } from "@/lib/stack/derive";
-import { ancestorsOf, appendOrder, attentionKinds, isTerminal, linkRelations, openDescendants, parseLabels, priorities, reopenAncestors, rowIndex, siblingsOf, stateView, stepOrder, workStates } from "@/lib/stack/hud";
+import { ancestorsOf, appendOrder, attentionKinds, isTerminal, linkRelations, openDescendants, parseLabels, priorities, reopenAncestors, rowIndex, siblingsOf, stateView, stepOrder, workStates, workTitle } from "@/lib/stack/hud";
 import type { WorkItem, WorkLink, WorkReference, WorkState } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { ActorName, AttentionChip, HudPlaceholder, hudReadOnly, ReferenceLink, RequestNotice, StateMark, useHudRequest, type HudRequest } from "./hud-shared";
+import { WorkHistory } from "./hud-maintenance";
 import { NewWorkForm, ParentSelect } from "./hud-work";
 import { useProcSnapshot } from "./proc-shared";
-import { CopyButton, Row, Time } from "./primitives";
+import { ContentCleared, CopyButton, Row, Time } from "./primitives";
 import { useHudView, useStack, useStore } from "./provider";
 import { Section, Window } from "./window";
 
@@ -42,7 +43,7 @@ export function ItemWindow() {
   const missing = Boolean(detail.error && /work_not_found/.test(detail.error));
 
   return (
-    <Window id="hud-item" title={item?.title ?? "Work item"} subtitle={item ? `rev ${item.revision} · scope ${item.scopeRevision}` : "hud"} icon={FileTextIcon} accent="hud"
+    <Window id="hud-item" title={item ? workTitle(item) : "Work item"} subtitle={item ? `rev ${item.revision} · scope ${item.scopeRevision}` : "hud"} icon={FileTextIcon} accent="hud"
       node={item ? { kind: "work-item", id: item.id } : undefined} empty={!item}
       status={status.hud} endpoint={endpoints.hud} updatedAt={detail.at} error={missing ? null : detail.error}
       actions={item ? (
@@ -50,7 +51,7 @@ export function ItemWindow() {
           <CrosshairIcon />
         </Button>
       ) : undefined}
-      footer={item && !readOnly && !isTerminal(item.state) ? (
+      footer={item && !readOnly && !isTerminal(item.state) && !item.contentClearedAt ? (
         <Button variant="ghost" size="sm" className="w-full justify-center text-muted-foreground hover:text-foreground" aria-expanded={adding} onClick={() => setAdding((value) => !value)}>
           <PlusIcon data-icon="inline-start" />Add a child
         </Button>
@@ -80,7 +81,7 @@ function Breadcrumb({ item }: { item: WorkItem }) {
       {ancestors.length && ancestors[0].parentId ? <span>…</span> : null}
       {ancestors.map((ancestor) => (
         <span key={ancestor.id} className="flex min-w-0 items-center gap-0.5">
-          <button type="button" onClick={() => hudView.select(ancestor.id)} className="max-w-40 truncate rounded-sm hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">{ancestor.title}</button>
+          <button type="button" onClick={() => hudView.select(ancestor.id)} className="max-w-40 truncate rounded-sm hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">{workTitle(ancestor)}</button>
           {isTerminal(ancestor.state) ? <StateMark state={ancestor.state} /> : null}
           <ChevronRightIcon aria-hidden className="size-3 shrink-0" />
         </span>
@@ -90,14 +91,21 @@ function Breadcrumb({ item }: { item: WorkItem }) {
   );
 }
 
-function ItemEditor({ item, readOnly }: { item: WorkItem; readOnly: string | null }) {
+function ItemEditor({ item, readOnly: remoteReadOnly }: { item: WorkItem; readOnly: string | null }) {
   const { hudTree } = useStack();
+  // A tombstone keeps identity, hierarchy, state and dependencies but can't be edited, reopened or focused again.
+  const readOnly = remoteReadOnly ?? (item.contentClearedAt ? "Cleared work can't be changed; create new work instead" : null);
   const rows = hudTree.data?.rows ?? [];
   const byId = useMemo(() => rowIndex(rows), [rows]);
   const row = byId.get(item.id);
-  const titles = useMemo(() => new Map(rows.map((entry) => [entry.item.id, entry.item.title])), [rows]);
+  const titles = useMemo(() => new Map(rows.map((entry) => [entry.item.id, workTitle(entry.item)])), [rows]);
   return (
     <>
+      {item.contentClearedAt ? (
+        <p className="rounded-lg bg-muted/50 px-2.5 py-2 text-[0.72rem] text-pretty text-muted-foreground">
+          Cleared work. Its title, objective, summary, next action, labels, links and agent metadata were tombstoned for good. Identity, hierarchy, state and dependencies remain. Create new work to continue.
+        </p>
+      ) : null}
       <div className="flex flex-col gap-2">
         <EditableText item={item} field="title" label="Title" readOnly={readOnly} maxLength={200} single />
         <StatusControls item={item} readOnly={readOnly} />
@@ -126,6 +134,7 @@ function ItemEditor({ item, readOnly }: { item: WorkItem; readOnly: string | nul
         </dl>
       </Section>
       <Metadata item={item} readOnly={readOnly} />
+      <WorkHistory item={item} />
     </>
   );
 }
@@ -164,7 +173,8 @@ function EditableText({ item, field, label, readOnly, maxLength, single, placeho
         ) : null}
       </div>
       {!editing ? (
-        live ? <p className={cn("px-0.5 text-pretty whitespace-pre-wrap", field === "title" ? "text-[0.95rem] font-semibold" : "text-[0.8rem]")}>{live}</p>
+        item.contentClearedAt && (field === "title" || field === "objective") ? <p className="px-0.5 text-[0.8rem]"><ContentCleared at={item.contentClearedAt} /></p>
+          : live ? <p className={cn("px-0.5 text-pretty whitespace-pre-wrap", field === "title" ? "text-[0.95rem] font-semibold" : "text-[0.8rem]")}>{live}</p>
           : <p className="px-0.5 text-[0.75rem] text-muted-foreground">{placeholder ?? "—"}</p>
       ) : (
         <form className="flex flex-col gap-1.5" onSubmit={(event) => { event.preventDefault(); if (!invalid && !locked) save(draft.revision); }}>
