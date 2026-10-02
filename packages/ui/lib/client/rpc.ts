@@ -20,7 +20,14 @@ export function isClientRpcOperation(name: unknown): name is ClientRpcOperation 
 
 export async function callClient<K extends ClientRpcOperation>(name: K, raw: ClientInput<K>, signal?: AbortSignal): Promise<ClientOutput<K>> {
   if (runtime.mode !== "client") throw new Error("client_mode_required");
-  const input = clientInputs[name].parse(raw);
+  let input = clientInputs[name].parse(raw);
+  if (name === "client_install_plan" || name === "client_install") {
+    if (!runtime.release) throw new Error("trusted_release_required");
+    const supplied = (input as ClientInput<"client_install_plan">).release;
+    if (Object.keys(runtime.release).some(key => supplied[key as keyof typeof supplied] !== runtime.release![key as keyof typeof supplied])) throw new Error("trusted_release_changed");
+    // The reviewed parent value, not the browser's descriptor, reaches the host.
+    input = { ...input, release: runtime.release };
+  }
   const value = await socketCall(join(runtime.root!, "client.sock"), "tools/call", { name, arguments: input }, { signal, timeoutMs: 30_000 });
   // Output failure is an uncertain result AFTER dispatch, not permission to retry.
   try { return clientOutputs[name].parse(value) as ClientOutput<K>; }

@@ -3,6 +3,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { localCookie, localOrigin, withLocalAuth } from "@stack/api";
+import { parseTrustedRelease } from "./release.mjs";
 
 const mode = process.env.STACK_UI_MODE ?? "platform";
 if (mode !== "client" && mode !== "platform") throw new Error("invalid_ui_mode");
@@ -14,6 +15,7 @@ if (mode === "client") localOrigin(origin);
 export const runtime = Object.freeze(mode === "client" ? {
   mode, root, origin, host: new URL(origin).host,
   cookieName: `stack_client_ui_${createHash("sha256").update(root).digest("hex").slice(0, 24)}`,
+  release: process.env.STACK_CLIENT_UI_RELEASE ? parseTrustedRelease(process.env.STACK_CLIENT_UI_RELEASE) : null,
 } : { mode });
 
 export const clientSecurityHeaders = Object.freeze({

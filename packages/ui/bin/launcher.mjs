@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startClientHost } from "@stack/client";
 import { browserNavigation } from "./navigation.mjs";
+import { loadTrustedRelease } from "../lib/client/release.mjs";
 
 const ui = dirname(dirname(fileURLToPath(import.meta.url)));
 async function checkPort(port) {
@@ -18,9 +19,10 @@ async function checkPort(port) {
   return chosen;
 }
 
-export async function startClientUi({ root = process.env.STACK_CLIENT_STATE_DIR ?? join(homedir(), ".local", "share", "stack-client"), port = 19000, navigation, open = true, signal } = {}) {
+export async function startClientUi({ root = process.env.STACK_CLIENT_STATE_DIR ?? join(homedir(), ".local", "share", "stack-client"), port = 19000, releaseManifest = process.env.STACK_CLIENT_RELEASE_MANIFEST, navigation, open = true, signal } = {}) {
   if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("node_24_required");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("invalid_ui_port");
+  const release = await loadTrustedRelease(releaseManifest);
   await access(join(ui, ".next", "BUILD_ID")).catch(() => { throw new Error("client_ui_build_required"); });
   const origin = `http://127.0.0.1:${await checkPort(port)}`;
   if (signal?.aborted) throw new Error("client_ui_cancelled");
@@ -47,6 +49,8 @@ export async function startClientUi({ root = process.env.STACK_CLIENT_STATE_DIR 
     if (signal?.aborted) throw new Error("client_ui_cancelled");
     child = spawn(process.execPath, [join(ui, "bin", "client-server.mjs")], { cwd: ui,
       env: { ...process.env, STACK_UI_MODE: "client", STACK_CLIENT_STATE_DIR: root, STACK_CLIENT_UI_ORIGIN: origin,
+        // Always replace ambient child configuration, including the unset case.
+        STACK_CLIENT_UI_RELEASE: release ? JSON.stringify(release) : "",
         STACK_CLIENT_UI_INGRESS_KEY: randomBytes(32).toString("hex"), NEXT_TELEMETRY_DISABLED: "1", NODE_ENV: "production" },
       // Next's request/error logs must never echo capability POSTs or headers.
       stdio: ["ignore", "ignore", "ignore", "ipc"],

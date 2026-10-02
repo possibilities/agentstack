@@ -25,6 +25,10 @@ export async function POST(request: Request) {
     session!.revalidate();
     return json({ output });
   } catch (error) {
-    return json({ error: "client_call_failed", uncertain: !(error instanceof SocketCallError && !error.dispatched) }, 502);
+    const message = error instanceof Error ? error.message : "";
+    const safe = ["trusted_release_required", "trusted_release_changed", "revision_conflict", "job_not_found", "request_conflict"];
+    const code = safe.includes(message) ? message : "client_call_failed";
+    const definiteRefusal = safe.includes(message);
+    return json({ error: code, uncertain: !definiteRefusal && !(error instanceof SocketCallError && !error.dispatched) }, 502);
   }
 }
