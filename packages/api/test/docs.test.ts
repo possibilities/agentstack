@@ -16,7 +16,7 @@ type TransportDoc = { type: string; description: string; supported: boolean; sub
 type OperationDoc = { name: string; title: string | null; description: string; standalone: boolean; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>;
   completionWatch: CompletionWatch | null };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
-const stateOperation = (name: string) => /_factory_reset_|_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|_settings_receipts_(plan|clear)$|^browser_(profile_reset_|site_data_|volume_|handoff_history_)|^role_launch_(list|plan|clear)$|^worker_account_cache_(plan|clear)$|^attention_checkpoint_(plan|reset)$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_(subscription|occurrence|completion)_|_completion_identity_get$|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_|publication_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
+const stateOperation = (name: string) => /_factory_reset_|_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|_settings_receipts_(plan|clear)$|^browser_(profile_reset_|site_data_|volume_|handoff_history_)|^role_launch_(list|plan|clear)$|^worker_account_cache_(plan|clear)$|^attention_checkpoint_(plan|reset)$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_(subscription|occurrence)_|serve_completion_(list|get)$|_completion_identity_get$|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_|publication_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 
 test("the api package serves structured documents for every workspace package", { timeout: 60_000 }, async () => {
   assert.equal(docsSnapshot.name, "docs_snapshot");
@@ -63,7 +63,7 @@ test("the api package serves structured documents for every workspace package", 
         const omitted = [...(transport.type === "mcp" ? [`${pkg}_state_read`] : []), ...internal.filter((name) => !(pkg === "brain" && transport.type === "websocket" && name === "share_read_states")),
           ...(pkg === "roles" && transport.type === "mcp" ? ["role_editor_snapshot", "role_launch_preview", "role_shim_list", "role_shim_create", "role_shim_update", "role_shim_delete"] : [])];
         assert.deepEqual([...transport.operations].sort(), doc.operations.map((op) => op.name)
-          .filter((name) => !omitted.includes(name) && !(transport.type === "mcp" && stateOperation(name))).sort());
+          .filter((name) => !omitted.includes(name) && !name.endsWith("_completion_identity_get") && !(transport.type === "mcp" && stateOperation(name))).sort());
       }
     }
     assert.deepEqual(snapshot.packages, [...found.values()]);
