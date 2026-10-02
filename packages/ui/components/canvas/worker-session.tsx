@@ -697,10 +697,11 @@ function TurnsTab({ worker, generation, focusTurnId }: { worker: WorkerSession; 
   const eventsById = useMemo(() => eventTurns(receipts), [receipts]);
   const [eventFocus, setEventFocus] = useState<string | null>(null);
   const [watchOpen, setWatchOpen] = useState<string | null>(null);
+  useEffect(() => setEventFocus(null), [focusTurnId]);
   const pending = state.workerStatuses[worker.id]?.data?.pending ?? [];
   const linked = focusTurnId && list.some((turn) => turn.id === focusTurnId) ? focusTurnId : null;
   const local = eventFocus && list.some((turn) => turn.id === eventFocus) ? eventFocus : null;
-  const focused = linked ?? local;
+  const focused = local ?? linked;
   const scrolled = useRef<string | null>(null);
   // Set scrollTop on the tab's own scroll container only; scrollIntoView could move bench ancestors.
   const focusRef = useCallback((element: HTMLElement | null) => {

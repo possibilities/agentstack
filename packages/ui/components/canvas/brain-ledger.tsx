@@ -618,7 +618,6 @@ function SourcesObservation({ receipt }: { receipt: ServeCompletionReceipt }) {
   const result = base.data?.result ?? null;
   const runs = [...(result?.runs ?? []), ...applied.runs];
   const nextOffset = applied.nextOffset !== undefined ? applied.nextOffset : result?.nextOffset ?? null;
-  const truncated = applied.nextOffset !== undefined ? applied.truncated : result?.truncated ?? false;
   const runCount = result?.run_count ?? runs.length;
   const loadNext = async () => {
     if (nextOffset === null) return;
@@ -648,7 +647,7 @@ function SourcesObservation({ receipt }: { receipt: ServeCompletionReceipt }) {
         <ul className="flex flex-col gap-0.5">
           {runs.map((run) => (
             <li key={run.run_id} className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 pl-1 text-[0.68rem] text-muted-foreground">
-              <button type="button" className="font-mono hover:text-foreground hover:underline" title="Show this Run's jobs"
+              <button type="button" className="font-mono hover:text-foreground hover:underline" title="Filter Jobs to this Run"
                 onClick={() => store.setBrainJobView("all", run.run_id)}>run {run.run_id}</button>
               {run.job_id !== null ? <NodeLink node={{ kind: "ingestion-job", id: String(run.job_id) }} label={`Job ${run.job_id}`} className="font-mono">job {run.job_id}</NodeLink> : null}
               <span className={run.outcome === "failed" ? "text-destructive" : run.outcome === "partial" ? "text-warning" : undefined}>{run.outcome ?? "no outcome"}</span>
@@ -660,7 +659,7 @@ function SourcesObservation({ receipt }: { receipt: ServeCompletionReceipt }) {
         </ul>
       ) : null}
       {result ? (
-        <p className={watchHintClass}>Showing {runs.length} of {runCount} Runs{truncated ? " · the observation is truncated" : ""}</p>
+        <p className={watchHintClass}>Showing {runs.length} of {runCount} Runs{nextOffset !== null ? " · more Runs on later pages" : ""}</p>
       ) : null}
       {applied.error ? <p className="text-[0.72rem] text-destructive">Paging unavailable: {applied.error}</p> : null}
       {nextOffset !== null ? (
