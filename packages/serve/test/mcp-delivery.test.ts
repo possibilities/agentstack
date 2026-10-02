@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { WebSocketServer, type WebSocket } from "ws";
+import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
-import { botInstance, operation, pollEvent, serveApi, serveSocket, socketCall, socketPath, type CompletionReceipt, type EventTarget, type InvocationContext, type Occurrence } from "@stack/api";
-import { serverCompletionCheck, type ServerContext } from "../api.js";
+import { botInstance, McpEventSubscriptions, operation, operatorHeaders, packageEventTopics, pollEvent, serveApi, serveMcp, serveSocket, serveWebSocket, socketCall, socketPath, type CompletionReceipt, type CompletionWatch, type EventTarget, type InvocationContext, type Occurrence } from "@stack/api";
+import { api, serverCompletionCheck, type ServerContext } from "../api.js";
 import { StatusSource } from "../src/status.js";
 import { authorizeWorkerRead, createMcpEventSubscriptions, verifiedTarget } from "../src/mcp-delivery.js";
 import { serverStateOperations } from "../src/state.js";
@@ -294,6 +295,215 @@ test("event values are admitted on idle and working sanctioned threads without w
     for (const peer of wss.clients) peer.terminate();
     await new Promise<void>((resolve) => wss.close(() => resolve()));
     await new Promise<void>((resolve) => http.close(() => resolve()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("operator completion history stays on private transports with bounded exact identity links and payload-free notices", { timeout: 60_000 }, async () => {
+  const root = await mkdtemp("/tmp/as-completions-");
+  const env = { STACK_STATE_DIR: root, STACK_WEBSOCKET_PORT: "0", STACK_MCP_PORT: "0" };
+  for (const name of ["sample", "notify", "proc", "browse", "worker", "brain"]) {
+    await mkdir(join(root, "packages", name), { recursive: true });
+    await writeFile(join(root, "packages", name, "api.yaml"),
+      `name: ${name}\ndescription: Test.\nsocket:\n  description: Test.\nmcp:\n  description: Test.\n  operations: all\n  events: all\n`);
+  }
+  await mkdir(join(root, "packages", "serve"), { recursive: true });
+  await writeFile(join(root, "packages", "serve", "api.yaml"),
+    "name: serve\ndescription: Test.\nsocket:\n  description: Test.\nmcp:\n  workerOperations: []\n  operations: [serve_status]\n  events: []\n  description: Test.\nwebsocket:\n  description: Test.\n  operations: [serve_completion_list, serve_completion_get]\n  events: all\n");
+
+  const caller: InvocationContext = { transport: "mcp", botId: "bot-1", instance: "launch-1", threadId: "main", sessionId: "session-1" };
+  const identityCalls: Array<{ name: string; arguments: Record<string, unknown>; invocation: InvocationContext | undefined }> = [];
+  const behaviors = new Map<string, (args: Record<string, unknown>) => unknown | Promise<unknown>>();
+  const ownerSockets: Array<{ close(): Promise<void> }> = [];
+  const watch: CompletionWatch = { topic: "changed", readOperation: "read_op", idArgument: "requestId", terminalField: "result", defaultWhen: [],
+    defaultOnForBot: true, scope: { input: "requestId", prefix: "request:" },
+    readArguments: { requestId: { input: "requestId" }, botId: { invocation: "botId" }, threadId: { invocation: "threadId" } } };
+  const ownerSocket = async (name: string, admitOps: string[], identityName?: string) => {
+    const socket = await serveSocket({
+      info: { name, description: "Test.", transportDescription: "Socket.", path: socketPath(name, env) }, context: {},
+      operations: [
+        ...admitOps.map((admitOp) => operation({ name: admitOp, description: "Admit.", input: z.strictObject({ requestId: z.uuid() }), output: z.object({ admitted: z.string() }), completionWatch: watch,
+          async call(_ctx, { requestId }: { requestId: string }) { return { admitted: requestId }; } })),
+        operation({ name: "read_op", description: "Read.", input: z.strictObject({ requestId: z.string(), botId: z.string(), threadId: z.string() }), output: z.object({ result: z.null() }), annotations: { readOnlyHint: true },
+          async call() { return { result: null }; } }),
+        ...(identityName ? [operation({ name: identityName, description: "Identity.", input: z.looseObject({}), output: z.strictObject({ link: z.unknown().nullable() }),
+          async call(_ctx, args: Record<string, unknown>, invocation) {
+            identityCalls.push({ name: identityName, arguments: args, invocation });
+            const reply = behaviors.get(String(args.requestId));
+            return { link: reply ? await reply(args) : null };
+          } })] : []),
+      ],
+      events: { topics: { changed: "Changed." }, scope: { description: "Exact request.", example: "request:UUID", required: true, valid: (_ctx, scope) => /^request:[0-9a-f-]{36}$/.test(scope) } },
+    });
+    ownerSockets.push(socket);
+    return socket;
+  };
+  await ownerSocket("notify", ["notification_send"]);
+  await ownerSocket("proc", ["proc_run_start"]);
+  await ownerSocket("browse", ["browser_handoff_request"], "browser_completion_identity_get");
+  const worker = await ownerSocket("worker", ["worker_start", "worker_send"], "worker_completion_identity_get");
+  await ownerSocket("brain", ["submit", "sources_sync"], "brain_completion_identity_get");
+  await ownerSocket("sample", ["admit"]);
+
+  const subscriptions = new McpEventSubscriptions(env, async () => undefined, async () => undefined, undefined, undefined, root);
+  const source = new StatusSource();
+  source.subscriptions = subscriptions;
+  subscriptions.onChange = () => source.onStateChange?.();
+  subscriptions.onSubscriptionsChange = () => source.onSubscriptionsChange?.();
+  const ctx = { source, env, resources: {} as never, codexTools: {} as never, developer: {} as never } as unknown as ServerContext;
+  const serve = await serveSocket({
+    info: { name: "serve", description: "Serve.", transportDescription: "Socket.", path: socketPath("serve", env) },
+    context: ctx, operations: api.operations, events: { topics: packageEventTopics("serve", api.events!) },
+  });
+  const stopEvents = await api.events!.start(ctx, (topic, scope) => serve.publish?.(topic, scope));
+  const served = await serveWebSocket({ root, env });
+  const mcp = await serveMcp({ env, root });
+  let ws: WebSocket | undefined;
+  const admit = async (pkg: string, op: string) => {
+    const requestId = randomUUID();
+    const result = await subscriptions.callAndWatch(pkg, op, { requestId }, caller);
+    return { requestId, receiptId: (result.subscription as { id: string }).id };
+  };
+  type Detail = { receipt: Record<string, unknown> | null; link: Record<string, unknown> | null; linkStatus: string };
+  const get = (id: string) => socketCall(socketPath("serve", env), "tools/call", { name: "serve_completion_get", arguments: { id } }) as Promise<Detail>;
+  const list = (args: Record<string, unknown> = {}) => socketCall(socketPath("serve", env), "tools/call", { name: "serve_completion_list", arguments: args }) as Promise<{ completions: Array<Record<string, unknown>>; revision: string; total: number; nextOffset: number | null; truncated: boolean }>;
+  const notices: string[] = [];
+  try {
+    ws = await new Promise<WebSocket>((resolve, reject) => {
+      const client = new WebSocket(served.url, { headers: operatorHeaders(env) });
+      client.once("open", () => resolve(client)); client.once("error", reject);
+    });
+    const send = (id: number, method: string, params: Record<string, unknown>) => ws!.send(JSON.stringify({ id, method, params }));
+    const next = (ms = 5_000) => new Promise<{ id?: number; result?: unknown; error?: { message: string }; method?: string; params?: Record<string, unknown> }>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("no frame")), ms);
+      ws!.once("message", (raw) => { clearTimeout(timer); resolve(JSON.parse(String(raw))); });
+    });
+    ws.on("message", (raw) => { const frame = JSON.parse(String(raw)) as { method?: string; params?: { topic?: string } }; if (frame.method === "events/changed" && frame.params?.topic) notices.push(frame.params.topic); });
+    send(1, "tools/list", { package: "serve" });
+    const listed = await next();
+    assert.deepEqual((listed.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name).sort(), ["serve_completion_get", "serve_completion_list"],
+      "exactly the completion reads are exposed over WebSocket");
+    send(2, "events/subscribe", { package: "serve", subscription: "sub", topics: ["serve_subscriptions_changed", "serve_state_changed"] });
+    assert.equal((await next()).id, 2);
+
+    const notifyCase = await admit("notify", "notification_send");
+    const procCase = await admit("proc", "proc_run_start");
+    const browseCase = await admit("browse", "browser_handoff_request");
+    const handoffId = randomUUID();
+    behaviors.set(browseCase.requestId, () => ({ kind: "browse", requestId: browseCase.requestId, handoffId }));
+    const workerStartCase = await admit("worker", "worker_start");
+    const workerId = randomUUID(), turnId = randomUUID();
+    behaviors.set(workerStartCase.requestId, () => ({ kind: "worker", requestId: workerStartCase.requestId, workerId, turnId }));
+    const workerSendCase = await admit("worker", "worker_send");
+    const followTurnId = randomUUID();
+    behaviors.set(workerSendCase.requestId, () => ({ kind: "worker", requestId: workerSendCase.requestId, workerId, turnId: followTurnId }));
+    const brainSubmitCase = await admit("brain", "submit");
+    behaviors.set(brainSubmitCase.requestId, () => ({ kind: "brain-submit", requestId: brainSubmitCase.requestId, jobId: 7, documentId: null }));
+    const brainSourcesCase = await admit("brain", "sources_sync");
+    behaviors.set(brainSourcesCase.requestId, () => ({ kind: "brain-sources", requestId: brainSourcesCase.requestId, runIds: [3, 1, 2] }));
+    const unsupportedCase = await admit("sample", "admit");
+    const missingCase = await admit("browse", "browser_handoff_request");
+    const throwingCase = await admit("browse", "browser_handoff_request");
+    behaviors.set(throwingCase.requestId, () => { throw new Error("CANARY-OWNER-ERROR"); });
+    const wrongIdCase = await admit("browse", "browser_handoff_request");
+    behaviors.set(wrongIdCase.requestId, () => ({ kind: "browse", requestId: randomUUID(), handoffId }));
+    const wrongKindCase = await admit("browse", "browser_handoff_request");
+    behaviors.set(wrongKindCase.requestId, () => ({ kind: "notify", notificationId: randomUUID() }));
+    const extraCase = await admit("browse", "browser_handoff_request");
+    behaviors.set(extraCase.requestId, () => ({ kind: "browse", requestId: extraCase.requestId, handoffId, extra: 1 }));
+    const slowCase = await admit("browse", "browser_handoff_request");
+    behaviors.set(slowCase.requestId, async () => { await pause(6_000); return null; });
+    const absentCase = await admit("worker", "worker_start");
+
+    await until(() => notices.includes("serve_subscriptions_changed") && notices.includes("serve_state_changed"));
+
+    const page = await list({ limit: 50 });
+    assert.equal(page.total, 15);
+    const ids = page.completions.map((row) => String(row.id));
+    assert.deepEqual(ids, [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), "receipt pages order by receipt id");
+    assert.equal(page.truncated, false);
+
+    let callsBefore = identityCalls.length;
+    const notifyDetail = await get(notifyCase.receiptId);
+    assert.equal(notifyDetail.receipt?.pkg, "notify");
+    assert.equal(notifyDetail.receipt?.operation, "notification_send");
+    assert.equal(notifyDetail.linkStatus, "resolved");
+    assert.deepEqual(notifyDetail.link, { kind: "notify", notificationId: notifyCase.requestId });
+    const procDetail = await get(procCase.receiptId);
+    assert.equal(procDetail.linkStatus, "resolved");
+    assert.deepEqual(procDetail.link, { kind: "proc", runId: procCase.requestId });
+    assert.equal(identityCalls.length, callsBefore, "local links never call owner sockets");
+
+    const detail = await get(browseCase.receiptId);
+    assert.equal(detail.linkStatus, "resolved");
+    assert.deepEqual(detail.link, { kind: "browse", requestId: browseCase.requestId, handoffId });
+    assert.equal(identityCalls.length, callsBefore + 1, "each get performs at most one owner call");
+    const identityCall = identityCalls.at(-1)!;
+    assert.equal(identityCall.name, "browser_completion_identity_get");
+    assert.deepEqual(Object.keys(identityCall.arguments).sort(), ["botId", "requestId", "threadId"], "identity calls carry exact identity only");
+    assert.equal(identityCall.invocation, undefined, "no invocation is forwarded to identity helpers");
+
+    const workerDetail = await get(workerStartCase.receiptId);
+    assert.deepEqual(workerDetail.link, { kind: "worker", requestId: workerStartCase.requestId, workerId, turnId });
+    const followDetail = await get(workerSendCase.receiptId);
+    assert.deepEqual(followDetail.link, { kind: "worker", requestId: workerSendCase.requestId, workerId, turnId: followTurnId });
+    const brainDetail = await get(brainSubmitCase.receiptId);
+    assert.deepEqual(brainDetail.link, { kind: "brain-submit", requestId: brainSubmitCase.requestId, jobId: 7, documentId: null });
+    const brainSourcesDetail = await get(brainSourcesCase.receiptId);
+    assert.deepEqual(brainSourcesDetail.link, { kind: "brain-sources", requestId: brainSourcesCase.requestId, runIds: [3, 1, 2] });
+    const brainCalls = identityCalls.filter((call) => call.name === "brain_completion_identity_get");
+    assert.equal(brainCalls.length, 2);
+    assert.deepEqual(brainCalls[0]!.arguments, { botId: "bot-1", threadId: "main", requestId: brainSubmitCase.requestId, operation: "submit" });
+    assert.deepEqual(brainCalls[1]!.arguments, { botId: "bot-1", threadId: "main", requestId: brainSourcesCase.requestId, operation: "sources_sync" });
+
+    assert.equal((await get(unsupportedCase.receiptId)).linkStatus, "unsupported");
+    assert.equal((await get(randomUUID())).linkStatus, "not_found");
+    assert.equal((await get(missingCase.receiptId)).linkStatus, "missing");
+    const thrown = await get(throwingCase.receiptId);
+    assert.equal(thrown.linkStatus, "unavailable");
+    assert.ok(!JSON.stringify(thrown).includes("CANARY"), "owner error text never reaches the output");
+    assert.equal((await get(wrongIdCase.receiptId)).linkStatus, "unavailable");
+    assert.equal((await get(wrongKindCase.receiptId)).linkStatus, "unavailable");
+    assert.equal((await get(extraCase.receiptId)).linkStatus, "unavailable");
+
+    const slowStarted = Date.now();
+    assert.equal((await get(slowCase.receiptId)).linkStatus, "unavailable");
+    assert.ok(Date.now() - slowStarted < 9_000, "owner lookups are bounded near five seconds");
+
+    await worker.close();
+    const absent = await get(absentCase.receiptId);
+    assert.equal(absent.linkStatus, "unavailable", "a stopped owner cannot fabricate a link");
+    assert.equal(absent.receipt?.id, absentCase.receiptId, "the receipt still reports");
+
+    // The same reads over the WebSocket transport.
+    send(3, "tools/call", { package: "serve", name: "serve_completion_list", arguments: { limit: 3 } });
+    const wsPage = await next();
+    assert.equal((wsPage.result as { total: number }).total, 15);
+    send(4, "tools/call", { package: "serve", name: "serve_completion_get", arguments: { id: notifyCase.receiptId } });
+    const wsDetail = await next() as { result?: Detail };
+    assert.equal(wsDetail.result?.linkStatus, "resolved");
+    assert.deepEqual(wsDetail.result?.link, { kind: "notify", notificationId: notifyCase.requestId });
+
+    // MCP never exposes these reads.
+    let mcpId = 0;
+    type McpReply = { result?: { tools?: Array<{ name: string }>; isError?: boolean }; error?: { message: string } };
+    const request = async (method: string, params: Record<string, unknown> = {}, notification = false): Promise<McpReply> => {
+      const response = await fetch(mcp.urls.serve!, { method: "POST", headers: { ...operatorHeaders(env), "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: ++mcpId, method, params }) });
+      if (notification) { await response.text(); return {}; }
+      return await response.json() as McpReply;
+    };
+    await request("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "fixture", version: "0" } });
+    await request("notifications/initialized", {}, true);
+    const tools = (await request("tools/list", {})).result?.tools ?? [];
+    assert.ok(!tools.some((tool: { name: string }) => tool.name.startsWith("serve_completion")), "completion reads are not MCP tools");
+    const refused = await request("tools/call", { name: "serve_completion_list", arguments: {} });
+    assert.ok(refused.error || refused.result?.isError, "an MCP call to a completion read is refused");
+  } finally {
+    ws?.close();
+    await mcp.close(); await served.close();
+    await stopEvents?.(); await serve.close(); await subscriptions.close();
+    for (const socket of ownerSockets) await socket.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 });

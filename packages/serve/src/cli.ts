@@ -179,6 +179,7 @@ let catalog: Awaited<ReturnType<typeof serveInspectorCatalog>> | undefined;
 const subscriptions = createMcpEventSubscriptions(process.env);
 statusSource.subscriptions = subscriptions;
 subscriptions.onChange = () => statusSource.onStateChange?.();
+subscriptions.onSubscriptionsChange = () => statusSource.onSubscriptionsChange?.();
 try {
   mcp = await serveMcp({ env: process.env, subscriptions });
   statusSource.setMcpUrls(mcp.urls);

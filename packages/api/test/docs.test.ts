@@ -16,7 +16,7 @@ type TransportDoc = { type: string; description: string; supported: boolean; sub
 type OperationDoc = { name: string; title: string | null; description: string; standalone: boolean; annotations: Record<string, unknown>; inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>;
   completionWatch: CompletionWatch | null };
 type PackageDoc = { name: string; description: string; packageName: string; operations: OperationDoc[]; events: Record<string, string>; eventScope: { description: string; example: string; required: boolean } | null; transports: TransportDoc[] };
-const stateOperation = (name: string) => /_factory_reset_|_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|_settings_receipts_(plan|clear)$|^browser_(profile_reset_|site_data_|volume_|handoff_history_)|^role_launch_(list|plan|clear)$|^worker_account_cache_(plan|clear)$|^attention_checkpoint_(plan|reset)$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_(subscription|occurrence)_|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_|publication_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
+const stateOperation = (name: string) => /_factory_reset_|_state_|_bot_dependencies$|_history_(plan|clear)$|_catalog_clear$|_settings_receipts_(plan|clear)$|^browser_(profile_reset_|site_data_|volume_|handoff_history_)|^role_launch_(list|plan|clear)$|^worker_account_cache_(plan|clear)$|^attention_checkpoint_(plan|reset)$|^brain_(jobs|runs|source|artifacts)_(plan|clear)$|^scrape_(queue_(plan|apply)$|corpus_(list|plan|clear)$)|^serve_(subscription|occurrence|completion)_|_completion_identity_get$|^bot_(workspace_|history_|log_|launch_|recovery_|session_reset$|upload_remove$|queue_history$|queue_bodies_clear$)|^chat_upload_(list|read)$|^content_(blob_list|storage_|publication_)|^blob_stage_(list|abort)$|^attention_infer_requests$|^usage_observations_|^xcom_control$|^worker_workspace_|^work_focus_(list|retire)/.test(name);
 
 test("the api package serves structured documents for every workspace package", { timeout: 60_000 }, async () => {
   assert.equal(docsSnapshot.name, "docs_snapshot");
@@ -483,9 +483,17 @@ test("the api package serves structured documents for every workspace package", 
       assert.ok(server.operations.some(op => op.name === name));
       assert.ok(server.transports.filter(transport => transport.type !== "socket").every(transport => !transport.operations.includes(name)));
     }
-    assert.deepEqual(Object.keys(server.events), ["serve_state_changed", "pids_changed", "codex_tools_changed", "resources_changed", "serve_settings_changed", "harness_releases_changed"]);
+    assert.deepEqual(Object.keys(server.events), ["serve_state_changed", "serve_subscriptions_changed", "pids_changed", "codex_tools_changed", "resources_changed", "serve_settings_changed", "harness_releases_changed"]);
     assert.deepEqual(server.operations.map((operation) => operation.name).filter(name => !stateOperation(name)), ["serve_status", "serve_codex_tools", "serve_codex_tools_check", "serve_resources", "serve_resource_history", "serve_local_connect", "serve_local_revoke", "serve_mcp_event", "serve_completion_check",
       "serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check"]);
+    // Operator completion history is socket/WebSocket only — never MCP or remote.
+    for (const name of ["serve_completion_list", "serve_completion_get"])
+      assert.deepEqual(server.transports.filter(transport => transport.operations.includes(name)).map(transport => transport.type).sort(), ["socket", "websocket"], name);
+    for (const [doc, identity] of [["browse", "browser_completion_identity_get"], ["worker", "worker_completion_identity_get"], ["brain", "brain_completion_identity_get"]] as const) {
+      const pkg = found.get(doc) as PackageDoc;
+      assert.ok(pkg.operations.some((operation) => operation.name === identity), `${doc} socket declares ${identity}`);
+      assert.ok(pkg.transports.filter((transport) => transport.type !== "socket").every((transport) => !transport.operations.includes(identity)), `${identity} is socket-only`);
+    }
     const serveOperation = (name: string) => server.operations.find((operation) => operation.name === name)!;
     for (const name of ["serve_settings_read", "serve_settings_update", "serve_harness_releases", "serve_harness_releases_check"]) {
       assert.deepEqual(server.transports.filter(transport => transport.operations.includes(name)).map(transport => transport.type).sort(), ["socket", "websocket"]);

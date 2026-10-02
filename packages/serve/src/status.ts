@@ -19,6 +19,7 @@ export class StatusSource {
   factoryReset: FactoryResetHooks | null = null;
   subscriptions: McpEventSubscriptions | null = null;
   onStateChange?: () => void;
+  onSubscriptionsChange?: () => void;
   private server: RunningServer | null = null;
   private readonly startedAt = new Date(Date.now() - process.uptime() * 1000).toISOString();
   private indexUrl: string | null = null;

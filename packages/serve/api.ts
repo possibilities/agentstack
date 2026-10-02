@@ -4,6 +4,7 @@ import { statusSource, type StatusSource } from "./src/status.js";
 import { ResourceMonitor } from "./src/resources/monitor.js";
 import { serverResourcesInput, serverResourcesOutput, serverResourceHistoryInput, serverResourceHistoryOutput } from "./src/resources/schema.js";
 import { serverStateOperations } from "./src/state.js";
+import { serverCompletionOperations } from "./src/completions.js";
 import { withStateInventory } from "@stack/api";
 import { serverStateCategories } from "./src/state-categories.js";
 import { invocationContext, mcpEventRelayInput, relayMcpEvent, workspaceRoot } from "@stack/api";
@@ -197,6 +198,7 @@ export const serverHarnessReleasesCheck = operation({
 
 export const topics = {
   serve_state_changed: "Durable subscription state changed. Refresh serve_subscription_list, serve_occurrence_list and affected state inventories; no payloads are included.",
+  serve_subscriptions_changed: "The durable subscription set or a retained completion receipt changed, including pending, unknown and recovery transitions that never surface as state reads. Refresh serve_subscription_list, serve_occurrence_list and serve_completion_list; no payloads are included.",
   pids_changed: "Published when the set of owned child process ids changes.",
   codex_tools_changed: "Published when a Codex tools check starts or finishes. Refresh serve_codex_tools.",
   resources_changed: "Published after a resource sampling attempt, including failures. Refresh serve_resources or serve_resource_history; notices carry no metrics.",
@@ -207,13 +209,14 @@ export const topics = {
 export type ServerTopic = keyof typeof topics;
 
 const packageApi: PackageApi<ServerContext, ServerTopic> = {
-  operations: [...factoryResetOperations, ...serverStateOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke, serverMcpEvent, serverCompletionCheck,
+  operations: [...factoryResetOperations, ...serverStateOperations, ...serverCompletionOperations, serverStatus, serverCodexTools, serverCodexToolsCheck, serverResources, serverResourceHistory, serverLocalConnect, serverLocalRevoke, serverMcpEvent, serverCompletionCheck,
     serverSettingsRead, serverSettingsUpdate, serverHarnessReleases, serverHarnessReleasesCheck],
   events: {
     topics,
     start(ctx: ServerContext, publish: (topic: ServerTopic) => void) {
       ctx.source.onChange = () => publish("pids_changed");
       ctx.source.onStateChange = () => publish("serve_state_changed");
+      ctx.source.onSubscriptionsChange = () => publish("serve_subscriptions_changed");
       ctx.resources.onChange = () => publish("resources_changed");
       ctx.codexTools.onChange = () => publish("codex_tools_changed");
       ctx.developer.onSettingsChange = () => publish("serve_settings_changed");
@@ -221,6 +224,7 @@ const packageApi: PackageApi<ServerContext, ServerTopic> = {
       return () => {
         ctx.source.onChange = undefined;
         ctx.source.onStateChange = undefined;
+        ctx.source.onSubscriptionsChange = undefined;
         ctx.resources.onChange = undefined;
         ctx.codexTools.onChange = undefined;
         ctx.developer.onSettingsChange = undefined;

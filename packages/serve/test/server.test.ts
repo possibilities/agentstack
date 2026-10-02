@@ -299,7 +299,7 @@ test("server api serves status and pids_changed on its socket", async () => {
       events: { topics: Record<string, string> } | null;
       tools: Array<{ name: string }>;
     };
-    assert.deepEqual(Object.keys(listed.events?.topics ?? {}), ["serve_state_changed", "pids_changed", "codex_tools_changed", "resources_changed", "serve_settings_changed", "harness_releases_changed"]);
+    assert.deepEqual(Object.keys(listed.events?.topics ?? {}), ["serve_state_changed", "serve_subscriptions_changed", "pids_changed", "codex_tools_changed", "resources_changed", "serve_settings_changed", "harness_releases_changed"]);
     const unavailable = await socketCall(served.socketPath!, "tools/call", { name: "serve_state_list", arguments: { owners: ["bots"] } }) as { entries: unknown[]; owners: Array<{ available: boolean; issue: string | null }> };
     assert.deepEqual(unavailable.entries, []);
     assert.equal(unavailable.owners[0]?.available, false);
