@@ -88,7 +88,7 @@ readiness; the browser then reads snapshot/list and rereads after reconnect. It
 rechecks the live session before notices and every 250 ms, closing on expiry or
 revocation. The Connections home retains last-good reads with loading/error state,
 shows local and saved remote platforms as peers, pending intents and unresolved
-jobs. Remote pair/enroll controls remain a later milestone.
+jobs. Its manual and phone entry points review remote setup outside Canvas.
 
 `bin/navigation.mjs` defines `openClientSurface`, destination-pinned `openPlatform`,
 `focusConnections` and explicit `openExternal` for the later desk adapter. Platform
@@ -97,7 +97,7 @@ pages never receive a Client/native installation bridge. The private
 with the custom ingress and bundled runtime; it does not publish a public npx
 distribution or platform release bundle. The maintained
 [desk navigation contract](desk-navigation.md) is the later native-shell boundary.
-Remote workflow screens and public release choices remain separate milestones.
+Public release choices and the native shell remain separate milestones.
 
 ### Local platform workflow
 
@@ -244,6 +244,50 @@ not a vendor-runtime fallback. Missing prerequisites are surfaced, not installed
 with sudo/brew/apt or signed in automatically.
 
 ## Remote connections and phone-mediated enrollment
+
+### Client UI workflows
+
+`/client/manual` inspects an exact HTTPS device origin and requires confirmation
+of the installation ID and every advertised origin before manual admission.
+The permission picker requires `ui:view`, with optional `ui:control` and
+`content:read`. The full selectable approval code and expiry stay visible;
+**Approved? Connect** is deliberate, never an approval poll. Optional Tailnet
+**peer** hints are read only on request and fill only the origin field.
+
+`/client/phone` generates an offline request and renders the local module matrix
+black on white, preserving the returned quiet zone in every theme. Full
+fingerprint, requested permissions and expiry accompany it. Receipt paste is
+always available; native QR camera decoding is optional and gesture-only.
+The authenticated, read-only `/api/client/receipt` handler uses Access's canonical
+`decodeQr` and request fingerprint to preview a matching receipt. It performs no
+host mutation or network request. Runtime protocol schemas stay server-side under
+the Client's nonce-only script CSP. Confirmation precedes receipt acceptance;
+redemption is a separate deliberate action. Expiry never renews an intent.
+
+`/client/connections/<id>` opens an exact destination in a separate tab through
+the destination-pinned navigation adapter. UUID and exact input are persisted
+before manual/enrollment admission and every Open dispatch, including retries,
+under the Client root and destination (offline enrollment uses its own intent
+identity until a destination is confirmed). Storage failure blocks dispatch.
+Pending intent links inspect host-owned metadata; recovery never dispatches on
+mount. A listed `pendingOpen` always wins and recovery uses that UUID.
+Without a pending rotation, a consumed/expired handoff needs a new deliberate
+Open, not re-pairing. Unknown answers stay frozen until inspection and an explicit
+recovery decision. No capability URL or native credential enters browser storage.
+
+Forget captures `expectedRevision` for explicit local removal. Conflicts reread
+the record and require review/confirmation again, never automatic retries.
+It is not remote revocation, secure erase or guaranteed viewer sign-out.
+Changed identity/destinations require a new inspected connection; no relocation
+or pending-open reset is invented. The five-minute native retry limit and
+re-enroll/forget recovery are shown on unresolved Open details.
+
+Pending enrollment metadata does not expose a saved receipt's destination, so
+after reload the person must deliberately recover the same request QR and paste
+the receipt again to review it before redemption. A lost enrollment-redemption
+answer may need manual reconciliation against Connections: there is no public
+intent-to-completed-connection lookup. Connection metadata also cannot establish
+live scopes or grant status; owner refusals are reported without inferring them.
 
 | Operation | Contract |
 | --- | --- |

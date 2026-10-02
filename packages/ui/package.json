@@ -13,6 +13,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@stack/access": "workspace:*",
     "@stack/api": "workspace:*",
     "@stack/client": "workspace:*",
     "@base-ui/react": "^1.8.0",

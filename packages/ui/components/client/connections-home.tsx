@@ -4,7 +4,7 @@ import { ArrowRightIcon, GlobeIcon, LaptopIcon } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { buttonVariants } from "@/components/ui/button";
 import { useClientObservation } from "@/lib/client/use-observation";
-import { JobSummary, stageName } from "./jobs";
+import { JobSummary, shortId, stageName } from "./jobs";
 import { Facts, ObservationStatus, StatusChip, useNow, type Tone } from "./parts";
 import { ClientShell } from "./shell";
 
@@ -16,8 +16,8 @@ export function ConnectionsHome() {
   const snapshot = observation?.snapshot;
   const peers = observation?.peers;
   const unresolved = snapshot?.jobs.filter(job => job.state === "running" || job.state === "unknown") ?? [];
-  const pending = [...(peers?.pending.pairings ?? []).map(intent => ({ ...intent, kind: "Manual pairing" })),
-    ...(peers?.pending.enrollments ?? []).map(intent => ({ ...intent, kind: "Phone enrollment" }))];
+  const pending = [...(peers?.pending.pairings ?? []).map(intent => ({ ...intent, kind: "Manual pairing", href: `/client/manual?intent=${intent.id}` })),
+    ...(peers?.pending.enrollments ?? []).map(intent => ({ ...intent, kind: "Phone enrollment", href: `/client/phone?intent=${intent.id}` }))];
   const localState = !snapshot ? error ? "Observation unavailable" : "Loading" : snapshot.service.ready ? "Ready" : !snapshot.service.available ? "Observation unavailable"
     : snapshot.service.running ? "Running, not ready" : snapshot.installation ? "Installed, stopped" : "Not installed";
   const login = snapshot?.service.login;
@@ -26,6 +26,8 @@ export function ConnectionsHome() {
         <h1 className="text-2xl font-semibold tracking-tight">Connections</h1>
         <p className="text-muted-foreground">The platform on this machine and your saved remote platforms, side by side. Closing this Client UI does not stop any of them.</p>
         <ObservationStatus loading={loading} at={observation?.at ?? null} />
+        <div className="flex flex-wrap gap-2"><a className={buttonVariants({ size: "sm" })} href="/client/manual">Connect manually</a>
+          <a className={buttonVariants({ variant: "outline", size: "sm" })} href="/client/phone">Connect through phone</a></div>
       </div>
       {error ? <Alert variant="destructive"><AlertTitle>Observation interrupted</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       <section aria-labelledby="platforms-title" className="client-section">
@@ -48,7 +50,8 @@ export function ConnectionsHome() {
               <Facts items={[["Device", peer.connection.deviceOrigin, { mono: true }],
                 ["Platform UI", peer.connection.uiOrigin ?? <span className="font-sans text-muted-foreground">Not advertised by this platform</span>, { mono: !!peer.connection.uiOrigin }]]} />
             </div>
-            <div className="client-peer-footer"><p className="text-sm text-muted-foreground">Saved — not a live connection.</p></div>
+            <div className="client-peer-footer flex-wrap justify-between gap-2"><p className="text-sm text-muted-foreground">Saved — not a live connection.</p>
+              <a className={buttonVariants({ variant: "outline", size: "sm" })} href={`/client/connections/${peer.id}`}>Manage<ArrowRightIcon aria-hidden data-icon="inline-end" /></a></div>
           </li>)}
         </ul>
         {peers && !peers.connections.length ? <p className="text-sm text-muted-foreground">No saved remote connections.</p> : null}
@@ -57,8 +60,9 @@ export function ConnectionsHome() {
         <div className="flex flex-col gap-1"><h2 id="pending-title" className="client-section-title">Pending connections</h2>
           <p className="text-sm text-muted-foreground">Incomplete pairings and phone enrollments. Nothing is redeemed or retried automatically.</p></div>
         {pending.length ? <ul className="client-list">{pending.map(intent => <li key={`${intent.kind}:${intent.id}`} className="client-list-row">
-          <div className="flex min-w-0 flex-col"><p className="font-medium">{intent.label}</p><p className="text-sm text-muted-foreground">{intent.kind}</p></div>
+          <div className="flex min-w-0 flex-col"><p className="font-medium">{intent.label}</p><p className="text-sm text-muted-foreground">{intent.kind} · <span className="font-mono">{shortId(intent.id)}</span></p></div>
           <StatusChip tone={intent.connectionId ? "neutral" : "muted"}>{intent.connectionId ? "Connection retained" : "Incomplete"}</StatusChip>
+          <a className={buttonVariants({ variant: "outline", size: "sm" })} href={intent.href}>Review pending intent</a>
         </li>)}</ul> : <p className="text-sm text-muted-foreground">{observation ? "No pending connections." : "Waiting for an observation."}</p>}
       </section>
       <section aria-labelledby="jobs-title" className="client-section">

@@ -26,9 +26,15 @@ export async function POST(request: Request) {
     return json({ output });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    const safe = ["trusted_release_required", "trusted_release_changed", "revision_conflict", "job_not_found", "request_conflict"];
-    const code = safe.includes(message) ? message : "client_call_failed";
-    const definiteRefusal = safe.includes(message);
+    const definite = ["trusted_release_required", "trusted_release_changed", "revision_conflict", "job_not_found", "request_conflict"];
+    // These bounded owner codes carry no URL, credential or arbitrary remote
+    // text. A known reason does NOT imply that preceding host writes had no effect.
+    const remote = ["approval_pending", "pairing_denied", "pairing_expired_or_invalid", "server_destination_mismatch", "server_connection_changed",
+      "server_identity_mismatch", "ui_destination_mismatch", "credential_revoked", "credential_expired", "insufficient_scope", "grant_changed",
+      "refresh_reused_repair_required", "refresh_superseded", "refresh_recovery_required", "ui_handoff_expired", "ui_not_configured",
+      "enrollment_expired_or_clock_skew", "enrollment_authority_changed", "enrollment_invalid", "enrollment_receipt_mismatch"];
+    const code = [...definite, ...remote].includes(message) ? message : "client_call_failed";
+    const definiteRefusal = definite.includes(message);
     return json({ error: code, uncertain: !definiteRefusal && !(error instanceof SocketCallError && !error.dispatched) }, 502);
   }
 }
