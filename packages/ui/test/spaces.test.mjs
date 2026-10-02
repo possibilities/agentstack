@@ -54,6 +54,7 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "research-source", id: "hn-front" }), { kind: "space", space: "brain", window: "brain-sources" });
   assert.deepEqual(homeOf({ kind: "github-receiver", id: "11111111-1111-4111-8111-111111111111" }), { kind: "space", space: "source", window: "source-receivers" });
   assert.deepEqual(homeOf({ kind: "github-delivery", id: "42" }), { kind: "space", space: "source", window: "source-delivery" });
+  assert.deepEqual(homeOf({ kind: "github-watch", id: "22222222-2222-4222-8222-222222222222" }), { kind: "space", space: "source", window: "source-watches" });
   assert.deepEqual(homeOf({ kind: "proc-schedule", id: "s1" }), { kind: "space", space: "proc", window: "proc-schedules" });
   assert.deepEqual(homeOf({ kind: "proc-execution", id: "e1" }), { kind: "space", space: "proc", window: "proc-schedule" });
   assert.deepEqual(homeOf({ kind: "proc-run", id: "r1" }), { kind: "space", space: "proc", window: "proc-runs" });
@@ -157,6 +158,7 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "work-item", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
     { kind: "github-receiver", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
     { kind: "github-delivery", id: "1042" },
+    { kind: "github-watch", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
   ];
   for (const ref of refs) assert.deepEqual(parseNodeKey(nodeKey(ref)), ref);
   for (const bad of ["", "bogus", "account:", "operation:bots"]) assert.equal(parseNodeKey(bad), null);

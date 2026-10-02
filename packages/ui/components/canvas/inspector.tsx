@@ -584,6 +584,19 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.pkg === "source"),
       };
     }
+    case "github-watch": {
+      const watch = state.sourceWatches.data?.find((item) => item.id === ref.id);
+      if (!watch) return null;
+      const counts = state.sourceWatchCounts[watch.id];
+      return {
+        eyebrow: `Source watch · notifications ${watch.enabled ? "on" : "off"}`, accent: "source", title: watch.label, record: { ...watch, ...(counts ? { pending: counts.pending, matchedThrough: counts.through } : {}) },
+        fields: new Map(fieldsOf(findOperation(catalog, "source", "github_watch_get")?.outputSchema).map((field) => [field.name, field])),
+        body: <SourceHandOff label="Open its inbox" run={(store) => store.selectSourceWatch(watch.id)} target={{ kind: "github-watch", id: watch.id }} />,
+        related: [{ ref: { kind: "package", id: "source" }, label: "source Package API" }, { ref: { kind: "operation", pkg: "source", id: "github_watch_events" }, label: "github_watch_events" }],
+        operations: { pkg: "source", list: sourceOperations(catalog, ["github_watch_get", "github_watch_read", "github_watch_update", "github_watch_acknowledge", "github_watch_remove", "github_watch_events"]) },
+        events: state.events.filter((event) => event.pkg === "source"),
+      };
+    }
     case "proc-schedule": {
       const schedule = state.procSchedules.data?.find((item) => item.id === ref.id);
       if (!schedule) return null;
@@ -897,7 +910,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";
   if (ref.kind === "proc-schedule" || ref.kind === "proc-execution" || ref.kind === "proc-run" || ref.kind === "proc-run-window") return "proc";
   if (ref.kind === "work-item") return "hud";
-  if (ref.kind === "github-receiver" || ref.kind === "github-delivery") return "source";
+  if (ref.kind === "github-receiver" || ref.kind === "github-delivery" || ref.kind === "github-watch") return "source";
   if (ref.kind === "usage" || ref.kind === "usage-account") return "usage";
   if (ref.kind === "preset" || ref.kind === "scrape-job") return "scrape";
   if (ref.kind === "browser-profile" || ref.kind === "browser-handoff" || ref.kind === "browser-controller" || ref.kind === "browser-viewer") return "browse";

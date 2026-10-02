@@ -21,6 +21,7 @@ import { ReceiversWindow } from "./source-receivers";
 import { CatalogWindow as SourceCatalogWindow } from "./source-catalog";
 import { DeliveriesWindow } from "./source-deliveries";
 import { DeliveryWindow } from "./source-delivery";
+import { WatchesWindow } from "./source-watches";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
 import { type Accent } from "./window";
@@ -257,6 +258,7 @@ export const spaceViews: Record<SpaceId, {
       { id: "source-catalog", title: "Event catalog", icon: BookMarkedIcon, accent: "source", width: 460, height: 480, column: 0, element: <SourceCatalogWindow /> },
       { id: "source-deliveries", title: "Deliveries", icon: InboxIcon, accent: "source", width: 620, height: 780, column: 1, fixed: true, element: <DeliveriesWindow /> },
       { id: "source-delivery", title: "Delivery", icon: FileJsonIcon, accent: "source", width: 640, height: 780, column: 2, fixed: true, element: <DeliveryWindow /> },
+      { id: "source-watches", title: "Watches", icon: EyeIcon, accent: "source", width: 540, height: 780, column: 3, fixed: true, element: <WatchesWindow /> },
     ],
   },
   proc: {

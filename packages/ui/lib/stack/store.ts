@@ -17,7 +17,8 @@ import type { SettingsCatalog, SettingsView } from "./types";
 import { catalogRequest, readRequest, settingsKey, settingsPackage, type SettingsTarget } from "./settings";
 import { loadTree, type HudTree } from "./hud";
 import { initialLedger, SourceLedger, type LedgerState } from "./source";
-import type { GithubDelivery, GithubDeliveryPage, GithubEndpoint, GithubFilter, GithubSetup, GithubStatus } from "./types";
+import { initialInbox, WatchInbox, type InboxState, type WatchCreateInput } from "./source-watches";
+import type { GithubDelivery, GithubDeliveryPage, GithubEndpoint, GithubFilter, GithubSetup, GithubStatus, GithubWatch, GithubWatchRead } from "./types";
 import { continueCompletions, continueInventory, continueOccurrences, continueSubscriptions, loadCompletions, loadInventory, loadOccurrences, loadSubscriptions, type CompletionFilter, type CompletionList, type OccurrenceFilter, type OccurrenceList, type StateInventory, type StateSelection, type SubscriptionFilter, type SubscriptionList } from "./state";
 import { checkSettled, developerModeOn, type HarnessCheck } from "./developer";
 import type { HarnessCheckAdmission, HarnessReleases, ServeSettings } from "./types";
@@ -207,6 +208,14 @@ export type StackState = Snapshot & {
   sourceSelected: number | null;
   /** Bumped on every deliveries notice and (re)connect; the reader re-reads what it holds on it, since a cleanup can change a held delivery. */
   sourceGeneration: number;
+  /** `github_watch_list`: the definitions and their consumption cursors. Pending counts are not in it. */
+  sourceWatches: Resource<GithubWatch[]>;
+  /** Pending entries and the matched high-water per watch, from `github_watch_read` with one entry: the list carries definitions only. Absent until read. */
+  sourceWatchCounts: Record<string, { pending: number; through: number; at: number }>;
+  /** The watch whose inbox the Watches window shows. */
+  sourceWatchSelected: string | null;
+  /** The selected watch's consumption inbox: paged reads, review marks and acknowledgement state. Marks live only in this page's memory. */
+  sourceInbox: InboxState;
 };
 
 export type BrainSubmission = { key: string; label: string; kind: "url" | "text"; at: number; pending: boolean; admission: BrainAdmission | null; error: CallError | null; share: BrainShareState | null };
@@ -245,7 +254,7 @@ export const contentDocumentLimit = 200;
 type ResourceKey = ContentKey | "access" | "server" | "codexTools" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "roleCatalog" | "role" | "rolePreview" | "roleLaunch" | "roleInternal" | "roleShims" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
   | "browserProfiles" | "browserControllers" | "browserHandoffs" | "browserToolchain"
   | "brainStatus" | "brainStats" | "brainTags" | "brainJobStats" | "brainJobs" | "brainSources"
-  | "procSchedules" | "procRuns" | "procStatus" | "hudTree" | "sourceStatus" | "sourceEndpoints";
+  | "procSchedules" | "procRuns" | "procStatus" | "hudTree" | "sourceStatus" | "sourceEndpoints" | "sourceWatches";
 
 /** Which reads each browse write can change; each is re-read afterwards, since a lost acknowledgement may still have acted. */
 function browseReads(name: string): ResourceKey[] {
@@ -334,6 +343,12 @@ export class StackStore {
   private readonly sourceLedgerSession: SourceLedger = new SourceLedger(
     (input) => this.call<GithubDeliveryPage>("source", "github_delivery_list", input),
     (sequence) => this.call<GithubDelivery>("source", "github_delivery_get", { sequence }));
+  private readonly sourceInboxSession: WatchInbox = new WatchInbox(
+    (input) => this.call<GithubWatchRead>("source", "github_watch_read", input),
+    (input) => this.call<GithubWatch>("source", "github_watch_acknowledge", input));
+  private sourceWatchChannel: { id: string; channel: Channel } | null = null;
+  private sourceCountsTimer: ReturnType<typeof setTimeout> | null = null;
+  private sourceCountsRun = 0;
   private workItemWatchers = new Map<string, number>();
   private workItemChannels = new Map<string, Channel>();
   private statusInflight = new Map<string, Promise<void>>();
@@ -394,8 +409,10 @@ export class StackStore {
       hudTree: { data: null, error: null, at: null }, hudTreeBudget: hudTreePage, hudGeneration: 0, hudResourceGeneration: 0, hudItemGenerations: {},
       sourceStatus: { data: null, error: null, at: null }, sourceEndpoints: { data: null, error: null, at: null }, sourceSetups: {}, sourceDeliveries: {},
       sourceLedger: initialLedger, sourceSelected: null, sourceGeneration: 0,
+      sourceWatches: { data: null, error: null, at: null }, sourceWatchCounts: {}, sourceWatchSelected: null, sourceInbox: initialInbox,
     };
     this.sourceLedgerSession.subscribe(() => this.set({ sourceLedger: this.sourceLedgerSession.getState() }));
+    this.sourceInboxSession.subscribe(() => this.set({ sourceInbox: this.sourceInboxSession.getState() }));
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
   }
@@ -530,17 +547,23 @@ export class StackStore {
     open("source", () => this.sourceReconnected(), (topic) => {
       if (topic === "github_endpoints_changed") this.sourceEndpointsChanged();
       if (topic === "github_deliveries_changed") this.sourceDeliveriesChanged();
-    }, ["github_endpoints_changed", "github_deliveries_changed"], { silent: ["github_endpoints_changed", "github_deliveries_changed"] });
+      if (topic === "github_watches_changed") this.sourceWatchesChanged();
+    }, ["github_endpoints_changed", "github_deliveries_changed", "github_watches_changed"], { silent: ["github_endpoints_changed", "github_deliveries_changed", "github_watches_changed"] });
     // Xcom is local operator state with no change events: the channel carries its reads and controls only.
     if (!this.state.remote) open("xcom", () => this.set({ xcomGeneration: this.state.xcomGeneration + 1 }));
     this.reconcileScoped();
     for (const id of this.workerWatchers.keys()) this.openWorkerChannel(id);
     for (const id of this.procRunWatchers.keys()) this.openProcChannel(id);
     for (const id of this.workItemWatchers.keys()) this.openWorkItemChannel(id);
+    if (this.state.sourceWatchSelected) this.openSourceWatchChannel(this.state.sourceWatchSelected);
   }
 
   stop(): void {
     this.sourceLedgerSession.dispose();
+    this.sourceInboxSession.dispose();
+    this.closeSourceWatchChannel();
+    if (this.sourceCountsTimer) clearTimeout(this.sourceCountsTimer);
+    this.sourceCountsTimer = null;
     this.forgetServeSettings();
     this.catalogDirty.clear();
     for (const id of this.catalogAvailable) this.catalogGeneration.set(id, (this.catalogGeneration.get(id) ?? 0) + 1);
@@ -1779,7 +1802,8 @@ export class StackStore {
   /* ---------- Source ---------- */
 
   private sourceReconnected(): void {
-    this.refresh("sourceStatus"); this.refresh("sourceEndpoints");
+    this.refresh("sourceStatus"); this.refresh("sourceEndpoints"); this.refresh("sourceWatches");
+    this.sourceInboxSession.invalidate(0);
     for (const id of Object.keys(this.state.sourceSetups)) void this.loadSourceSetup(id);
     for (const sequence of Object.keys(this.state.sourceDeliveries)) void this.loadSourceDelivery(Number(sequence));
     this.set({ sourceGeneration: this.state.sourceGeneration + 1 });
@@ -1795,6 +1819,9 @@ export class StackStore {
 
   private sourceDeliveriesChanged(): void {
     this.refresh("sourceStatus");
+    // Arrivals change every watch's pending count, including a disabled one whose scoped notices are paused, and the selected inbox.
+    this.scheduleSourceCounts();
+    this.sourceInboxSession.invalidate();
     this.set({ sourceGeneration: this.state.sourceGeneration + 1 });
   }
 
@@ -1851,7 +1878,94 @@ export class StackStore {
     this.refresh("sourceStatus"); this.refresh("sourceEndpoints");
     for (const sequence of Object.keys(this.state.sourceDeliveries)) void this.loadSourceDelivery(Number(sequence));
     this.sourceLedgerSession.invalidate(0);
+    this.sourceInboxSession.invalidate(0);
     this.set({ sourceGeneration: this.state.sourceGeneration + 1 });
+  };
+
+  /* Watches: definitions, the selected inbox and the explicit acknowledgement. Nothing here acknowledges on its own. */
+
+  /** An inventory notice (a watch was created, changed or removed): re-read the definitions and, since the selected one may be gone, its inbox. */
+  private sourceWatchesChanged(): void {
+    this.refresh("sourceWatches");
+    this.sourceInboxSession.invalidate();
+  }
+
+  /** Pending and matched high-water for up to 32 watches, one at a time: `github_watch_read` with a single entry carries them. */
+  private scheduleSourceCounts(delay = 400): void {
+    if (this.sourceCountsTimer || !this.state.sourceWatches.data?.length) return;
+    this.sourceCountsTimer = setTimeout(() => { this.sourceCountsTimer = null; void this.loadSourceCounts(); }, delay);
+  }
+
+  private async loadSourceCounts(): Promise<void> {
+    const run = ++this.sourceCountsRun;
+    const ids = (this.state.sourceWatches.data ?? []).slice(0, 32).map((watch) => watch.id);
+    for (const id of ids) {
+      if (run !== this.sourceCountsRun) return;
+      try {
+        const read = await this.call<GithubWatchRead>("source", "github_watch_read", { id, limit: 1 });
+        if (run !== this.sourceCountsRun) return;
+        this.set({ sourceWatchCounts: { ...this.state.sourceWatchCounts, [id]: { pending: read.pending, through: read.through, at: Date.now() } } });
+      } catch { /* a watch removed since the list was read has no count */ }
+    }
+    const held = new Set((this.state.sourceWatches.data ?? []).map((watch) => watch.id));
+    const counts = Object.fromEntries(Object.entries(this.state.sourceWatchCounts).filter(([id]) => held.has(id)));
+    if (Object.keys(counts).length !== Object.keys(this.state.sourceWatchCounts).length) this.set({ sourceWatchCounts: counts });
+  }
+
+  /** Show one watch's inbox, or none. Selecting reads; it never acknowledges, and neither does leaving. */
+  selectSourceWatch = (id: string | null): void => {
+    if (this.state.sourceWatchSelected === id) return;
+    this.closeSourceWatchChannel();
+    this.set({ sourceWatchSelected: id });
+    if (id === null) { this.sourceInboxSession.close(); return; }
+    void this.sourceInboxSession.open(id);
+    this.openSourceWatchChannel(id);
+  };
+
+  /** The selected inbox's scoped `watch:<id>` notices, plus a read after every (re)subscription: notices are not replayed. */
+  private openSourceWatchChannel(id: string): void {
+    const url = this.state.endpoints.source;
+    if (!url || this.sourceWatchChannel?.id === id) return;
+    this.closeSourceWatchChannel();
+    const bump = () => { if (this.sourceWatchChannel?.id === id) this.sourceInboxSession.invalidate(); };
+    const channel = new Channel(url, "source", { onOpen: bump, onNotice: bump });
+    this.sourceWatchChannel = { id, channel };
+    channel.subscribe(["github_watches_changed"], `watch:${id}`).connect();
+  }
+
+  private closeSourceWatchChannel(): void {
+    this.sourceWatchChannel?.channel.dispose();
+    this.sourceWatchChannel = null;
+  }
+
+  sourceInboxMore = (): void => { void this.sourceInboxSession.more(); };
+  /** Read the inbox again from the owner's cursor as a new decision; every review mark is cleared. */
+  sourceInboxReload = (): void => { void this.sourceInboxSession.reload(); };
+  sourceInboxMark = (sequence: number, on: boolean): void => this.sourceInboxSession.mark(sequence, on);
+  sourceInboxMarkThrough = (sequence: number): void => this.sourceInboxSession.markThrough(sequence);
+  sourceInboxClearMarks = (): void => this.sourceInboxSession.clearMarks();
+  sourceInboxOpened = (sequence: number): void => this.sourceInboxSession.markOpened(sequence);
+  sourceInboxDismissNotice = (): void => this.sourceInboxSession.dismissNotice();
+
+  /**
+   * The one acknowledgement: through the reviewed run `through` the person confirmed, against the cursor the rows were read from.
+   * Definitions and counts are read again afterwards, since a lost answer may still have acted.
+   */
+  acknowledgeSourceWatch = async (through: number): Promise<Awaited<ReturnType<WatchInbox["acknowledge"]>>> => {
+    try { return await this.sourceInboxSession.acknowledge(through); } finally { this.refresh("sourceWatches"); this.scheduleSourceCounts(0); }
+  };
+
+  createSourceWatch = async (input: WatchCreateInput): Promise<GithubWatch> => {
+    try { return await this.call<GithubWatch>("source", "github_watch_create", { ...input }); } finally { this.refresh("sourceWatches"); }
+  };
+
+  updateSourceWatch = async (id: string, expectedRevision: number, patch: { label?: string; enabled?: boolean }): Promise<GithubWatch> => {
+    try { return await this.call<GithubWatch>("source", "github_watch_update", { id, expectedRevision, ...patch }); } finally { this.refresh("sourceWatches"); this.sourceInboxSession.invalidate(0); }
+  };
+
+  removeSourceWatch = async (id: string): Promise<void> => {
+    try { await this.call<{ removed: true }>("source", "github_watch_remove", { id }); } finally { this.refresh("sourceWatches"); }
+    if (this.state.sourceWatchSelected === id) this.selectSourceWatch(null);
   };
 
   private invalidateBot(id: string): void {
@@ -1912,6 +2026,7 @@ export class StackStore {
         if (key === "catalog") this.refresh("roleInternal");
         if (key === "brainStats" && next.data) this.rememberBrainDocuments((next.data as BrainStats).recent);
         if (key === "sourceStatus" && next.data) this.sourceStatusLanded(priorSource, next.data as GithubStatus);
+        if (key === "sourceWatches" && next.data) this.scheduleSourceCounts(0);
       })
       .finally(() => {
         // A newer read for another Role owns the entry now.
@@ -1979,6 +2094,7 @@ export class StackStore {
       ]).then(([status, agentBrowser, detected, hypeman]) => ({ status, agentBrowser, detected: detected.installations, hypeman: hypeman.installations }));
       case "sourceStatus": return call<GithubStatus>("source", "github_status");
       case "sourceEndpoints": return call<{ endpoints: GithubEndpoint[] }>("source", "github_endpoint_list").then((result) => result.endpoints);
+      case "sourceWatches": return call<{ watches: GithubWatch[] }>("source", "github_watch_list").then((result) => result.watches);
       case "brainStatus": return call<BrainStatus>("brain", "brain_status");
       case "brainStats": return call<BrainStats>("brain", "stats", { "top-tags": 40, recent: 8 });
       case "brainTags": return call<{ tags: BrainTag[] }>("brain", "tags", { limit: 500 }).then((result) => result.tags);

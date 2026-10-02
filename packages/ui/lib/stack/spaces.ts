@@ -149,6 +149,8 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "source", window: "source-receivers" };
     case "github-delivery":
       return { kind: "space", space: "source", window: "source-delivery" };
+    case "github-watch":
+      return { kind: "space", space: "source", window: "source-watches" };
     case "package":
     case "operation":
       return { kind: "reference" };
@@ -269,6 +271,6 @@ export function parseNodeKey(key: string): NodeRef | null {
   if (kind === "research-document" || kind === "ingestion-job" || kind === "research-source") return { kind, id: rest };
   if (kind === "proc-schedule" || kind === "proc-execution" || kind === "proc-run" || kind === "proc-run-window") return { kind, id: rest };
   if (kind === "work-item") return { kind, id: rest };
-  if (kind === "github-receiver" || kind === "github-delivery") return { kind, id: rest };
+  if (kind === "github-receiver" || kind === "github-delivery" || kind === "github-watch") return { kind, id: rest };
   return null;
 }

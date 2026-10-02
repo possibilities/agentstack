@@ -1168,8 +1168,8 @@ export type NodeRef =
   | { kind: "proc-run-window"; id: string }
   /** A shared HUD Work item, by its UUID. */
   | { kind: "work-item"; id: string }
-  /** Source records: a receiver by its UUID and a delivery by its local arrival sequence. */
-  | { kind: "github-receiver" | "github-delivery"; id: string }
+  /** Source records: a receiver by its UUID, a delivery by its local arrival sequence and a watch by its UUID. */
+  | { kind: "github-receiver" | "github-delivery" | "github-watch"; id: string }
   /** An owner state inventory entry by its `<owner>:<category>` ID, and a durable Bot event subscription by UUID. Local only. */
   | { kind: "state-entry" | "subscription"; id: string }
   /** Fleet's state view of one Bot, by Bot ID. Local only. */
