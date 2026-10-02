@@ -122,11 +122,18 @@ export function loadIntent(storage: Pick<Storage, "getItem"> | null, handoffId: 
   } catch { return null; }
 }
 
-export function saveIntent(storage: Pick<Storage, "setItem" | "removeItem"> | null, intent: HandoffIntent | null, handoffId: string): void {
+/**
+ * Records (or, with null, forgets) one intended take or finish. Recording answers whether it is now held: false means
+ * there is no destination storage yet or it refused, and the action must not be sent without its recoverable intent.
+ */
+export function saveIntent(storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null, intent: HandoffIntent | null, handoffId: string): boolean {
   try {
-    if (intent) storage?.setItem(intentKey(handoffId), JSON.stringify(intent));
-    else storage?.removeItem(intentKey(handoffId));
-  } catch { /* optional persistence: losing it only loses an identical retry */ }
+    if (!intent) { storage?.removeItem(intentKey(handoffId)); return true; }
+    if (!storage) return false;
+    const raw = JSON.stringify(intent);
+    storage.setItem(intentKey(handoffId), raw);
+    return storage.getItem(intentKey(handoffId)) === raw;
+  } catch { return false; }
 }
 
 /**

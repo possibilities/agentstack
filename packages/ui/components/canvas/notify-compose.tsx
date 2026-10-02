@@ -15,6 +15,7 @@ import type { NotificationSend, OperationDoc } from "@/lib/stack/types";
 import { errorMessage } from "./auth-actions";
 import { useNotifyActions } from "./notify-actions";
 import { Empty, Row } from "./primitives";
+import { waitingForIdentity } from "@/lib/stack/destination";
 import { useDestination, useStack, useStore, useWorkbench } from "./provider";
 import { Window } from "./window";
 
@@ -29,7 +30,7 @@ export function ComposeWindow() {
   const endpoint = state.endpoints.notify;
   return <Window id="notify-compose" title="Compose" subtitle="operator send" icon={SendIcon} accent="notify">
     {!endpoint || !access.operation || !access.exposed ? <Empty icon={SendIcon} title={access.reason ?? "Notify isn’t served by this server"} />
-      : <ComposeForm key={endpoint} endpoint={endpoint} operation={access.operation} unavailable={access.reason ?? (state.status.notify !== "open" ? "The notify connection is not open. Your draft is retained." : !local ? "Waiting for the server to name itself. Drafts are kept per server, so nothing is saved or sent until it does." : null)} />}
+      : <ComposeForm key={endpoint} endpoint={endpoint} operation={access.operation} unavailable={access.reason ?? (state.status.notify !== "open" ? "The notify connection is not open. Your draft is retained." : !local ? `${waitingForIdentity} Drafts are kept per server.` : null)} />}
   </Window>;
 }
 

@@ -8,6 +8,11 @@ import type { Resource, Snapshot } from "./types";
  */
 export type Authority = "local" | "remote";
 
+/** The one status line every control that saves a record before sending shows while the server has not named itself. */
+export const waitingForIdentity = "Waiting for the server to name itself…";
+/** Shown when this destination's storage refuses the record such a control must save first. */
+export const notRecorded = "This browser could not record the request, so it was not sent.";
+
 /** What a page knows about the platform it talks to. `serverId` stays null until the server has named itself. */
 export type Destination = { authority: Authority; origin: string | null; serverId: string | null };
 

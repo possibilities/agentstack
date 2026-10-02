@@ -88,11 +88,12 @@ export function HookDiagnose({ endpoint, requests }: { endpoint: GithubEndpoint;
                 </>
               ) : <span>GitHub sends one {confirm?.kind === "test" ? "push event for the repository's latest commit" : "ping"} to the hook&rsquo;s URL. GitHub&rsquo;s answer is admission, not arrival: whether a signed request reaches Stack is shown separately.</span>}
               <span>A request ID is recorded in this browser before sending. If the answer is lost its receipt is read under the same ID; it is never sent again under a new one.</span>
+              {requests.waiting ? <span role="status" className="text-foreground">{requests.waiting}</span> : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="group-data-[size=sm]/alert-dialog-content:grid-cols-1">
             <AlertDialogCancel disabled={requests.busy !== null}>Cancel</AlertDialogCancel>
-            <Button disabled={requests.busy !== null || !confirm} onClick={() => { if (confirm?.kind === "redeliver") void sendRedelivery(confirm.attempt); else if (confirm) void send(confirm.kind); }}>
+            <Button disabled={requests.busy !== null || !confirm || Boolean(requests.waiting)} onClick={() => { if (confirm?.kind === "redeliver") void sendRedelivery(confirm.attempt); else if (confirm) void send(confirm.kind); }}>
               {requests.busy !== null ? <Spinner data-icon="inline-start" /> : <SendIcon data-icon="inline-start" />}{confirm?.kind === "redeliver" ? "Request redelivery" : confirm?.kind === "test" ? "Request push test" : "Request ping"}
             </Button>
           </AlertDialogFooter>

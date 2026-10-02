@@ -1,5 +1,5 @@
 import { loadCatalog } from "./catalog";
-import type { Destination, ScopedStorage } from "./destination";
+import { notRecorded, waitingForIdentity, type Destination, type ScopedStorage } from "./destination";
 import type { AccessSnapshot, CodexToolsStatus } from "./types";
 import { Channel } from "./channel";
 import { loadResources, mergeHistory } from "./resources";
@@ -1295,19 +1295,29 @@ export class StackStore {
     return run;
   };
 
-  /** Called before catalog apply: drop sibling views and fence races, even if the apply response is lost. */
-  holdWorkerCatalog = (id: string): void => {
+  /**
+   * Called before catalog apply: drop sibling views and fence races, even if the apply response is lost. The fence
+   * always holds in memory; the answer says why it could not also be saved for a reload (no destination yet, or the
+   * storage refused), in which case the apply must not be sent.
+   */
+  holdWorkerCatalog = (id: string): string | null => {
     this.catalogHeld.add(id);
-    this.saveCatalogHolds();
+    const refusal = this.saveCatalogHolds();
     this.catalogGeneration.set(id, (this.catalogGeneration.get(id) ?? 0) + 1);
     this.catalogDirty.delete(id);
     const workerCatalogs = { ...this.state.workerCatalogs };
     delete workerCatalogs[id];
     this.set({ workerCatalogs });
+    return refusal;
   };
 
-  private saveCatalogHolds(): void {
-    try { this.storage?.setItem(catalogHeldName, JSON.stringify([...this.catalogHeld])); } catch { /* optional persistence */ }
+  private saveCatalogHolds(): string | null {
+    if (!this.storage) return waitingForIdentity;
+    try {
+      const raw = JSON.stringify([...this.catalogHeld]);
+      this.storage.setItem(catalogHeldName, raw);
+      return this.storage.getItem(catalogHeldName) === raw ? null : notRecorded;
+    } catch { return notRecorded; }
   }
 
   /**

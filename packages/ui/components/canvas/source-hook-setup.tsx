@@ -130,7 +130,7 @@ export function HookSetup({ endpoint, setup, requests }: { endpoint: GithubEndpo
         {applied ? <p role="status" className="rounded-lg border bg-muted/40 px-2.5 py-1.5 text-[0.72rem] text-pretty">{applied}</p> : null}
       </div>
 
-      {plan ? <ConfirmApply plan={plan} hooks={hooks} endpoint={endpoint} open={confirming} pending={requests.busy !== null} onCancel={() => setConfirming(false)} onConfirm={(review) => void apply(review)} /> : null}
+      {plan ? <ConfirmApply plan={plan} hooks={hooks} endpoint={endpoint} open={confirming} pending={requests.busy !== null} waiting={requests.waiting} onCancel={() => setConfirming(false)} onConfirm={(review) => void apply(review)} /> : null}
     </section>
   );
 }
@@ -220,7 +220,7 @@ function PlanCard({ plan, hooks, endpoint, busy, onApply, onDiscard }: { plan: G
   );
 }
 
-function ConfirmApply({ plan, hooks, endpoint, open, pending, onCancel, onConfirm }: { plan: GithubHookPlan; hooks: GithubHook[] | null; endpoint: GithubEndpoint; open: boolean; pending: boolean; onCancel(): void; onConfirm(review: PlanReview): void }) {
+function ConfirmApply({ plan, hooks, endpoint, open, pending, waiting, onCancel, onConfirm }: { plan: GithubHookPlan; hooks: GithubHook[] | null; endpoint: GithubEndpoint; open: boolean; pending: boolean; waiting: string | null; onCancel(): void; onConfirm(review: PlanReview): void }) {
   const now = useNow(1000);
   const review = planReview(plan, hooks, endpoint, now);
   return (
@@ -233,11 +233,12 @@ function ConfirmApply({ plan, hooks, endpoint, open, pending, onCancel, onConfir
             <span><span className="font-medium text-foreground">{endpoint.label}</span> at GitHub, events <code className="font-mono text-[0.68rem]">{review.eventsWords}</code>, URL <code className="font-mono text-[0.68rem] break-all">{review.url}</code>.</span>
             <span>This changes the hook at GitHub through gh. A request ID is recorded in this browser before it is sent. If the answer is lost, its receipt is read under that same ID; the request is never sent again under a new one.</span>
             <span>Success will mean GitHub accepted the configuration. It will not mean anything has arrived.</span>
+            {waiting ? <span role="status" className="text-foreground">{waiting}</span> : null}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter className="group-data-[size=sm]/alert-dialog-content:grid-cols-1">
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-          <Button disabled={pending || Boolean(planBlock(review))} onClick={() => onConfirm(review)}>
+          <Button disabled={pending || Boolean(waiting) || Boolean(planBlock(review))} onClick={() => onConfirm(review)}>
             {pending ? <Spinner data-icon="inline-start" /> : <SendIcon data-icon="inline-start" />}Apply to GitHub
           </Button>
         </AlertDialogFooter>

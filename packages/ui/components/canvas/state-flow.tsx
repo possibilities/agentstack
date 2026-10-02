@@ -119,6 +119,8 @@ export type StateFlowControls = {
   retry(): void;
   readReceipt(): void;
   reset(): void;
+  /** Why no decision can be made yet: the server has not named itself, so there is nowhere to record a request first. */
+  waiting: string | null;
 };
 
 /**
@@ -148,6 +150,7 @@ export function useStateFlow<Extra extends Record<string, string> = Record<strin
     retry: () => void controller.retry(),
     readReceipt: () => void controller.readReceipt(),
     reset: () => controller.reset(),
+    waiting: controller.getBlock(),
   };
 }
 
@@ -167,13 +170,15 @@ export function StateMaintenance<Extra extends Record<string, string> = Record<s
   return <StateFlowView controls={controls} label={label} applyLabel={applyLabel} unavailable={unavailable} className={className} />;
 }
 
-export function StateFlowView({ controls, label, applyLabel = "Apply this plan", unavailable, className, receiptOnlyRecovery = false }: {
+export function StateFlowView({ controls, label, applyLabel = "Apply this plan", unavailable: unavailableReason, className, receiptOnlyRecovery = false }: {
    controls: StateFlowControls; label: string; applyLabel?: string; unavailable?: string | null; className?: string;
    /** External effects must be inspected, not rearmed, after an uncertain admission or an unsettled receipt. */
    receiptOnlyRecovery?: boolean;
 }) {
   const now = useNow(15_000);
-  const { flow } = controls;
+  const { flow, waiting } = controls;
+  // Until the server has named itself nothing is recorded, so nothing is prepared, applied, resent or read.
+  const unavailable = waiting ?? unavailableReason;
   const prepareButton = (text: string, variant: "outline" | "ghost" = "outline") => (
     <Button size="sm" variant={variant} disabled={!!unavailable} title={unavailable ?? undefined} onClick={controls.prepare}>
       <ClipboardListIcon data-icon="inline-start" />{text}
@@ -200,7 +205,7 @@ export function StateFlowView({ controls, label, applyLabel = "Apply this plan",
         return (
           <>
             <StatePlanReview plan={flow.plan} now={now} />
-            {readiness.reason || unavailable ? <p role="status" className="text-xs text-destructive">{readiness.reason ?? unavailable}</p> : null}
+            {readiness.reason || unavailable || flow.refused ? <p role="status" className="text-xs text-destructive">{flow.refused ?? readiness.reason ?? unavailable}</p> : null}
             <div className="flex flex-wrap gap-1.5">
               <Button size="sm" variant="destructive" disabled={!readiness.canApply || !!unavailable} title={readiness.reason ?? unavailable ?? undefined} onClick={controls.apply}>{applyLabel}</Button>
               {readiness.expired || readiness.blocked ? prepareButton("Prepare a new plan", "ghost") : null}
@@ -234,7 +239,7 @@ export function StateFlowView({ controls, label, applyLabel = "Apply this plan",
             {Object.entries(flow.input).filter(([name]) => !["requestId", "planId", "expectedRevision"].includes(name)).map(([name, value]) => <Identity key={name} label={name} value={String(value)} />)}
           </div>
           <div className="flex flex-wrap gap-1.5">
-            <Button size="sm" variant="outline" onClick={controls.readReceipt}><RefreshCwIcon data-icon="inline-start" />Read receipt</Button>
+            <Button size="sm" variant="outline" disabled={!!waiting} title={waiting ?? undefined} onClick={controls.readReceipt}><RefreshCwIcon data-icon="inline-start" />Read receipt</Button>
             {!receiptOnlyRecovery ? <Button size="sm" variant="outline" disabled={!!unavailable} onClick={controls.retry}><RotateCwIcon data-icon="inline-start" />Send identical request</Button> : null}
             {!receiptOnlyRecovery ? prepareButton("Prepare a new plan", "ghost") : null}
           </div>
@@ -244,7 +249,7 @@ export function StateFlowView({ controls, label, applyLabel = "Apply this plan",
         <>
           <StateReceiptView receipt={flow.receipt} now={now} />
           <div className="flex flex-wrap gap-1.5">
-            {flow.receipt.status === "running" || (receiptOnlyRecovery && (flow.receipt.status === "partial" || flow.receipt.status === "unknown")) ? <Button size="sm" variant="outline" onClick={controls.readReceipt}><RefreshCwIcon data-icon="inline-start" />Read receipt again</Button> : null}
+            {flow.receipt.status === "running" || (receiptOnlyRecovery && (flow.receipt.status === "partial" || flow.receipt.status === "unknown")) ? <Button size="sm" variant="outline" disabled={!!waiting} title={waiting ?? undefined} onClick={controls.readReceipt}><RefreshCwIcon data-icon="inline-start" />Read receipt again</Button> : null}
             {flow.receipt.status === "blocked" || (!receiptOnlyRecovery && (flow.receipt.status === "partial" || flow.receipt.status === "unknown")) ? prepareButton("Prepare a new plan", "ghost") : null}
             {!receiptOnlyRecovery || flow.receipt.status === "completed" || flow.receipt.status === "blocked" ? <Button size="sm" variant="ghost" onClick={controls.reset}>Close receipt</Button> : null}
           </div>

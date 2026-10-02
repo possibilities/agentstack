@@ -10,6 +10,7 @@ import {
 } from "@/lib/stack/source-setup";
 import type { GithubRemoteReceipt } from "@/lib/stack/types";
 import { CopyButton } from "./primitives";
+import { waitingForIdentity } from "@/lib/stack/destination";
 import { useDestination, useStore } from "./provider";
 import { Stamp, sourceHint, sourceLabel, Word } from "./source-shared";
 
@@ -53,7 +54,10 @@ export function useRemoteRequests(endpointId: string) {
   const note = (requestId: string, text: string | null) => setNotes((held) => { const next = { ...held }; if (text) next[requestId] = text; else delete next[requestId]; return next; });
   const describe = (outcome: RemoteOutcome): string | null => !outcome.sent ? outcome.reason
     : outcome.readError ? `The receipt could not be read: ${outcome.readError}` : outcome.error && outcome.entry.status !== "succeeded" ? `Answer received: ${outcome.error}` : null;
+  // Each request is recorded before it is sent, so none is sent while this destination has nowhere to record it.
+  const waiting = local ? null : waitingForIdentity;
   const send = async (entry: JournalEntry): Promise<RemoteOutcome> => {
+    if (waiting) return { sent: false, reason: waiting };
     setBusy(entry.requestId); note(entry.requestId, null);
     try { const outcome = await sendRemote(journal, io, entry); note(entry.requestId, describe(outcome)); return outcome; } finally { setBusy(null); }
   };
@@ -61,7 +65,7 @@ export function useRemoteRequests(endpointId: string) {
     setBusy(entry.requestId); note(entry.requestId, null);
     try { const outcome = await recover(journal, io, entry); note(entry.requestId, outcome.readError ? `The receipt could not be read: ${outcome.readError}` : null); return outcome; } finally { setBusy(null); }
   };
-  return { entries, busy, notes, send, read, forget: (entry: JournalEntry) => { forget(journal, entry.endpointId, entry.requestId); note(entry.requestId, null); } };
+  return { entries, busy, notes, waiting, send, read, forget: (entry: JournalEntry) => { forget(journal, entry.endpointId, entry.requestId); note(entry.requestId, null); } };
 }
 export type RemoteRequests = ReturnType<typeof useRemoteRequests>;
 

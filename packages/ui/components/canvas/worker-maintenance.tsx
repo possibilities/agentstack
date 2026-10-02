@@ -46,10 +46,8 @@ function WorkerMaintenanceFlow({ worker, kind }: { worker: WorkerSession; kind: 
   });
   const operations = stateOperations(store.call, "worker", workerStateOperations,
     { ids: [worker.id], kind, allowUnmerged: kind === "branch" && allowUnmerged ? [worker.id] : [] });
-  const controls = useStateFlow({ operations: { ...operations, apply: (input) => {
-    if (kind === "catalog") store.holdWorkerCatalog(worker.accountId);
-    return operations.apply(input);
-  } },
+  // The catalog fence is saved before the apply is recorded or sent; if it cannot be, nothing is sent.
+  const controls = useStateFlow({ operations, guard: () => kind === "catalog" ? store.holdWorkerCatalog(worker.accountId) : null,
     recoveryKey: `worker:${kind}:${worker.id}`, observe: state.workerGenerations[worker.id] ?? 0 });
   const locked = controls.flow.phase !== "idle";
   const plan = "plan" in controls.flow ? controls.flow.plan : null;

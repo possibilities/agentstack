@@ -16,6 +16,7 @@ import { localOperation } from "@/lib/stack/state";
 import type { GithubAuthStatus, GithubEndpoint, GithubOrganizationEntry, GithubRepositoryEntry } from "@/lib/stack/types";
 import { errorMessage } from "./auth-actions";
 import { CopyButton } from "./primitives";
+import { notRecorded, waitingForIdentity } from "@/lib/stack/destination";
 import { useDestination, useStack, useStore, useWorkbench } from "./provider";
 import { fieldLabel } from "./scrape-shared";
 import { codeWords } from "./source-hook-setup";
@@ -93,7 +94,7 @@ export function CreateReceiver({ resume, count, onClose }: { resume: CreateRecor
   const save = async (frozen: FrozenReceiver) => {
     const record: CreateRecord = { input: { ...frozen.input }, at: Date.now() };
     if (!journal.set(createSlot, JSON.stringify(record))) {
-      setStep({ name: "failed", frozen, error: "This browser could not record the request for this server, so it was not sent.", confirmed: "absent" });
+      setStep({ name: "failed", frozen, error: local ? notRecorded : waitingForIdentity, confirmed: "absent" });
       return;
     }
     setStep({ name: "saving", frozen });
@@ -177,10 +178,11 @@ export function CreateReceiver({ resume, count, onClose }: { resume: CreateRecor
                 {step.name === "failed" && step.confirmed === "mismatch" ? (
                   <Button type="button" size="sm" onClick={() => { clearCreateRecord(journal); setDraft({ ...draftOf(step.frozen.input), id: crypto.randomUUID() }); setStep({ name: "edit" }); }}>Start again with a new ID</Button>
                 ) : (
-                  <Button type="button" size="sm" disabled={busy || !connected} onClick={() => void save(step.frozen)}>
+                  <Button type="button" size="sm" disabled={busy || !connected || !local} onClick={() => void save(step.frozen)}>
                     {busy ? <Spinner data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{step.name === "failed" ? "Save again (same ID)" : "Save receiver locally"}
                   </Button>
                 )}
+                {!local ? <span role="status" className="text-[0.72rem] text-muted-foreground">{waitingForIdentity}</span> : null}
                 {step.name === "failed" ? <Button type="button" size="sm" variant="ghost" onClick={abandon}>Forget this attempt</Button> : null}
                 <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => setStep({ name: "edit" })}><ArrowLeftIcon data-icon="inline-start" />Back to edit</Button>
               </div>

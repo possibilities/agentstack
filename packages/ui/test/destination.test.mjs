@@ -11,7 +11,7 @@ registerHooks({
   },
 });
 
-const { blankSnapshot, destinationIdentity, destinationPrefix, destinationStorages, ScopedStorage } = await import("../lib/stack/destination.ts");
+const { blankSnapshot, destinationIdentity, destinationPrefix, destinationStorages, notRecorded, ScopedStorage, waitingForIdentity } = await import("../lib/stack/destination.ts");
 const { ChatWindowStore } = await import("../lib/stack/chat-windows.ts");
 const { WorkerWindowStore } = await import("../lib/stack/worker-windows.ts");
 const { ProcWindowStore } = await import("../lib/stack/proc-windows.ts");
@@ -298,7 +298,7 @@ test("saved catalog fences are read from this destination only, and implicit dis
     first.attachStorage(a);
     await settle();
     assert.equal(catalogCalls(), 2, "acct-3 discovers; acct-1's saved fence holds, and the legacy acct-2 record is not a fence");
-    first.holdWorkerCatalog("acct-3");
+    assert.equal(first.holdWorkerCatalog("acct-3"), null, "a fence that was saved reports no refusal");
     assert.deepEqual(JSON.parse(a.getItem("worker-catalog-held.v1")).sort(), ["acct-1", "acct-3"], "a fence is written to this destination's storage");
     assert.equal(b.getItem("worker-catalog-held.v1"), null, "and to no other");
     assert.equal(shared.getItem("stack.worker-catalog-held.v1"), JSON.stringify(["acct-2"]), "the legacy record is untouched");
@@ -310,10 +310,103 @@ test("saved catalog fences are read from this destination only, and implicit dis
     await settle();
     assert.equal(catalogCalls(), 2 + 3, "another destination holds none of those fences");
     second.attachStorage(null);
-    second.holdWorkerCatalog("acct-1");
+    assert.equal(second.holdWorkerCatalog("acct-1"), waitingForIdentity, "a store with no storage cannot save the fence, so it refuses the apply that depends on it");
     assert.equal(b.getItem("worker-catalog-held.v1"), null, "a store detached from storage persists nothing");
   } finally {
     second.stop();
     globalThis.WebSocket = original;
   }
+});
+
+/** A scripted owner whose apply and receipt reads are counted, so a refusal can be shown to send nothing. */
+function countingOwner(plan) {
+  const calls = { prepare: 0, apply: 0, receipt: 0 };
+  return { calls, operations: { prepare: async () => { calls.prepare++; return plan; }, apply: async (input) => { calls.apply++; return { status: "completed", requestId: input.requestId, outcomes: [], completedAt: null }; },
+    readReceipt: async () => { calls.receipt++; return null; } } };
+}
+const flowPlan = { id: "plan-1", revision: "rev-1", action: "clear", subject: { kind: "x", id: "1" }, blockedBy: [], expiresAt: new Date(Date.now() + 600_000).toISOString(), createdAt: new Date().toISOString(),
+  entries: [], retained: [], regeneration: [], resources: [] };
+const sequential = (n) => { let i = 0; return { now: () => Date.now(), uuid: () => `00000000-0000-4000-8000-${String(++i + n).padStart(12, "0")}` }; };
+
+test("a state flow with a recovery slot prepares, applies, retries and reads nothing until its destination has storage", async () => {
+  const owner = countingOwner(flowPlan);
+  const flow = new StateFlowController({ operations: owner.operations, recoveryKey: "xcom:posts", recovery: null }, sequential(10));
+  assert.equal(flow.getBlock(), waitingForIdentity);
+  await flow.prepare(); await flow.apply(); await flow.retry(); await flow.readReceipt();
+  assert.deepEqual(owner.calls, { prepare: 0, apply: 0, receipt: 0 }, "nothing is asked of the owner");
+  assert.equal(flow.getState().phase, "idle");
+  const unslotted = new StateFlowController({ operations: owner.operations }, sequential(20));
+  assert.equal(unslotted.getBlock(), null, "a flow that records nothing is not held back");
+  await unslotted.prepare();
+  assert.equal(owner.calls.prepare, 1);
+  flow.update({ operations: owner.operations, recovery: scoped(area()) });
+  assert.equal(flow.getBlock(), null, "named, it proceeds");
+  await flow.prepare();
+  assert.equal(owner.calls.prepare, 2);
+});
+
+test("an apply is refused, sending nothing, when its request cannot be recorded first", async () => {
+  const shared = area();
+  const owner = countingOwner(flowPlan);
+  const flow = new StateFlowController({ operations: owner.operations, recoveryKey: "worker:branch:ids", recovery: scoped(shared) }, sequential(30));
+  await flow.prepare();
+  assert.equal(flow.getState().phase, "preview");
+  // The destination's storage goes away between the plan and the apply.
+  flow.update({ operations: owner.operations, recovery: null });
+  await flow.apply();
+  assert.equal(owner.calls.apply, 0, "no apply without a recoverable record");
+  assert.equal(flow.getState().phase, "preview");
+  assert.equal(flow.getState().refused, waitingForIdentity);
+  // Storage that refuses the write blocks the dispatch too.
+  const refusing = new ScopedStorage(identity(), () => ({ ...area(), setItem() { throw new Error("quota"); } }));
+  flow.update({ operations: owner.operations, recovery: refusing });
+  await flow.apply();
+  assert.equal(owner.calls.apply, 0);
+  assert.equal(flow.getState().refused, notRecorded);
+  // Storage that accepts but does not hold it is the same refusal.
+  const forgetful = new ScopedStorage(identity(), () => ({ ...area(), setItem() {} }));
+  flow.update({ operations: owner.operations, recovery: forgetful });
+  await flow.apply();
+  assert.equal(owner.calls.apply, 0);
+  assert.equal(flow.getState().refused, notRecorded);
+  // A guard that refuses (the catalog fence could not be saved) sends nothing and records nothing.
+  const good = scoped(shared);
+  flow.update({ operations: owner.operations, recovery: good, guard: () => waitingForIdentity });
+  await flow.apply();
+  assert.equal(owner.calls.apply, 0);
+  assert.equal(flow.getState().refused, waitingForIdentity);
+  assert.deepEqual(good.keys("state-flow."), [], "a refused apply leaves no record");
+  flow.update({ operations: owner.operations, recovery: good });
+  await flow.apply();
+  assert.equal(owner.calls.apply, 1, "recorded, it is sent once");
+  assert.equal(good.keys("state-flow.").length, 0, "a completed receipt retires its record");
+});
+
+test("recording helpers answer whether the record is held", () => {
+  const shared = area();
+  const a = scoped(shared);
+  const input = { planId: "p", expectedRevision: "r", requestId: "00000000-0000-4000-8000-000000000003" };
+  assert.equal(saveRecovery(a, "x:y", input), true);
+  assert.equal(saveRecovery(null, "x:y", input), false);
+  assert.equal(saveRecovery(new ScopedStorage(identity(), () => ({ ...area(), setItem() { throw new Error("quota"); } })), "x:y", input), false);
+  const intent = { kind: "take", args: { id: "h1", expectedRevision: 3, requestId: "req-1" } };
+  assert.equal(saveIntent(a, intent, "h1"), true);
+  assert.equal(saveIntent(null, intent, "h1"), false, "a take that cannot be recorded is not sent");
+  assert.equal(saveIntent(new ScopedStorage(identity(), () => ({ ...area(), setItem() { throw new Error("quota"); } })), intent, "h1"), false);
+  assert.equal(saveIntent(new ScopedStorage(identity(), () => ({ ...area(), setItem() {} })), intent, "h1"), false);
+  assert.equal(saveIntent(null, null, "h1"), true, "forgetting needs no storage");
+  assert.equal(saveIntent(a, null, "h1"), true);
+  assert.equal(loadIntent(a, "h1"), null);
+});
+
+test("a catalog fence that cannot be saved is reported so its apply is refused, and still holds in memory", async () => {
+  const shared = area();
+  const refusing = new ScopedStorage(identity(), () => ({ ...area(), setItem() { throw new Error("quota"); } }));
+  const store = new StackStore(snapshotFor({ destination: { authority: "local", origin, serverId: alpha } }));
+  assert.equal(store.holdWorkerCatalog("acct-1"), waitingForIdentity, "no storage yet");
+  store.attachStorage(refusing);
+  assert.equal(store.holdWorkerCatalog("acct-1"), notRecorded, "storage refused");
+  store.attachStorage(scoped(shared));
+  assert.equal(store.holdWorkerCatalog("acct-1"), null, "saved");
+  assert.deepEqual(JSON.parse(scoped(shared).getItem("worker-catalog-held.v1")), ["acct-1"]);
 });
