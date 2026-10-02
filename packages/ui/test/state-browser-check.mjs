@@ -1,13 +1,14 @@
-// Optional rendered check of System's State and Subscriptions windows, the Server window's Stack settings and the
-// developer-only Developer window, after pnpm test (and a ui build, or NEXT_MODE=dev). A fixture serve socket answers
-// the state reads, global settings (with real revision fences) and harness release snapshots from a disposable state
-// directory; no live Server, state or network release channel is touched.
+// Optional rendered check of System's State and Subscriptions windows, the Server window's Stack settings, the
+// developer-only Developer window and the State window's read-only installation factory-reset disclosure, after
+// pnpm test (and a ui build, or NEXT_MODE=dev). A fixture serve socket answers the state reads, global settings
+// (with real revision fences) and harness release snapshots from a disposable state directory; no live Server,
+// state or network release channel is touched.
 // PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/state-browser-check.mjs
 // CHROME_BIN may override the local headless Chrome executable; STATE_EVIDENCE_DIR keeps the screenshots.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { publishedJsonSchema, serveSocket, serveWebSocket, socketPath } from "@stack/api";
 import { api as serveApi } from "../../serve/dist/api.js";
@@ -36,6 +37,15 @@ const inventory = () => [
     relationships: [{ relation: "automatic-input", package: "serve", kind: "subscription", id: "00000000-0000-4000-8000-0000000000a1" }] }),
   category("usage", "observations", { kind: "cache", ownership: "shared", sensitivity: "ordinary", issues: ["Shared database bytes are not allocated to logical owners"] }),
   category("auth", "credentials", { kind: "credentials", sensitivity: "credential", location: "external", ownership: "external" }),
+  // Mirrors the factory-reset declaration in packages/serve/src/state-categories.ts after the shared stateCategories mapping.
+  category("serve", "factory-reset", { kind: "runtime", authority: "receipt", sensitivity: "ordinary", coverage: "partial",
+    reads: [{ package: "serve", operation: "serve_factory_reset_plan", arguments: {} },
+      { package: "serve", operation: "serve_factory_reset_receipt_get", arguments: {} }],
+    actions: ["serve_factory_reset_clear", "serve_factory_reset_recover", "serve_factory_reset_fence_release"].map((operation) => ({
+      package: "serve", operation, arguments: {}, blockedBy: ["Select an exact resource through the linked read and satisfy the operation's lifecycle/revision contract"] })),
+    retention: "Private sibling factory-control ledger keeps content-free reset receipts/digests/generation fences outside erased active state. Source/retained Git, device/Canvas/Client copies and external configuration/backups remain independent.",
+    regeneration: "Exact whole-installation admission shuts down owned work and stays stopped/fenced. Only completed-generation release permits a later explicit start/new Access identity; unknown effects never resume.",
+    issues: ["Private socket only, no MCP/WebSocket/remote/UI reset. Sibling control bytes and external copies are unmeasured. Independent writers must be quiesced explicitly."] }),
 ];
 const owners = [{ package: "auth", available: true, issue: null }, { package: "bots", available: true, issue: null }, { package: "serve", available: true, issue: null },
   { package: "usage", available: true, issue: null }, { package: "xcom", available: false, issue: "Owner unavailable or does not implement the current inventory contract" }];
@@ -175,6 +185,15 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   const shot = (name, locator) => (locator ?? page).screenshot({ path: join(evidence, `${name}.png`), animations: "disabled" });
+  /** Pan the bench so a window is centered, then show it at 100% for a legible element screenshot. */
+  const frame = async (target, locator) => {
+    const box = await locator.boundingBox();
+    const size = target.viewportSize();
+    await target.locator('[data-canvas="workbench"][data-space="system"]').evaluate((main, delta) => main.dispatchEvent(new WheelEvent("wheel", { deltaX: delta.x, deltaY: delta.y, bubbles: true, cancelable: true })),
+      { x: box.x + box.width / 2 - size.width / 2, y: box.y + Math.min(box.height, size.height - 160) / 2 - size.height / 2 });
+    await target.getByRole("button", { name: "Actual size" }).click();
+  };
+  const framedShot = async (target, name, locator) => { await frame(target, locator); await locator.screenshot({ path: join(evidence, `${name}.png`), animations: "disabled" }); };
   await page.goto(`${origin}/system`);
   const state = page.locator('[data-window="state"]');
   const subs = page.locator('[data-window="subscriptions"]');
@@ -207,6 +226,8 @@ try {
   await state.getByRole("button", { name: /Load more \(from 3\)/ }).click();
   await state.getByRole("region", { name: "usage state" }).getByText("observations").waitFor();
   await state.getByRole("region", { name: "serve state" }).waitFor();
+  await state.getByRole("button", { name: "Show serve:factory-reset details" }).waitFor();
+  assert.equal(await state.getByRole("button", { name: /Load more/ }).count(), 0, "the second page ends paging");
 
   // Inspect a category: the inspector shows its record and the owner links.
   await state.getByRole("button", { name: "Inspect usage:observations state" }).click();
@@ -261,6 +282,66 @@ try {
   assert.ok(!devCalls.includes("serve_harness_releases"), "a page with developer mode off never reads releases");
   await page.close();
 
+  // The factory-reset category's read-only disclosure, on a fresh local page at 2x so the evidence is legible.
+  const factory = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 2, reducedMotion: "reduce" });
+  await authorizeBrowser(factory, origin, env);
+  factory.on("pageerror", (error) => errors.push(error.message));
+  await factory.goto(`${origin}/system?focus=state`);
+  const fstate = factory.locator('[data-window="state"]');
+  const resetRow = fstate.locator('article[data-node="state-entry:serve:factory-reset"]');
+  for (let attempt = 0; !(await resetRow.count()); attempt++) {
+    assert.ok(attempt < 5, "the serve:factory-reset row never paged in");
+    await fstate.getByRole("button", { name: /Load more/ }).click({ timeout: 5_000 }).catch(() => undefined);
+    await resetRow.waitFor({ timeout: 2_000 }).catch(() => undefined);
+  }
+  await resetRow.getByRole("button", { name: "Show serve:factory-reset details" }).click();
+  const disclosure = resetRow.locator("details");
+  const summary = disclosure.locator("summary");
+  await summary.getByText("Installation factory reset").waitFor();
+  assert.equal(await disclosure.getAttribute("open"), null, "the disclosure stays collapsed until chosen");
+  assert.equal(await disclosure.getByText("Cold commands · after shutdown").first().isVisible(), false, "a collapsed disclosure shows none of its content");
+  await framedShot(factory, "factory-reset-collapsed", resetRow);
+
+  // The disclosure opens by keyboard and keeps its read-only contract.
+  await summary.focus();
+  await factory.keyboard.press("Enter");
+  for (const text of ["Clears, after verified teardown", "Keeps", "Refused", "During and after", "Plan and clear · private socket",
+    "Cold commands · after shutdown", "not erased", "<state>.retained-git/<requestId>/vault", "stack.state-flow.*", "stack.uix.browse.intent.*"]) {
+    await disclosure.getByText(text, { exact: false }).first().waitFor();
+  }
+
+  // Drift guard: the cold commands and the plan request are verbatim from docs/state-control.md and the wire frame.
+  const stateDoc = await readFile(new URL("../../../docs/state-control.md", import.meta.url), "utf8");
+  for (const label of ["receipt read command", "recovery command", "fence release command"]) {
+    const command = (await disclosure.locator(`pre[aria-label="${label}"]`).innerText()).trim();
+    assert.ok(stateDoc.split("\n").includes(command), `the ${label} drifts from docs/state-control.md`);
+  }
+  assert.deepEqual(JSON.parse(await disclosure.locator('pre[aria-label="plan request"]').innerText()),
+    { id: 1, method: "tools/call", params: { name: "serve_factory_reset_plan", arguments: { scope: "installation" } } });
+  const copies = await disclosure.locator("button").all();
+  assert.ok(copies.length > 0, "the disclosure offers copy buttons");
+  for (const button of copies) assert.ok((await button.getAttribute("aria-label"))?.startsWith("Copy "), "every disclosure button only copies");
+  await framedShot(factory, "factory-reset-light", resetRow);
+  await factory.emulateMedia({ colorScheme: "dark" });
+  await framedShot(factory, "factory-reset-dark", resetRow);
+  await factory.emulateMedia({ colorScheme: "light" });
+
+  // Narrow: the disclosure reflows without horizontal overflow.
+  await frame(factory, fstate);
+  const stateGrip = fstate.locator('span[title="Resize State"]').first();
+  const stateEdge = await stateGrip.boundingBox();
+  // The opened disclosure stretches the window past the viewport, so press the grip inside the viewport.
+  const gripY = Math.min(stateEdge.y + stateEdge.height / 2, (factory.viewportSize()?.height ?? 0) - 24);
+  await factory.mouse.move(stateEdge.x + stateEdge.width / 2, gripY);
+  await factory.mouse.down();
+  await factory.mouse.move(stateEdge.x - 320, gripY, { steps: 6 });
+  await factory.mouse.up();
+  assert.ok((await fstate.boundingBox()).width < 352, "resized narrow");
+  assert.ok(await fstate.locator("[data-scroll]").evaluate((body) => body.scrollWidth <= body.clientWidth), "no horizontal overflow");
+  await framedShot(factory, "factory-reset-narrow", fstate);
+  await stateGrip.dblclick();
+  await factory.close();
+
   // Developer mode, on a fresh local page at 2x so the evidence is legible.
   const dev = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 2, reducedMotion: "reduce" });
   await authorizeBrowser(dev, origin, env);
@@ -269,15 +350,6 @@ try {
   const developer = dev.locator('[data-window="developer"]');
   const toggle = server.getByRole("switch", { name: "Developer mode" });
   const releaseReads = () => devCalls.filter((name) => name === "serve_harness_releases").length;
-  /** Pan the bench so a window is centered, then show it at 100% for a legible element screenshot. */
-  const frame = async (locator) => {
-    const box = await locator.boundingBox();
-    const size = dev.viewportSize();
-    await dev.locator('[data-canvas="workbench"][data-space="system"]').evaluate((main, delta) => main.dispatchEvent(new WheelEvent("wheel", { deltaX: delta.x, deltaY: delta.y, bubbles: true, cancelable: true })),
-      { x: box.x + box.width / 2 - size.width / 2, y: box.y + Math.min(box.height, size.height - 160) / 2 - size.height / 2 });
-    await dev.getByRole("button", { name: "Actual size" }).click();
-  };
-  const devShot = async (name, locator) => { await frame(locator); await locator.screenshot({ path: join(evidence, `${name}.png`), animations: "disabled" }); };
 
   // Unknown until this connection reads the setting: disabled, with no thumb position implying a value.
   settingsGate = Promise.withResolvers();
@@ -285,7 +357,7 @@ try {
   await server.getByText("Reading the current setting…").waitFor();
   assert.equal(await toggle.isDisabled(), true, "no save is possible before a read");
   assert.equal(await toggle.getAttribute("data-unknown"), "");
-  await devShot("developer-settings-unknown", server);
+  await framedShot(dev, "developer-settings-unknown", server);
   settingsGate.resolve();
   settingsGate = null;
 
@@ -296,7 +368,7 @@ try {
   assert.equal(await developer.count(), 0, "a deep link does not reveal the Developer window while off");
   assert.equal(releaseReads(), 0);
   assert.deepEqual(settingsUpdates, [], "nothing is saved on mount");
-  await devShot("developer-settings-off", server);
+  await framedShot(dev, "developer-settings-off", server);
 
   // An explicit keyboard toggle saves at the read revision and reveals the window with the retained observations.
   await toggle.focus();
@@ -318,8 +390,8 @@ try {
   assert.equal(await link.getAttribute("rel"), "noreferrer");
   assert.doesNotMatch(await developer.innerText(), /update available|\binstalled\b|up to date/i, "no installed-version verdicts");
   assert.equal(await developer.getByRole("button", { name: /install|upgrade/i }).count(), 0, "and no install or upgrade action");
-  await devShot("developer-settings-on", server);
-  await devShot("developer-light", developer);
+  await framedShot(dev, "developer-settings-on", server);
+  await framedShot(dev, "developer-light", developer);
   // It joins the Server column below Packages; nothing else moves.
   await dev.getByRole("button", { name: /Fit bench/ }).click();
   await dev.screenshot({ path: join(evidence, "developer-bench.png"), animations: "disabled" });
@@ -333,7 +405,7 @@ try {
   await developer.getByText("Checking…").first().waitFor();
   assert.equal(await checkNow.isDisabled(), true, "Check now waits while a check runs");
   assert.equal(devCalls.filter((name) => name === "serve_harness_releases_check").length, 1);
-  await devShot("developer-checking", developer);
+  await framedShot(dev, "developer-checking", developer);
   harnessSnapshot = finished(admitted, new Date().toISOString());
   serveSock.publish("harness_releases_changed");
   await developer.getByText(/^Last check finished/).waitFor();
@@ -341,12 +413,12 @@ try {
   assert.equal(await checkNow.isDisabled(), false);
 
   await dev.emulateMedia({ colorScheme: "dark" });
-  await devShot("developer-dark", developer);
-  await devShot("developer-settings-dark", server);
+  await framedShot(dev, "developer-dark", developer);
+  await framedShot(dev, "developer-settings-dark", server);
   await dev.emulateMedia({ colorScheme: "light" });
 
   // Narrow: the four columns reflow to two lines per harness without horizontal overflow.
-  await frame(developer);
+  await frame(dev, developer);
   const grip = developer.locator('span[title="Resize Developer"]').first();
   const edge = await grip.boundingBox();
   await dev.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
@@ -356,19 +428,19 @@ try {
   assert.ok((await developer.boundingBox()).width < 352, "resized narrow");
   assert.equal(await developer.locator("li[aria-hidden]").isVisible(), false, "the column header gives way to two-line rows");
   assert.ok(await developer.locator("[data-scroll]").evaluate((body) => body.scrollWidth <= body.clientWidth), "no horizontal overflow");
-  await devShot("developer-narrow", developer);
+  await framedShot(dev, "developer-narrow", developer);
   await grip.dblclick();
 
   // A save at a revision another client has since replaced is refused once, the current value is shown, nothing retries.
   devSettings = { developerMode: true, revision: devSettings.revision + 2, updatedAt: new Date().toISOString() };
-  await frame(server);
+  await frame(dev, server);
   await toggle.click();
   await server.getByText("Changed elsewhere — showing the current value. Try again if you still want to change it.").waitFor();
   assert.deepEqual(settingsUpdates.at(-1), { developerMode: false, expectedRevision: 1 });
   assert.equal(settingsUpdates.length, 2, "no automatic retry with the newer revision");
   await server.getByText(/^On · saved/).waitFor();
   assert.equal(await toggle.getAttribute("aria-checked"), "true");
-  await devShot("developer-settings-conflict", server);
+  await framedShot(dev, "developer-settings-conflict", server);
 
   // Turning it off here, now at the current revision, removes the window and stops release reads at once.
   await toggle.click();
@@ -402,7 +474,7 @@ try {
   assert.equal(releaseReads(), reads);
 
   assert.deepEqual(errors, [], "browser has no uncaught application errors");
-  console.log(JSON.stringify({ ok: true, evidence, assertions: "mixed owner availability with a visible gap, nullable and measured bytes, drill-down action note, stale-page restart, inspector, explicit per-owner measurement, argument reveal only on drill-down, stale-revision removal refused then exact removal, serve_state_changed refresh, dark; developer mode unknown before read, off by default with no release reads or deep-link reveal, keyboard enable at the read revision, retained not-checked/observed/changed/failed rows, source links, Check now admission through event-driven read with checking and stale-after-failure, dark, narrow reflow, refused stale-revision save without retry, remote disable removing the window and returning focus, no reads after disable or reload" }, null, 2));
+  console.log(JSON.stringify({ ok: true, evidence, assertions: "mixed owner availability with a visible gap, nullable and measured bytes, drill-down action note, stale-page restart, inspector, explicit per-owner measurement, argument reveal only on drill-down, stale-revision removal refused then exact removal, serve_state_changed refresh, dark; factory-reset disclosure collapsed until keyboard-opened, read-only content with doc-pinned cold commands and copy-only buttons, dark and narrow without overflow; developer mode unknown before read, off by default with no release reads or deep-link reveal, keyboard enable at the read revision, retained not-checked/observed/changed/failed rows, source links, Check now admission through event-driven read with checking and stale-after-failure, dark, narrow reflow, refused stale-revision save without retry, remote disable removing the window and returning focus, no reads after disable or reload" }, null, 2));
 } catch (error) {
   failed = true;
   const page = browser?.contexts().flatMap((context) => context.pages()).at(-1);
