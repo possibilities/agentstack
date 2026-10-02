@@ -1,25 +1,35 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDownIcon, ChevronRightIcon, ListIcon, RadioTowerIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, ListIcon, PlusIcon, RadioTowerIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { receiverFacts, targetKinds, targetLabel, type ReceiverFact } from "@/lib/stack/source";
+import { maxReceivers, requestFact, type CreateRecord } from "@/lib/stack/source-setup";
+import { localOperation } from "@/lib/stack/state";
 import type { GithubEndpoint, GithubSetup } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { CopyButton, Empty, Flash, NodeCard, NodeTitle, StatusDot } from "./primitives";
 import { useStack, useStore, useWorkbench } from "./provider";
+import { clearCreateRecord, CreateReceiver, readCreateRecord } from "./source-receiver-create";
+import { ReceiverSetupControls } from "./source-receiver-setup";
+import { useJournal } from "./source-requests";
 import { Capacity, sourceChip, sourceHint, sourceLabel, sourceUnavailable, Stamp, Word } from "./source-shared";
 import { Section, Window } from "./window";
 
 /**
  * Where deliveries come from. Intake and capacity first, then each receiver as separate facts: a receiver saved
  * locally is not published, published is not configured at GitHub, a request is not an arrival, and one signed
- * arrival is not coverage. Read-only in this view: nothing here creates, edits, reveals or applies.
+ * arrival is not coverage. A local operator creates, edits and sets up receivers here (ADR 0166); a remote view
+ * reads them and shows no control.
  */
 export function ReceiversWindow() {
   const { flash } = useWorkbench();
-  const { status, endpoints, sourceStatus, sourceEndpoints } = useStack();
+  const state = useStack();
+  const { status, endpoints, remote, sourceStatus, sourceEndpoints } = state;
   const [open, setOpen] = useState<string | null>(null);
+  const [creating, setCreating] = useState<{ resume: CreateRecord | null } | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState<CreateRecord | null>(null);
+  const createAccess = remote ? null : localOperation(state, "source", "github_endpoint_create");
   const list = sourceEndpoints.data;
   const intake = sourceStatus.data;
   // A link to a receiver opens its setup facts.
@@ -27,10 +37,21 @@ export function ReceiversWindow() {
     if (flash?.key.startsWith("github-receiver:")) setOpen(flash.key.slice("github-receiver:".length));
   }, [flash?.seq, flash?.key]);
   const unavailable = sourceUnavailable(endpoints, status);
+  // A creation this browser recorded before sending it, whose answer was never seen: offered back until the receiver exists or it is forgotten.
+  useEffect(() => {
+    if (remote || !list) { setUnconfirmed(null); return; }
+    const held = readCreateRecord();
+    if (held && list.some((endpoint) => endpoint.id === held.input.id)) { clearCreateRecord(); setUnconfirmed(null); return; }
+    setUnconfirmed(creating ? null : held);
+  }, [remote, list, creating]);
   return (
     <Window id="source-receivers" title="Receivers" icon={RadioTowerIcon} accent="source" count={list?.length ?? null}
       status={endpoints.source ? status.source : undefined} endpoint={endpoints.source} updatedAt={sourceEndpoints.at ?? sourceStatus.at}
-      error={sourceEndpoints.error ?? sourceStatus.error} empty={!endpoints.source}>
+      error={sourceEndpoints.error ?? sourceStatus.error} empty={!endpoints.source}
+      actions={createAccess ? (
+        <Button size="xs" variant="outline" disabled={!createAccess.available || status.source !== "open" || (list?.length ?? 0) >= maxReceivers || creating !== null} title={createAccess.available ? undefined : createAccess.reason}
+          onClick={() => setCreating({ resume: null })}><PlusIcon data-icon="inline-start" />New receiver</Button>
+      ) : undefined}>
       {!endpoints.source ? <Empty icon={RadioTowerIcon} title="Source isn't served by this server" /> : (
         <>
           <Section title="Intake">
@@ -47,8 +68,14 @@ export function ReceiversWindow() {
             <p className={sourceHint}>Only signed webhook requests reach the loopback listener, and only the webhook path should be published. A tailnet-only address cannot receive GitHub Cloud webhooks.</p>
           </Section>
           <Section title="Receivers" aside={list ? <span className="text-[0.68rem] text-muted-foreground tabular-nums">{list.length}</span> : null}>
+            {unconfirmed ? (
+              <div role="status" aria-label="Unconfirmed receiver" className="mb-2 flex flex-col gap-1 rounded-lg border border-warning/50 bg-warning/10 px-2.5 py-2 text-[0.72rem]">
+                <p><span className="font-semibold">A receiver save was not confirmed.</span> “{unconfirmed.input.label}” was sent from this browser and no answer was seen.</p>
+                <div><Button size="xs" variant="outline" disabled={status.source !== "open"} onClick={() => setCreating({ resume: unconfirmed })}>Check by its ID</Button></div>
+              </div>
+            ) : null}
             {!list ? <Empty icon={RadioTowerIcon} title={unavailable ?? "Reading receivers…"} />
-              : !list.length ? <Empty icon={RadioTowerIcon} title="No receivers" hint="A receiver is created through the Package API (github_endpoint_create). This view reads them; it does not create or change one." />
+              : !list.length ? <Empty icon={RadioTowerIcon} title="No receivers" hint={remote ? "Receivers are created on the local UI or through github_endpoint_create." : "Create one with New receiver. Saving it configures nothing at GitHub."} />
               : (
                 <ul className="flex flex-col gap-2">
                   {list.map((endpoint) => <ReceiverRow key={endpoint.id} endpoint={endpoint} open={open === endpoint.id} onToggle={() => setOpen(open === endpoint.id ? null : endpoint.id)} />)}
@@ -57,6 +84,7 @@ export function ReceiversWindow() {
           </Section>
         </>
       )}
+      {creating ? <CreateReceiver resume={creating.resume} count={list?.length ?? 0} onClose={() => setCreating(null)} /> : null}
     </Window>
   );
 }
@@ -66,6 +94,9 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 }
 
 function ReceiverRow({ endpoint, open, onToggle }: { endpoint: GithubEndpoint; open: boolean; onToggle(): void }) {
+  const { remote } = useStack();
+  const requests = useJournal(endpoint.id);
+  const unconfirmed = remote ? 0 : requests.filter((entry) => entry.status === "pending" || entry.status === "running" || entry.status === "unknown").length;
   const node = { kind: "github-receiver" as const, id: endpoint.id };
   const detail = `receiver-${endpoint.id}-setup`;
   const refused = endpoint.lastFailure !== null;
@@ -94,6 +125,7 @@ function ReceiverRow({ endpoint, open, onToggle }: { endpoint: GithubEndpoint; o
             <div key={label} className="flex flex-col"><dd className={cn("text-[0.84rem] font-semibold tabular-nums", attention && "text-warning")}>{value.toLocaleString("en-US")}</dd><dt className="text-muted-foreground">{label}</dt></div>
           ))}
         </dl>
+        {unconfirmed ? <p role="status" aria-label="Unconfirmed requests" className="text-[0.7rem] text-warning">{unconfirmed} remote {unconfirmed === 1 ? "request" : "requests"} to GitHub {unconfirmed === 1 ? "is" : "are"} not confirmed. Open Setup facts to read {unconfirmed === 1 ? "its" : "their"} receipt.</p> : null}
         {refused ? <p role="status" className="flex flex-wrap gap-x-1.5 text-[0.7rem] text-warning"><span className="font-medium">Last refusal</span><code className="font-mono break-all">{endpoint.lastFailure}</code></p> : null}
         <div className="flex flex-wrap items-center gap-1.5">
           <ShowDeliveries id={endpoint.id} />
@@ -122,11 +154,15 @@ function ShowDeliveries({ id }: { id: string }) {
 
 function Setup({ endpoint }: { endpoint: GithubEndpoint }) {
   const store = useStore();
-  const { sourceSetups } = useStack();
+  const { sourceSetups, remote } = useStack();
   const held = sourceSetups[endpoint.id];
+  const journal = useJournal(endpoint.id);
   useEffect(() => { void store.loadSourceSetup(endpoint.id); }, [store, endpoint.id, endpoint.revision]);
   const setup: GithubSetup | null = held?.data ?? null;
-  const facts = receiverFacts(endpoint, setup);
+  // Requests are recorded by the local operator's browser; a remote view has none to show and says so rather than "None".
+  const receipt = remote ? { word: "Local only", tone: "muted" as const, lines: ["Hook, ping and redelivery requests are made by the local operator and recorded in that browser. A request being admitted by GitHub would still not be a signed arrival."] }
+    : requestFact(journal, (at) => new Date(at).toLocaleString());
+  const facts = receiverFacts(endpoint, setup, undefined, receipt);
   return (
     <div className="flex flex-col gap-3 border-t pt-2.5">
       <ol aria-label="Five separate facts" className="flex flex-col gap-2">
@@ -147,7 +183,7 @@ function Setup({ endpoint }: { endpoint: GithubEndpoint }) {
             <Destination label="Loopback destination" value={setup.ingress.localUrl} />
             {endpoint.webhookUrl ? <Destination label="Webhook URL" value={endpoint.webhookUrl} /> : null}
             <Destination label="GitHub settings page" value={setup.settingsUrl} />
-            <p className={sourceHint}>Shown as text; nothing here opens a link or contacts GitHub.</p>
+            <p className={sourceHint}>Shown as text. Nothing opens a link or contacts GitHub unless you start it.</p>
           </div>
           <details className="group rounded-lg border border-dashed">
             <summary className="flex cursor-pointer items-center justify-between px-2.5 py-1.5 text-[0.72rem] text-muted-foreground select-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
@@ -173,6 +209,7 @@ function Setup({ endpoint }: { endpoint: GithubEndpoint }) {
           </details>
         </>
       ) : null}
+      {remote ? null : <ReceiverSetupControls endpoint={endpoint} setup={setup} />}
     </div>
   );
 }

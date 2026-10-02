@@ -15,7 +15,7 @@ export const targetKindList: GithubTarget["kind"][] = ["repository", "organizati
 export const hostIsGithubCom = (host: string): boolean => host.trim().toLowerCase() === "github.com";
 
 /** Whether Stack can configure the hook through gh, and if not, why setup is by hand. Mirrors the owner's own rule. */
-export function setupMode(target: GithubTarget, host: string): { automated: true } | { automated: false; reason: string } {
+export function setupMode(target: Pick<GithubTarget, "kind">, host: string): { automated: true } | { automated: false; reason: string } {
   if (!hostIsGithubCom(host)) return { automated: false, reason: `${host.trim() || "This host"} is not github.com: GitHub Enterprise Server is set up by hand, and Stack makes no network call to it.` };
   if (target.kind === "repository" || target.kind === "organization") return { automated: true };
   const names: Record<string, string> = { enterprise: "An enterprise webhook", app: "An App webhook", marketplace: "A Marketplace webhook", sponsors_listing: "A Sponsors webhook" };
@@ -322,7 +322,7 @@ const errorText = (error: unknown) => error instanceof Error ? error.message : S
  * Read what the owner recorded for this exact request ID, and nothing else: never a second dispatch, never a new ID. A receipt settles
  * the entry; no receipt means the owner never began it, so it never reached GitHub; a failed read leaves the entry as it was.
  */
-export async function recover(kv: KeyValue, io: RemoteIo, entry: JournalEntry, error: string | null = null): Promise<RemoteOutcome> {
+export async function recover(kv: KeyValue, io: RemoteIo, entry: JournalEntry, error: string | null = null): Promise<Extract<RemoteOutcome, { sent: true }>> {
   try {
     const receipt = await io.readReceipt(entry.requestId);
     const next = settle(kv, entry.endpointId, entry.requestId, receipt, error) ?? entry;

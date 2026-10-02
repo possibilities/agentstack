@@ -18,6 +18,7 @@ import { catalogRequest, readRequest, settingsKey, settingsPackage, type Setting
 import { loadTree, type HudTree } from "./hud";
 import { initialLedger, SourceLedger, type LedgerState } from "./source";
 import { initialInbox, WatchInbox, type InboxState, type WatchCreateInput } from "./source-watches";
+import type { ReceiverCreateInput } from "./source-setup";
 import type { GithubDelivery, GithubDeliveryPage, GithubEndpoint, GithubFilter, GithubSetup, GithubStatus, GithubWatch, GithubWatchRead } from "./types";
 import { continueCompletions, continueInventory, continueOccurrences, continueSubscriptions, loadCompletions, loadInventory, loadOccurrences, loadSubscriptions, type CompletionFilter, type CompletionList, type OccurrenceFilter, type OccurrenceList, type StateInventory, type StateSelection, type SubscriptionFilter, type SubscriptionList } from "./state";
 import { checkSettled, developerModeOn, type HarnessCheck } from "./developer";
@@ -1953,6 +1954,29 @@ export class StackStore {
    */
   acknowledgeSourceWatch = async (through: number): Promise<Awaited<ReturnType<WatchInbox["acknowledge"]>>> => {
     try { return await this.sourceInboxSession.acknowledge(through); } finally { this.refresh("sourceWatches"); this.scheduleSourceCounts(0); }
+  };
+
+  /**
+   * Receiver writes. A lost answer may still have written, so each re-reads the receivers and the held setups; none replays.
+   * A revealed secret never passes through here: the component that asked for it keeps it, and nothing else does.
+   */
+  private sourceReceiversSettled(id: string): void {
+    this.refresh("sourceEndpoints"); this.refresh("sourceStatus");
+    if (this.state.sourceSetups[id]) void this.loadSourceSetup(id);
+  }
+
+  createSourceReceiver = async (input: ReceiverCreateInput): Promise<GithubEndpoint> => {
+    try { return await this.call<GithubEndpoint>("source", "github_endpoint_create", { ...input }); } finally { this.sourceReceiversSettled(input.id); }
+  };
+
+  readSourceReceiver = (id: string): Promise<GithubEndpoint> => this.call<GithubEndpoint>("source", "github_endpoint_get", { id });
+
+  updateSourceReceiver = async (id: string, expectedRevision: number, patch: { label?: string; publicOrigin?: string | null; enabled?: boolean }): Promise<GithubEndpoint> => {
+    try { return await this.call<GithubEndpoint>("source", "github_endpoint_update", { id, expectedRevision, ...patch }); } finally { this.sourceReceiversSettled(id); }
+  };
+
+  rotateSourceSecret = async (id: string, expectedRevision: number, graceSeconds: number): Promise<GithubEndpoint> => {
+    try { return await this.call<GithubEndpoint>("source", "github_endpoint_secret_rotate", { id, expectedRevision, graceSeconds }); } finally { this.sourceReceiversSettled(id); }
   };
 
   createSourceWatch = async (input: WatchCreateInput): Promise<GithubWatch> => {

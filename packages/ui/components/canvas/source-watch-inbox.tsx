@@ -132,6 +132,7 @@ export function WatchInbox({ id, canAcknowledge, unavailableReason }: { id: stri
               {offer.plan.skipped.length ? <span role="alert" className="text-warning">{offer.plan.skipped.length} {offer.plan.skipped.length === 1 ? "entry was" : "entries were"} marked reviewed without opening {offer.plan.skipped.length === 1 ? "its" : "their"} details and will be acknowledged anyway: {listText(offer.plan.skipped)}.</span> : <span>Every entry in the range had its details opened.</span>}
               <span>{inbox.pending !== null ? `${Math.max(0, inbox.pending - offer.plan.count).toLocaleString("en-US")} pending ${Math.max(0, inbox.pending - offer.plan.count) === 1 ? "entry stays" : "entries stay"} pending` : "Later entries stay pending"}{offer.plan.stranded.length ? `, including ${offer.plan.stranded.length} you marked after an unmarked one` : ""}.</span>
               <span>The cursor only moves forward, so this cannot be undone here. It is sent only while the cursor is still #{confirm?.base} (compare-and-set); otherwise nothing is acknowledged, the inbox is read again and you review again.</span>
+              <span>The cursor is shared by everything that consumes this watch. To consume independently, create a private watch of your own with the same filter.</span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="group-data-[size=sm]/alert-dialog-content:grid-cols-1">
