@@ -21,6 +21,7 @@ import {
   findCategory,
   findFragment,
   findResource,
+  harnessText,
   resolveSelection,
   roleErrorText,
   roleLabel,
@@ -30,7 +31,7 @@ import {
   type Draft,
   type ResourceKind,
 } from "@/lib/stack/roles";
-import type { Role, RoleCatalog, RoleInternalMcp, RoleReceipt, RoleSnapshot } from "@/lib/stack/types";
+import type { Role, RoleCapabilityHarnesses, RoleCatalog, RoleInternalMcp, RoleReceipt, RoleSnapshot } from "@/lib/stack/types";
 import { errorMessage } from "./auth-actions";
 import { useStack, useStore } from "./provider";
 import { DefaultDialog, DeleteRoleDialog } from "./role-dialogs";
@@ -93,8 +94,11 @@ type RoleActions = {
   write(name: string, build: RoleWrite, key?: string): Promise<RoleSnapshot>;
   /** Fire-and-report form of `write` for switches and menu items. */
   act(name: string, build: RoleWrite, key?: string, success?: string): void;
-  /** Switch one internal Stack MCP server on or off for this Role's later launches. */
-  setInternalMcp(name: string, enabled: boolean): Promise<void>;
+  /**
+   * Edit one internal Stack MCP server's switch and/or harness filter for this Role's later launches. Only the
+   * supplied fields are written; `expected` fences a harness change against a filter edited elsewhere.
+   */
+  setInternalMcp(name: string, patch: { enabled?: boolean; harnesses?: RoleCapabilityHarnesses; expected?: RoleCapabilityHarnesses }): Promise<void>;
   /** Create a Role with the catalog revision, then select it. */
   createRole(name: string, description: string): Promise<Role>;
   confirmDelete(target: RoleRecord): void;
@@ -290,16 +294,25 @@ export function RoleActionsProvider({ children }: { children: React.ReactNode })
     store.selectRole(id);
   }, [store]);
 
-  const setInternalMcp = useCallback((name: string, enabled: boolean): Promise<void> => {
+  const setInternalMcp = useCallback((name: string, patch: { enabled?: boolean; harnesses?: RoleCapabilityHarnesses; expected?: RoleCapabilityHarnesses }): Promise<void> => {
     if (!roleId) return Promise.reject(new Error("No Role is selected"));
     const id = roleId;
     return track(id, `internal:${name}`, async () => {
       const attempt = async (list: RoleInternalMcp) => {
         const server = list.servers.find((item) => item.name === name);
         if (!server) throw new Error(`${name} is no longer a configured Stack server`);
-        // A reread that already shows the requested state means someone else made the change: nothing to write.
-        if (server.enabled === enabled) return;
-        await store.call<RoleReceipt>("roles", "role_internal_mcp_update", { roleId: id, expectedRevision: list.revision, name, enabled });
+        // Only the supplied fields are written; a reread already showing them means someone else made the change.
+        const args: Record<string, unknown> = {};
+        if (patch.enabled !== undefined && server.enabled !== patch.enabled) args.enabled = patch.enabled;
+        if (patch.harnesses !== undefined) {
+          const current = harnessText(server.harnesses);
+          // The popover's fence: a filter that moved since it was opened is reviewed, never overwritten blind.
+          if (patch.expected !== undefined && current !== harnessText(patch.expected) && current !== harnessText(patch.harnesses))
+            throw new Error("This server’s harness filter changed elsewhere. Review it and apply again.");
+          if (current !== harnessText(patch.harnesses)) args.harnesses = patch.harnesses;
+        }
+        if (!Object.keys(args).length) return;
+        await store.call<RoleReceipt>("roles", "role_internal_mcp_update", { roleId: id, expectedRevision: list.revision, name, ...args });
       };
       const held = store.getState().roleInternal.data;
       try {

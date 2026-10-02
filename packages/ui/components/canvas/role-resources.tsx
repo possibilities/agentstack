@@ -29,6 +29,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
 import {
   addedIds,
@@ -36,22 +37,26 @@ import {
   draftDirty,
   findResource,
   formatBytes,
+  harnessSummary,
+  harnessText,
   internalCounts,
   injectionGuidance,
   mcpTarget,
   mcpText,
   projectBots,
   projectText,
+  readHarnessDraft,
   resourceOrder,
   skillBytes,
   skillText,
   uniqueName,
   type ResourceKind,
 } from "@/lib/stack/roles";
-import { nodeKey, type RoleInternalServer, type RoleMcpServer, type RoleSkill, type RoleSnapshot, type RoleTrustedProject } from "@/lib/stack/types";
+import { nodeKey, type RoleCapabilityHarnesses, type RoleInternalServer, type RoleMcpServer, type RoleSkill, type RoleSnapshot, type RoleTrustedProject } from "@/lib/stack/types";
 import { cn } from "@/lib/utils";
 import { errorMessage } from "./auth-actions";
 import { Empty, NodeLink } from "./primitives";
+import { HarnessChip, HarnessFilter, HarnessTriggerFace } from "./role-harness";
 import { AvailabilityDot, CheckButton, ConnectionDetails, ProblemText, availabilityText, useCodexTools } from "./codex-tools";
 import { useNow, useStack, useWorkbench } from "./provider";
 import type { StackState } from "@/lib/stack/store";
@@ -93,9 +98,12 @@ export function RoleSkillsWindow() {
     text: skillText,
     search: (skill) => [skill.name, skill.description, skill.body, ...skill.files.map((file) => file.path)].join("\n"),
     aside: (skill) => (
-      <span className="text-[0.65rem] text-muted-foreground tabular-nums" title={`${skill.files.length} supporting file${skill.files.length === 1 ? "" : "s"}`}>
-        {skill.files.length ? `${skill.files.length} file${skill.files.length === 1 ? "" : "s"} · ` : ""}{formatBytes(skillBytes(skill))}
-      </span>
+      <>
+        <HarnessChip value={skill.harnesses} />
+        <span className="text-[0.65rem] text-muted-foreground tabular-nums" title={`${skill.files.length} supporting file${skill.files.length === 1 ? "" : "s"}`}>
+          {skill.files.length ? `${skill.files.length} file${skill.files.length === 1 ? "" : "s"} · ` : ""}{formatBytes(skillBytes(skill))}
+        </span>
+      </>
     ),
     duplicate: (skill, items) => ({ name: uniqueName(skill.name, items.map((item) => item.name)), description: skill.description, body: skill.body, files: skill.files, enabled: skill.enabled, harnesses: skill.harnesses }),
     note: "Enabled Role skills enter later launches only where their harness filters allow. Bots still discover project and bundled skills.",
@@ -114,6 +122,7 @@ export function RoleMcpServersWindow() {
       const blocking = state.roleLaunch.data?.revision === state.role.data?.revision && state.roleLaunch.data?.issues.some((issue) => issue.id === server.id);
       return (
         <>
+          <HarnessChip value={server.harnesses} />
           {blocking ? <span className={cn(chip, "bg-destructive/15 text-destructive")} title="Selected launch capabilities conflict until this changes">Blocks launches</span> : null}
           <span className={cn(chip, "bg-muted font-mono text-muted-foreground")}>{server.definition.type}</span>
         </>
@@ -153,9 +162,10 @@ function StackServers() {
             return (
               <li key={server.name} className="flex min-w-0 items-center gap-2 rounded-lg py-1 pr-1.5 pl-2 transition-colors hover:bg-muted/70">
                 <Switch size="sm" checked={server.enabled} disabled={!connected || actions.pending.has(`internal:${server.name}`)} aria-label={`${server.title} on`}
-                  onCheckedChange={(enabled) => { actions.setInternalMcp(server.name, enabled).catch((error) => toast.error(errorMessage(error))); }} />
+                  onCheckedChange={(enabled) => { actions.setInternalMcp(server.name, { enabled }).catch((error) => toast.error(errorMessage(error))); }} />
                 <span className={cn("min-w-0 flex-1 truncate text-[0.78rem] font-medium", server.kind === "package" && "font-mono", !server.enabled && "text-muted-foreground")}
                   title={`${server.name} · ${server.transport}${server.description ? `: ${server.description}` : ""}`}>{server.title}</span>
+                <StackHarnessFilter server={server} connected={connected} />
                 {availability ? <AvailabilityDot availability={availability} /> : null}
                 {!server.enabled ? <span className={cn(chip, "bg-muted text-muted-foreground")}>Off</span> : null}
               </li>
@@ -167,11 +177,50 @@ function StackServers() {
       )}
       {list && !on && total ? <p className="px-1.5 text-[0.7rem] text-muted-foreground">Every Stack server is off; later launches receive none of them.</p> : null}
       <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">
-        Stack connections use stdio for Bot and Worker launches and <code>stack roles inject</code> when enabled and allowed for the actual harness. These switches preserve any API-configured harness filters. Running sessions keep their connections. New Stack connections start on and unrestricted.
+        Stack connections use stdio for Bot and Worker launches and <code>stack roles inject</code> when switched on and allowed by their harness filter. Switches and filters are independent. Running sessions keep their connections. New Stack connections start on and unrestricted.
       </p>
       <p className="px-1.5 text-[0.66rem] text-pretty text-muted-foreground">{injectionGuidance}</p>
       {list?.servers.some((server) => server.kind === "codex") ? <CodexToolsAvailability servers={list.servers.filter((server) => server.kind === "codex")} now={now} /> : null}
     </Section>
+  );
+}
+
+/**
+ * One internal connection's harness filter, edited in a popover beside its switch. The draft is local and
+ * reinitialised from the stored filter each time it opens; Apply carries the filter it opened with as a fence,
+ * so a filter changed elsewhere in between is reported rather than overwritten. The switch is unaffected.
+ */
+function StackHarnessFilter({ server, connected }: { server: RoleInternalServer; connected: boolean }) {
+  const actions = useRoleActions();
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("null");
+  const [expected, setExpected] = useState<RoleCapabilityHarnesses | undefined>(undefined);
+  const pending = actions.pending.has(`internal:${server.name}`);
+  const parsed = readHarnessDraft(draft);
+  const unchanged = parsed.value !== undefined && harnessText(parsed.value) === harnessText(server.harnesses);
+  const apply = () => {
+    if (parsed.value === undefined) return;
+    actions.setInternalMcp(server.name, { harnesses: parsed.value, expected }).then(
+      () => setOpen(false), (error) => toast.error(errorMessage(error)));
+  };
+  return (
+    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (next) { setDraft(harnessText(server.harnesses)); setExpected(server.harnesses); } }}>
+      <PopoverTrigger
+        render={<Button size="xs" variant="ghost" className="h-6 px-1" aria-label={`${server.title} harness filter`} title={`Harness filter: ${harnessSummary(server.harnesses)}`} />}>
+        <HarnessTriggerFace value={server.harnesses} />
+      </PopoverTrigger>
+      <PopoverContent align="end" sideOffset={6} className="w-80">
+        <div className="flex flex-col gap-2 p-1.5">
+          <h4 className="text-[0.74rem] font-medium">{server.title} · harness filter</h4>
+          <HarnessFilter id={`internal-${server.name}`} value={draft} onChange={setDraft} disabled={!connected} compact />
+          <p className="px-0.5 text-[0.66rem] text-pretty text-muted-foreground">Independent of the switch: changing it never turns the server on or off.</p>
+          <div className="flex justify-end gap-1.5">
+            <Button size="xs" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button size="xs" variant="outline" disabled={!connected || pending || parsed.value === undefined || unchanged} onClick={apply}>Apply</Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

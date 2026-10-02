@@ -50,6 +50,7 @@ import {
   nameIssue,
   projectBots,
   projectText,
+  readHarnessDraft,
   resourceNameLimit,
   safeFilePath,
   skillBodyLimit,
@@ -72,6 +73,7 @@ import { BotTile, NodeLink } from "./primitives";
 import { useStack, useWorkbench } from "./provider";
 import { resourceOperation, useRoleActions } from "./role-actions";
 import { ConflictNotice, EditorFrame, Gone, hintClass, labelClass, RecordMenu, SaveBar, saveKeys, useDraft, useFocusField } from "./role-editor-parts";
+import { HarnessFilter } from "./role-harness";
 
 type Fields = Record<string, string>;
 
@@ -85,15 +87,20 @@ type Spec<T extends { id: string; enabled: boolean }> = {
   args(fields: Fields): Record<string, unknown>;
 };
 
+/** The draft's harness filter as an update argument; an unreadable draft (undefined) is never sent. */
+const harnessArgs = (text: string | undefined): { harnesses?: RoleSkill["harnesses"] } => {
+  if (text === undefined) return {};
+  const { value } = readHarnessDraft(text);
+  return value !== undefined ? { harnesses: value } : {};
+};
+
 const skillSpec: Spec<RoleSkill> = {
   kind: "skill", noun: "skill", list: (role) => role?.skills, text: skillText, blank: blankSkillText,
-  args: ({ files, harnesses, ...fields }) => ({ ...fields, ...(files !== undefined ? { files: draftFiles(files) } : {}),
-    ...(harnesses !== undefined ? { harnesses: JSON.parse(harnesses) } : {}) }),
+  args: ({ files, harnesses, ...fields }) => ({ ...fields, ...(files !== undefined ? { files: draftFiles(files) } : {}), ...harnessArgs(harnesses) }),
 };
 const mcpSpec: Spec<RoleMcpServer> = {
   kind: "mcp-server", noun: "MCP server", list: (role) => role?.mcpServers, text: mcpText, blank: blankMcpText,
-  args: ({ definition, harnesses, ...fields }) => ({ ...fields, ...(definition !== undefined ? { definition: fromMcpForm(draftMcpForm(definition)).definition } : {}),
-    ...(harnesses !== undefined ? { harnesses: JSON.parse(harnesses) } : {}) }),
+  args: ({ definition, harnesses, ...fields }) => ({ ...fields, ...(definition !== undefined ? { definition: fromMcpForm(draftMcpForm(definition)).definition } : {}), ...harnessArgs(harnesses) }),
 };
 const projectSpec: Spec<RoleTrustedProject> = {
   kind: "trusted-project", noun: "trusted project", list: (role) => role?.trustedProjects, text: projectText, blank: blankProjectText,
@@ -161,7 +168,12 @@ function useCreate<T extends { id: string; enabled: boolean }>(spec: Spec<T>, en
       const fields = { ...spec.blank, ...draft.draft.values };
       const before = spec.list(role.data) ?? [];
       setError(null);
-      actions.write(`${operation}_create`, () => ({ ...spec.args(fields), enabled }), `save:${key}`).then((snapshot) => {
+      actions.write(`${operation}_create`, () => {
+        const args = spec.args(fields);
+        // A new record keeps the API's omission semantics: unrestricted is sent as omission, never as null.
+        if (args.harnesses === null) delete args.harnesses;
+        return { ...args, enabled };
+      }, `save:${key}`).then((snapshot) => {
         draft.clear();
         const created = addedIds(before, spec.list(snapshot) ?? [])[0];
         actions.open(created ? { kind: spec.kind, id: created } : null);
@@ -181,7 +193,8 @@ function useDuplicate<T extends { id: string; enabled: boolean; name: string; ha
     const current = findResource(items, id)?.item;
     if (!current) return `This ${spec.noun} was deleted elsewhere.`;
     const fields = { ...spec.text(current), ...edits };
-    return { ...spec.args(fields), name: uniqueName(fields.name || current.name, items.map((item) => item.name)), enabled: current.enabled, harnesses: current.harnesses };
+    return { ...spec.args(fields), name: uniqueName(fields.name || current.name, items.map((item) => item.name)), enabled: current.enabled,
+      harnesses: readHarnessDraft(fields.harnesses).value ?? current.harnesses ?? null };
   }, `duplicate:${id}`).then((snapshot) => {
     const created = addedIds(spec.list(role.data) ?? [], spec.list(snapshot) ?? [])[0];
     if (created) actions.open({ kind: spec.kind, id: created });
@@ -200,6 +213,9 @@ function Issues({ issues }: { issues: string[] }) {
     </ul>
   );
 }
+
+/** A filter's draft (or saved text) is "no harness" exactly when it parses to an empty allowlist. */
+const allowsNoHarness = (text: string): boolean => readHarnessDraft(text).value?.length === 0;
 
 function EnabledRow({ id, checked, disabled, onChange, note, children }: {
   id: string; checked: boolean; disabled?: boolean; onChange(value: boolean): void; note: string; children?: React.ReactNode;
@@ -252,7 +268,7 @@ function skillProblems(value: (field: string) => string, others: string[]) {
     ...(!value("description").trim() ? ["A description is required: Bots read it to decide when to use the skill"] : []),
     ...(value("body").length > skillBodyLimit ? [`The body is longer than ${skillBodyLimit.toLocaleString()} characters`] : []),
   ];
-  return { nameProblem, other, invalid: nameProblem ?? other[0] ?? skillFileIssues(draftFiles(value("files")))[0] ?? null };
+  return { nameProblem, other, invalid: nameProblem ?? other[0] ?? skillFileIssues(draftFiles(value("files")))[0] ?? readHarnessDraft(value("harnesses")).issue };
 }
 
 function SkillFields({ id, value, set, nameProblem }: { id: string; value(field: string): string; set(field: string, value: string): void; nameProblem: string | null }) {
@@ -391,7 +407,9 @@ export function SkillEditor({ id }: { id: string }) {
       <form className="flex flex-col gap-3" aria-label={`Edit skill ${skill.name}`} onSubmit={(event) => { event.preventDefault(); save(); }} onKeyDown={saveKeys(save)}>
         <ConflictNotice fields={saved.draft.conflicts} onKeep={saved.keep} onYield={saved.yield} />
         <EnabledRow id={formId} checked={skill.enabled} disabled={!saved.connected || saved.enabling} onChange={saved.setEnabled}
-          note={skill.enabled ? "Included in new launches where its harness filter allows" : "Skipped in new launches"} />
+          note={skill.enabled ? (allowsNoHarness(skillText(skill).harnesses) ? "Enabled, but its filter allows no harness" : "Included in new launches where its harness filter allows") : "Skipped in new launches"}>
+          <HarnessFilter id={`${formId}-skill`} value={saved.draft.value("harnesses")} onChange={(text) => saved.draft.set("harnesses", text)} disabled={!saved.connected} />
+        </EnabledRow>
         <SkillFields id={formId} value={saved.draft.value} set={saved.draft.set} nameProblem={nameProblem} />
         <Issues issues={other} />
         <ErrorText error={saved.error} />
@@ -412,7 +430,10 @@ export function NewSkillEditor({ enabled }: { enabled: boolean }) {
       footer={<SaveBar dirty={created.connected} conflicts={0} pending={created.creating} invalid={invalid} saveLabel="Create skill" onSave={create} note="Not created yet" />}
       actions={<Button size="icon-sm" variant="ghost" aria-label="Discard new skill" onClick={created.cancel}><XIcon /></Button>}>
       <form className="flex flex-col gap-3" aria-label="New skill" onSubmit={(event) => { event.preventDefault(); create(); }} onKeyDown={saveKeys(create)}>
-        <EnabledRow id={formId} checked={enabled} onChange={created.setEnabled} note={enabled ? "Included where its harness filter allows once created" : "Created switched off"} />
+        <EnabledRow id={formId} checked={enabled} onChange={created.setEnabled}
+          note={enabled ? (allowsNoHarness(created.draft.value("harnesses")) ? "Enabled, but its filter allows no harness" : "Included where its harness filter allows once created") : "Created switched off"}>
+          <HarnessFilter id={`${formId}-skill`} value={created.draft.value("harnesses")} onChange={(text) => created.draft.set("harnesses", text)} disabled={!created.connected} />
+        </EnabledRow>
         <SkillFields id={formId} value={created.draft.value} set={created.draft.set} nameProblem={nameProblem} />
         <Issues issues={other} />
         <ErrorText error={created.error} />
@@ -432,7 +453,7 @@ function mcpProblems(value: (field: string) => string, others: string[], interna
   const name = value("name");
   const nameProblem = nameIssue(name, others) ?? (internalCollision(name, internal) ? "A Stack server already uses this name, even while it is switched off" : null);
   const { issues } = fromMcpForm(draftMcpForm(value("definition")));
-  return { nameProblem, issues, invalid: nameProblem ?? issues[0] ?? null };
+  return { nameProblem, issues, invalid: nameProblem ?? issues[0] ?? readHarnessDraft(value("harnesses")).issue };
 }
 
 function Pairs({ label, rows, onChange, keyLabel, valueLabel, keyPlaceholder, valuePlaceholder, secret }: {
@@ -595,7 +616,9 @@ export function McpServerEditor({ id }: { id: string }) {
         ) : null}
         <ConflictNotice fields={saved.draft.conflicts} onKeep={saved.keep} onYield={saved.yield} />
         <EnabledRow id={formId} checked={server.enabled} disabled={!saved.connected || saved.enabling} onChange={saved.setEnabled}
-          note={server.enabled ? "New launches connect where its harness filter allows" : "Skipped in new launches"} />
+          note={server.enabled ? (allowsNoHarness(mcpText(server).harnesses) ? "Enabled, but its filter allows no harness" : "New launches connect where its harness filter allows") : "Skipped in new launches"}>
+          <HarnessFilter id={`${formId}-mcp`} value={saved.draft.value("harnesses")} onChange={(text) => saved.draft.set("harnesses", text)} disabled={!saved.connected} />
+        </EnabledRow>
         <McpFields id={formId} value={saved.draft.value} set={saved.draft.set} nameProblem={nameProblem} />
         <Issues issues={issues} />
         <p className={hintClass}>Running Bots keep their connections until restarted.</p>
@@ -617,7 +640,10 @@ export function NewMcpServerEditor({ enabled }: { enabled: boolean }) {
       footer={<SaveBar dirty={created.connected} conflicts={0} pending={created.creating} invalid={invalid} saveLabel="Create server" onSave={create} note="Not created yet" />}
       actions={<Button size="icon-sm" variant="ghost" aria-label="Discard new MCP server" onClick={created.cancel}><XIcon /></Button>}>
       <form className="flex flex-col gap-3" aria-label="New MCP server" onSubmit={(event) => { event.preventDefault(); create(); }} onKeyDown={saveKeys(create)}>
-        <EnabledRow id={formId} checked={enabled} onChange={created.setEnabled} note={enabled ? "New Bots connect to it once created" : "Created switched off"} />
+        <EnabledRow id={formId} checked={enabled} onChange={created.setEnabled}
+          note={enabled ? (allowsNoHarness(created.draft.value("harnesses")) ? "Enabled, but its filter allows no harness" : "New Bots connect to it once created") : "Created switched off"}>
+          <HarnessFilter id={`${formId}-mcp`} value={created.draft.value("harnesses")} onChange={(text) => created.draft.set("harnesses", text)} disabled={!created.connected} />
+        </EnabledRow>
         <McpFields id={formId} value={created.draft.value} set={created.draft.set} nameProblem={nameProblem} />
         <Issues issues={issues} />
         <ErrorText error={created.error} />
