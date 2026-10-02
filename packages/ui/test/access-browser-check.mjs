@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { serveSocket, serveWebSocket, socketPath } from "@stack/api";
+import { serveSocket, serveWebSocket, socketPath, StateJournal } from "@stack/api";
 import { fixtureWorkspace, passthrough, transport, authorizeBrowser } from "./browser-fixture.mjs";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
@@ -43,9 +43,26 @@ const data = {
   audit: [], uiSessions: [], ingress: { host: "100.64.0.1", port: 8787, artifactPort: 8788, uiPort: 8789 },
 };
 const served = new Map(), calls = [], errors = [], external = [];
+const historyJournal = new StateJournal(join(dir, "access-state.sqlite"), "access");
+const historyRows = (kind) => data[kind === "ui_sessions" ? "uiSessions" : kind === "expired_pairings" ? "pairings" : "invitations"];
+const historyRevision = ({ kind, ids }) => JSON.stringify(historyRows(kind).filter((row) => ids.includes(row.id)));
 let websocket, next, browser, log = "", failUpdate = true, failSnapshot = false;
 const publish = () => served.get("access").publish("access_changed");
 const handlers = {
+  access_history_plan: (selection) => historyJournal.plan({ subject: null, action: `history_${selection.kind}`, revision: historyRevision(selection), resources: selection.ids,
+    blockedBy: historyRows(selection.kind).filter((row) => selection.ids.includes(row.id) && row.expires > Date.now()).map((row) => `${row.id}: active/unexpired authority cannot be retired; revocation is separate`),
+    retained: ["Server/client/grant/credential identity and revocations", "Enrollment/Share receipts and minimal replay digests", "Device cookies, outboxes and backups"], regeneration: [] }, selection),
+  access_history_clear: (input) => {
+    const prior = historyJournal.existing(input); if (prior) return prior;
+    const { plan, payload } = historyJournal.getPlan(input.planId);
+    assert.equal(plan.revision, historyRevision(payload)); assert.deepEqual(plan.blockedBy, []);
+    historyJournal.begin(input, plan);
+    const key = payload.kind === "ui_sessions" ? "uiSessions" : payload.kind === "expired_pairings" ? "pairings" : "invitations";
+    data[key] = data[key].filter((row) => !payload.ids.includes(row.id));
+    const receipt = historyJournal.finish(input.requestId, "completed", payload.ids.map((resource) => ({ resource, outcome: "removed", detail: "Expired metadata cleared; replay evidence retained" })));
+    publish(); return receipt;
+  },
+  access_state_receipt_get: ({ requestId }) => ({ receipt: historyJournal.receipt(requestId) }),
   access_snapshot: () => { if (failSnapshot) throw new Error("Fixture snapshot unavailable"); return data; },
   pairing_decide: (input) => { data.pairings.find((item) => item.id === input.id).state = input.approve ? "approved" : "denied"; publish(); return { approved: input.approve }; },
   grant_update: (input) => {
@@ -64,7 +81,7 @@ const handlers = {
   usage_snapshot: () => ({ atMs: now, inventoryAtMs: now, inventoryError: null, accounts: [] }),
 };
 try {
-  const definitions = { access: ["access_snapshot", "pairing_decide", "grant_update", "access_revoke"], serve: ["serve_status"],
+  const definitions = { access: ["access_snapshot", "pairing_decide", "grant_update", "access_revoke", "access_history_plan", "access_history_clear", "access_state_receipt_get"], serve: ["serve_status"],
     auth: ["account_list", "account_login_current", "worker_account_list", "worker_account_login_current"], bots: ["bot_list", "bot_defaults_get", "voice_status"],
     worker: ["worker_list", "worker_runtime_list"], usage: ["usage_snapshot"], api: ["docs_snapshot"] };
   websocket = await serveWebSocket({ env, root: await fixtureWorkspace(dir, Object.keys(definitions)), port: 0 });
@@ -212,6 +229,49 @@ try {
   await page.locator('[data-node="access-credential:credential"]').getByText("Blocked by client", { exact: true }).waitFor();
   assert.equal(await grant.getByRole("button", { name: "Edit permissions", exact: true }).isDisabled(), true);
   assert.deepEqual(calls.filter((call) => call.name === "access_revoke").at(-1).input, { kind: "client", id: "device" });
+  const expiredSession = "00000000-0000-4000-8000-000000000101", expiredInvite = "00000000-0000-4000-8000-000000000102";
+  data.uiSessions = [{ id: expiredSession, credential_id: "credential", expires: now - 1 }, { id: "active-session", credential_id: "credential", expires: now + 600000 }];
+  data.invitations = [{ id: expiredInvite, kind: "chrome", scopes: ["brain:share"], created: now - 10000, expires: now - 1, revoked: null, request_id: null },
+    { id: "active-invite", kind: "chrome", scopes: [], created: now, expires: now + 600000, revoked: now, request_id: null }];
+  publish();
+  const accessWindow = page.locator('[data-window="access"]');
+  const history = accessWindow.getByRole("heading", { name: "Expired history", exact: true }).locator("../..");
+  const groups = [["ui_sessions", "Expired UI sessions", expiredSession], ["expired_pairings", "Expired pairings", "expired"], ["expired_invitations", "Expired invitations", expiredInvite]];
+  for (const [kind, title, id_] of groups) {
+    const scope = history.locator("details").filter({ has: history.locator("summary", { hasText: title }) });
+    await scope.locator("summary").evaluate((element) => element.focus({ preventScroll: true })); await page.keyboard.press("Enter");
+    await scope.getByRole("checkbox", { name: `Select ${kind} ${id_}` }).check();
+    assert.equal(await scope.getByRole("checkbox").count(), 1, "only expired metadata is selectable");
+    if (kind === "ui_sessions") {
+      data.uiSessions[0].expires = now + 600000;
+      await scope.getByRole("button", { name: `Prepare clearing 1 ${title.toLowerCase()}` }).click();
+      await scope.getByText(`${id_}: active/unexpired authority cannot be retired; revocation is separate`).waitFor();
+      assert.equal(await scope.getByRole("button", { name: `Clear these ${title.toLowerCase()}` }).isDisabled(), true);
+      data.uiSessions[0].expires = now - 1;
+      await scope.getByRole("button", { name: "Prepare a new plan" }).click();
+    } else await scope.getByRole("button", { name: `Prepare clearing 1 ${title.toLowerCase()}` }).click();
+    await scope.getByText("Enrollment/Share receipts and minimal replay digests", { exact: true }).waitFor();
+    assert.equal(await scope.getByRole("checkbox").first().isDisabled(), true);
+    if (kind === "ui_sessions") {
+      await page.emulateMedia({ colorScheme: "light" }); await history.screenshot({ path: join(evidence, "history-plan-light.png") });
+      await page.emulateMedia({ colorScheme: "dark" }); await history.screenshot({ path: join(evidence, "history-plan-dark.png") });
+    }
+    await scope.getByRole("button", { name: `Clear these ${title.toLowerCase()}` }).click();
+    await scope.getByText("Completed for the declared scope only.").waitFor();
+    assert.equal(historyRows(kind).some((row) => row.id === id_), false);
+  }
+  assert.equal(data.clients.find((row) => row.id === "device").revoked !== null, true, "clearing never undoes revocation");
+  assert.equal(data.uiSessions.length, 1); assert.equal(data.invitations.length, 1, "unexpired revoked invitations stay");
+  const recovered = handlers.access_history_plan({ kind: "ui_sessions", ids: ["active-session"] });
+  const recoverInput = { planId: recovered.id, expectedRevision: recovered.revision, requestId: crypto.randomUUID() };
+  historyJournal.begin(recoverInput, recovered); historyJournal.finish(recoverInput.requestId, "unknown", [{ resource: "active-session", outcome: "unknown", detail: "Unknown history result" }]);
+  await page.evaluate((input) => localStorage.setItem("stack.state-flow.access:history:ui_sessions", JSON.stringify({ input, at: Date.now() })), recoverInput);
+  await page.reload();
+  await history.getByRole("region", { name: "access receipt unknown" }).waitFor();
+  await accessWindow.locator("summary", { hasText: "Audit retention" }).evaluate((element) => element.focus({ preventScroll: true })); await page.keyboard.press("Enter");
+  await accessWindow.getByText("observed rows can exceed 1,000", { exact: false }).waitFor();
+  await page.setViewportSize({ width: 390, height: 844 }); await history.screenshot({ path: join(evidence, "history-unknown-narrow.png") });
+  await page.setViewportSize({ width: 1440, height: 1100 });
   failSnapshot = true;
   publish();
   await page.getByRole("alert").getByText(/Access read failed: Fixture snapshot unavailable/).waitFor();
@@ -230,5 +290,6 @@ try {
   await browser?.close();
   if (next && next.exitCode === null) { next.kill("SIGTERM"); await new Promise((resolve) => next.once("exit", resolve)); }
   await websocket?.close(); await Promise.all([...served.values()].map((socket) => socket.close()));
+  historyJournal.close();
   if (process.env.ACCESS_EVIDENCE_DIR) await rm(dir, { recursive: true, force: true });
 }

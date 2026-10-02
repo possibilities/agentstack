@@ -12,6 +12,7 @@ import type { AccessSnapshot } from "@/lib/stack/types";
 import { useNow, useOperation, useStack } from "./provider";
 import { Empty, NodeCard, NodeTitle, Row } from "./primitives";
 import { Section, Window } from "./window";
+import { AccessHistory } from "./access-maintenance";
 
 const permissions = [
   { id: "brain:share", label: "Share to Brain" },
@@ -205,13 +206,17 @@ export function AccessWindow() {
            </p>;
          }) : <Empty icon={ShieldCheckIcon} title="No remote sessions" />}
        </Section>
+       <AccessHistory />
        <Section title="Ingress"><dl>
         <Row label="Tailnet">{data.ingress ? `${data.ingress.host}:${data.ingress.port}` : "Not configured"}</Row>
          <Row label="Artifact port">{data.ingress?.artifactPort ?? "Not configured"}</Row>
          <Row label="Remote UI port">{data.ingress?.uiPort ?? "Not configured"}</Row>
         <Row label="Public cloud">Not implemented</Row>
       </dl></Section>
-      <Section title="Recent audit" aside={<span className="text-xs text-muted-foreground">Latest 20</span>}>
+       <Section title="Recent audit" aside={<span className="text-xs text-muted-foreground">Latest 20</span>}>
+         <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">Audit retention (automatic only)</summary>
+           <p className="mt-1 text-pretty">No manual audit prune is supported. Mutation cleanup keeps the latest 1,000 sequence rows before appending new audit entries, so observed rows can exceed 1,000.</p>
+         </details>
         {data.audit.length ? <ol className="flex flex-col gap-2">{[...data.audit].sort((a, b) => b.seq - a.seq).slice(0, 20).map((event) =>
           <li key={event.seq} className="text-xs"><time dateTime={new Date(event.time).toISOString()}>{date(event.time)}</time> · {event.action}<br /><code className="break-all text-muted-foreground">{event.subject}</code></li>)}</ol>
           : <Empty icon={ShieldCheckIcon} title="No access activity" />}

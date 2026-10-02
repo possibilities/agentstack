@@ -1,3 +1,13 @@
+import type { AccessSnapshot } from "./types";
+
+export type AccessHistoryKind = "ui_sessions" | "expired_pairings" | "expired_invitations";
+/** Revoked but unexpired authority is not expired history; only opaque nonempty IDs can be selected. */
+export function expiredAccessHistory(data: AccessSnapshot, kind: AccessHistoryKind, now: number): { id: string; label: string; expires: number }[] {
+  const rows = kind === "ui_sessions" ? data.uiSessions : kind === "expired_pairings" ? data.pairings : data.invitations;
+  return rows.filter((row) => row.expires <= now && typeof row.id === "string" && row.id.length > 0)
+    .map((row) => ({ id: row.id!, label: "label" in row ? row.label : "credential_id" in row ? `UI session · ${row.credential_id}` : `Invitation · ${row.kind}`, expires: row.expires }));
+}
+
 /** The scope that lets a client's credentials sponsor QR enrollment of other devices. */
 export const enrollScope = "access:enroll";
 

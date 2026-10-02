@@ -137,7 +137,7 @@ export const ownerGaps: Record<string, string> = {
   scrape: "Queue cancel/retry/discard and corpus or session-state maintenance are not supported.",
   roles: "Live launches, missing/legacy locks and interrupted native teardown block launch-directory clearing. External native histories and credentials and Bot/Worker materializations remain separate.",
   auth: "Only Codex OpenCode cache/opencode/models.json is supported after disabled account, idle sign-in and verified drained runtime/catalog/teardown. Devin/Claude and other profile files are unsupported; credentials and native sessions remain.",
-  access: "History and session-specific retirement are not supported; revocation is the control.",
+  access: "Only expired UI-session, pairing and invitation metadata can be cleared. Active/unexpired authority requires separate revocation. Audit has no manual prune; automatic cleanup can leave more than 1,000 observed rows. Device/browser copies remain independent.",
   hud: "Physical media and backup erasure, and other owners' copies such as Worker-captured Work context, are out of scope.",
   bots: "Native Codex queue and history copies and backups are out of scope. Queue entries without a recorded generation can be cleared by exact ID only.",
   signal: "Checkpoint rebaseline skips current upstream messages, not historical replay or transcript erase. Future sources are not included; captured evidence and independent Infer payloads remain.",
