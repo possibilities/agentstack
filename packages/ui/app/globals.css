@@ -24,6 +24,7 @@
     --color-pkg-browse: var(--pkg-browse);
     --color-pkg-brain: var(--pkg-brain);
     --color-pkg-proc: var(--pkg-proc);
+    --color-pkg-source: var(--pkg-source);
     --color-pkg-hud: var(--pkg-hud);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
@@ -117,6 +118,7 @@
     --pkg-browse: oklch(0.58 0.15 350);
     --pkg-brain: oklch(0.58 0.15 265);
     --pkg-proc: oklch(0.6 0.14 45);
+    --pkg-source: oklch(0.58 0.12 185);
     --pkg-hud: oklch(0.6 0.14 120);
 }
 
@@ -171,6 +173,7 @@
     --pkg-browse: oklch(0.78 0.13 350);
     --pkg-brain: oklch(0.76 0.13 265);
     --pkg-proc: oklch(0.79 0.13 45);
+    --pkg-source: oklch(0.78 0.11 185);
     --pkg-hud: oklch(0.8 0.14 120);
   }
 }

@@ -16,6 +16,11 @@ import { BookOpenTextIcon, BrainIcon, ImportIcon, SatelliteDishIcon, SearchIcon 
 import { ReaderWindow, SearchWindow } from "./brain-search";
 import { IngestWindow } from "./brain-ingest";
 import { JobsWindow, SourcesWindow } from "./brain-ledger";
+import { BookMarkedIcon, FileJsonIcon, RadioTowerIcon } from "lucide-react";
+import { ReceiversWindow } from "./source-receivers";
+import { CatalogWindow as SourceCatalogWindow } from "./source-catalog";
+import { DeliveriesWindow } from "./source-deliveries";
+import { DeliveryWindow } from "./source-delivery";
 import type { SpaceId } from "@/lib/stack/spaces";
 import type { StackState } from "@/lib/stack/store";
 import { type Accent } from "./window";
@@ -241,6 +246,17 @@ export const spaceViews: Record<SpaceId, {
       { id: "brain-ingest", title: "Ingest", icon: ImportIcon, accent: "brain", width: 400, height: 560, column: 2, element: <IngestWindow /> },
       { id: "brain-jobs", title: "Jobs", icon: ListChecksIcon, accent: "brain", width: 480, height: 780, column: 3, fixed: true, element: <JobsWindow /> },
       { id: "brain-sources", title: "Sources", icon: SatelliteDishIcon, accent: "brain", width: 460, height: 640, column: 4, element: <SourcesWindow /> },
+    ],
+  },
+  source: {
+    icon: RadioTowerIcon,
+    accent: "source",
+    // Where deliveries come from beside what arrived, then the one selected: evidence first, setup detail disclosed on demand.
+    windows: () => [
+      { id: "source-receivers", title: "Receivers", icon: RadioTowerIcon, accent: "source", width: 460, height: 660, column: 0, element: <ReceiversWindow /> },
+      { id: "source-catalog", title: "Event catalog", icon: BookMarkedIcon, accent: "source", width: 460, height: 480, column: 0, element: <SourceCatalogWindow /> },
+      { id: "source-deliveries", title: "Deliveries", icon: InboxIcon, accent: "source", width: 620, height: 780, column: 1, fixed: true, element: <DeliveriesWindow /> },
+      { id: "source-delivery", title: "Delivery", icon: FileJsonIcon, accent: "source", width: 640, height: 780, column: 2, fixed: true, element: <DeliveryWindow /> },
     ],
   },
   proc: {

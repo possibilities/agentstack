@@ -52,6 +52,8 @@ test("homeOf distinguishes spatial records from reference destinations", () => {
   assert.deepEqual(homeOf({ kind: "research-document", id: "42" }), { kind: "space", space: "brain", window: "brain-reader" });
   assert.deepEqual(homeOf({ kind: "ingestion-job", id: "7" }), { kind: "space", space: "brain", window: "brain-jobs" });
   assert.deepEqual(homeOf({ kind: "research-source", id: "hn-front" }), { kind: "space", space: "brain", window: "brain-sources" });
+  assert.deepEqual(homeOf({ kind: "github-receiver", id: "11111111-1111-4111-8111-111111111111" }), { kind: "space", space: "source", window: "source-receivers" });
+  assert.deepEqual(homeOf({ kind: "github-delivery", id: "42" }), { kind: "space", space: "source", window: "source-delivery" });
   assert.deepEqual(homeOf({ kind: "proc-schedule", id: "s1" }), { kind: "space", space: "proc", window: "proc-schedules" });
   assert.deepEqual(homeOf({ kind: "proc-execution", id: "e1" }), { kind: "space", space: "proc", window: "proc-schedule" });
   assert.deepEqual(homeOf({ kind: "proc-run", id: "r1" }), { kind: "space", space: "proc", window: "proc-runs" });
@@ -96,6 +98,8 @@ test("parseSpacePath resolves the root and single space segments only", () => {
   assert.equal(parseSpacePath("/browse"), "browse");
   assert.equal(parseSpacePath("/brain"), "brain");
   assert.equal(parseSpacePath("/proc"), "proc");
+  assert.equal(parseSpacePath("/source"), "source");
+  assert.equal(parseSpacePath("/source/extra"), null);
   assert.equal(parseSpacePath("/nope"), null);
   assert.equal(parseSpacePath("/api/extra"), null);
   assert.equal(parseSpacePath("/y"), null);
@@ -151,6 +155,8 @@ test("parseNodeKey inverts nodeKey for every kind and rejects malformed keys", (
     { kind: "proc-run", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d4" },
     { kind: "proc-run-window", id: "proc-run-2" },
     { kind: "work-item", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
+    { kind: "github-receiver", id: "0fd9d71a-8b46-4c79-9e1a-3a05f1f2f5d2" },
+    { kind: "github-delivery", id: "1042" },
   ];
   for (const ref of refs) assert.deepEqual(parseNodeKey(nodeKey(ref)), ref);
   for (const bad of ["", "bogus", "account:", "operation:bots"]) assert.equal(parseNodeKey(bad), null);
@@ -171,7 +177,7 @@ const quiet = {
 };
 
 test("spaceAttention reports human reasons per space and ignores healthy state", () => {
-  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], hud: [], api: [] });
+  assert.deepEqual(spaceAttention(quiet), { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], source: [], hud: [], api: [] });
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 0, total: 4, sources: [] }, error: null, at: null } }).inbox, []);
   assert.deepEqual(spaceAttention({ ...quiet, notifyCounts: { data: { open: 1, total: 4, sources: [] }, error: null, at: null } }).inbox, ["1 open notification"]);
   const inbox = spaceAttention({ ...quiet, notifyCounts: { data: { open: 3, total: 4, sources: [] }, error: null, at: null }, status: { notify: "closed" } });
@@ -248,7 +254,7 @@ test("spaceAttention reports human reasons per space and ignores healthy state",
 
   // Idle and connecting channels are normal, not attention.
   const waiting = spaceAttention({ ...quiet, status: { auth: "connecting", bots: "idle", serve: "connecting", api: "idle" } });
-  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], hud: [], api: [] });
+  assert.deepEqual(waiting, { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], source: [], hud: [], api: [] });
 });
 
 test("spaceAttention flags Proc's legacy and held schedules, operator failures, capacity and channel — but never Bot-owned failures", () => {
@@ -341,4 +347,14 @@ test("spaceAttention flags Brain's worker, stalled jobs, stale leases and unheal
     brainSources: { data: [source("unhealthy")], error: null, at: 1 },
   }).brain, ["brain reconnecting", "Ingestion worker failed", "3 jobs need a decision", "1 stale lease", "Feed unhealthy"]);
   assert.deepEqual(spaceAttention({ ...quiet, brainStatus: { ...running, data: { ...running.data, health: "share_ingress_unhealthy" } } }).brain, ["Share ingress unhealthy"]);
+});
+
+test("spaceAttention flags Source's closed channel and full or refusing payload storage, but not ordinary rejected requests", () => {
+  const status = (count, bytes) => ({ data: { ingress: {}, endpoints: 1, watches: 0, latestSequence: 3, payloads: { count, bytes, maxCount: 10_000, maxBytes: 25 * 1024 * 1024 } }, error: null, at: null });
+  const endpoint = (lastFailure) => ({ data: [{ id: "e", lastFailure }], error: null, at: null });
+  assert.deepEqual(spaceAttention({ ...quiet, status: { source: "closed" } }).source, ["source reconnecting"]);
+  assert.deepEqual(spaceAttention({ ...quiet, status: { source: "open" }, sourceStatus: status(3, 1000), sourceEndpoints: endpoint(null) }).source, []);
+  assert.deepEqual(spaceAttention({ ...quiet, sourceStatus: status(10_000, 1000), sourceEndpoints: endpoint(null) }).source, ["Payload storage full: intake refused"]);
+  assert.deepEqual(spaceAttention({ ...quiet, sourceStatus: status(3, 1000), sourceEndpoints: endpoint("github_storage_full") }).source, ["A delivery was refused: storage full"]);
+  assert.deepEqual(spaceAttention({ ...quiet, sourceStatus: status(3, 1000), sourceEndpoints: endpoint("github_signature_invalid") }).source, [], "a bad signature is the sender's fault, not capacity");
 });

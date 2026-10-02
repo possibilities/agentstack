@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 import { StatusDot, Time } from "./primitives";
 import { useWorkbench } from "./provider";
 
-export type Accent = "server" | "auth" | "bots" | "api" | "events" | "roles" | "notify" | "content" | "worker" | "scrape" | "browse" | "brain" | "proc" | "hud";
+export type Accent = "server" | "auth" | "bots" | "api" | "events" | "roles" | "notify" | "content" | "worker" | "scrape" | "browse" | "brain" | "proc" | "source" | "hud";
 
 export const accentTile: Record<Accent, string> = {
   server: "bg-pkg-server/15 text-pkg-server",
@@ -24,6 +24,7 @@ export const accentTile: Record<Accent, string> = {
   browse: "bg-pkg-browse/15 text-pkg-browse",
   brain: "bg-pkg-brain/15 text-pkg-brain",
   proc: "bg-pkg-proc/15 text-pkg-proc",
+  source: "bg-pkg-source/15 text-pkg-source",
   hud: "bg-pkg-hud/15 text-pkg-hud",
 };
 
@@ -41,6 +42,7 @@ export const accentText: Record<Accent, string> = {
   browse: "text-pkg-browse",
   brain: "text-pkg-brain",
   proc: "text-pkg-proc",
+  source: "text-pkg-source",
   hud: "text-pkg-hud",
 };
 
@@ -58,6 +60,7 @@ export const accentBg: Record<Accent, string> = {
   browse: "bg-pkg-browse",
   brain: "bg-pkg-brain",
   proc: "bg-pkg-proc",
+  source: "bg-pkg-source",
   hud: "bg-pkg-hud",
 };
 

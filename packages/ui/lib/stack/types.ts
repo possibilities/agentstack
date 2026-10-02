@@ -1,4 +1,4 @@
-/** GitHub's API-only phase. Existing reference/inspection discovers it generically; dedicated setup and inbox views are a separate UI-team change. */
+/** The Source package's (github_*) records. Payload-derived strings are untrusted observed data and render as escaped text only. */
 export type GithubTarget = { kind: "repository"; repository: string } | { kind: "organization"; organization: string }
   | { kind: "enterprise"; enterprise: string } | { kind: "app"; appId?: number } | { kind: "marketplace" } | { kind: "sponsors_listing"; account: string };
 export type GithubEndpoint = { id: string; label: string; target: GithubTarget; githubHost: string; publicOrigin: string | null; path: string; webhookUrl: string | null;
@@ -18,6 +18,19 @@ export type GithubWatch = { id: string; label: string; filter: GithubFilter; ena
 export type GithubWatchRead = { watch: GithubWatch; entries: GithubDelivery[]; pending: number; through: number; nextCursor: number | null };
 export type GithubRemoteReceipt = { requestId: string; endpointId: string; action: string; status: "running" | "succeeded" | "failed" | "unknown";
   hookId: number | null; startedAt: string; completedAt: string | null; error: string | null };
+export type GithubStatus = { ingress: { host: "127.0.0.1"; port: number; route: string; maxBodyBytes: number }; endpoints: number; watches: number; latestSequence: number;
+  payloads: { bytes: number; count: number; maxBytes: number; maxCount: number } };
+export type GithubSetupStep = { id: string; state: string; title: string; detail: string };
+export type GithubSetup = { endpoint: GithubEndpoint; ingress: { host: string; port: number; path: string; localUrl: string }; settingsUrl: string; automatedHookManagement: boolean;
+  blockers: string[]; deliveryEvidence: "signed_delivery_observed" | "not_observed"; steps: GithubSetupStep[]; limitations: string[] };
+export type GithubDeliveryPage = { entries: GithubDelivery[]; after: number; through: number; nextCursor: number | null };
+export type GithubPayloadChunk = { sequence: number; text: string; encoding: "utf8"; totalChars: number; nextOffset: number | null; sha256: string; cleared: boolean };
+export type GithubCatalogVariant = "api.github.com" | "ghec" | "ghes-3.14" | "ghes-3.15" | "ghes-3.16" | "ghes-3.17" | "ghes-3.18" | "ghes-3.19";
+export type GithubHookType = "repository" | "organization" | "enterprise" | "app" | "business" | "marketplace" | "sponsors_listing";
+export type GithubCatalogEntry = { event: string; summary: string; documentationUrl: string; supportedWebhookTypes: string[]; customActions: boolean;
+  actions: { action: string | null; description: string; schemaRef: string }[]; cloudOnly: boolean };
+export type GithubCatalog = { source: string; version: string; variant: GithubCatalogVariant; variants: GithubCatalogVariant[]; entries: GithubCatalogEntry[]; futureEventsAccepted: true };
+export type GithubSchemaChunk = { text: string; totalChars: number; nextOffset: number | null; sourceVersion: string; variant: GithubCatalogVariant };
 
 /** Desktop connection discovery is not a grant; Access remains the server-side authority. */
 export type AccessConnectionDescriptor = {
@@ -1155,6 +1168,8 @@ export type NodeRef =
   | { kind: "proc-run-window"; id: string }
   /** A shared HUD Work item, by its UUID. */
   | { kind: "work-item"; id: string }
+  /** Source records: a receiver by its UUID and a delivery by its local arrival sequence. */
+  | { kind: "github-receiver" | "github-delivery"; id: string }
   /** An owner state inventory entry by its `<owner>:<category>` ID, and a durable Bot event subscription by UUID. Local only. */
   | { kind: "state-entry" | "subscription"; id: string }
   /** Fleet's state view of one Bot, by Bot ID. Local only. */

@@ -4,10 +4,11 @@ import { browseAttention } from "./browse";
 import { statusIssues } from "./brain";
 import { procAttention } from "./proc";
 import { hudAttention } from "./hud";
+import { sourceAttention } from "./source";
 import type { StackState } from "./store";
 import { nodeKey, type NodeRef } from "./types";
 
-export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers" | "scrape" | "browse" | "brain" | "proc" | "hud";
+export type SpaceId = "fleet" | "accounts" | "lab" | "system" | "roles" | "inbox" | "signal" | "content" | "workers" | "scrape" | "browse" | "brain" | "proc" | "source" | "hud";
 
 export const spaces: { id: SpaceId; title: string; description: string; key: string }[] = [
   // The landing space. The digits are taken; h is free on the bench.
@@ -26,6 +27,8 @@ export const spaces: { id: SpaceId; title: string; description: string; key: str
   { id: "browse", title: "Browse", description: "Bot browser profiles, human handoffs and the browser toolchain", key: "b" },
   { id: "brain", title: "Brain", description: "Search and read collected research, submit material, and follow ingestion and sources", key: "n" },
   { id: "proc", title: "Proc", description: "What agents scheduled and ran on this machine, and what it printed", key: "p" },
+  // s is free on the bench; the digits and f, t are not.
+  { id: "source", title: "Source", description: "Signed webhook receivers, the deliveries that arrived and their original payloads", key: "s" },
 ];
 
 export const defaultSpace: SpaceId = "hud";
@@ -142,6 +145,10 @@ export function homeOf(ref: NodeRef): NodeHome {
       return { kind: "space", space: "proc", window: ref.id };
     case "work-item":
       return { kind: "space", space: "hud", window: "hud-work" };
+    case "github-receiver":
+      return { kind: "space", space: "source", window: "source-receivers" };
+    case "github-delivery":
+      return { kind: "space", space: "source", window: "source-delivery" };
     case "package":
     case "operation":
       return { kind: "reference" };
@@ -162,8 +169,8 @@ export function parseSpacePath(pathname: string): SpaceId | null {
 }
 
 /** Human-readable reasons each space needs attention; an empty list means all quiet. Only "closed" channels count — idle and connecting are normal. */
-export function spaceAttention(state: Pick<StackState, "status" | "server" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus" | "browserHandoffs" | "browserProfiles" | "browserToolchain" | "brainStatus" | "brainJobStats" | "brainSources" | "procSchedules" | "procStatus" | "codexTools" | "hudTree">>): Record<SpaceId | "api", string[]> {
-  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], hud: [], api: [] };
+export function spaceAttention(state: Pick<StackState, "status" | "server" | "resources" | "accounts" | "workerAccounts" | "workerSessions" | "workerRuntimes" | "bots" | "attempt" | "catalog" | "endpoints" | "notifyCounts" | "signalStatus"> & Partial<Pick<StackState, "contentUploads" | "scrapeStatus" | "browserHandoffs" | "browserProfiles" | "browserToolchain" | "brainStatus" | "brainJobStats" | "brainSources" | "procSchedules" | "procStatus" | "codexTools" | "hudTree" | "sourceStatus" | "sourceEndpoints">>): Record<SpaceId | "api", string[]> {
+  const attention: Record<SpaceId | "api", string[]> = { fleet: [], accounts: [], lab: [], roles: [], system: [], inbox: [], signal: [], content: [], workers: [], scrape: [], browse: [], brain: [], proc: [], source: [], hud: [], api: [] };
   for (const bot of state.bots.data ?? []) if (bot.recoveryIssue) attention.fleet.push(`${bot.id} needs inspection`);
   const labels = accountLabels(state.accounts.data);
   for (const account of state.accounts.data ?? []) if (account.removing) attention.accounts.push(`${labels.get(account.id) ?? account.id} removal unfinished`);
@@ -211,6 +218,8 @@ export function spaceAttention(state: Pick<StackState, "status" | "server" | "re
   }
   for (const source of state.brainSources?.data ?? []) if (source.enabled && !source.paused && source.health.state === "unhealthy") attention.brain.push(`${source.display_name} unhealthy`);
   attention.proc.push(...procAttention(state));
+  if (state.status.source === "closed") attention.source.push("source reconnecting");
+  attention.source.push(...sourceAttention(state.sourceStatus?.data ?? null, state.sourceEndpoints?.data ?? null));
   if (state.status.hud === "closed") attention.hud.push("hud reconnecting");
   attention.hud.push(...hudAttention(state.hudTree?.data ?? null));
   for (const name of ["auth", "usage", "worker"] as const) if (state.status[name] === "closed") attention.accounts.push(`${name} reconnecting`);
@@ -260,5 +269,6 @@ export function parseNodeKey(key: string): NodeRef | null {
   if (kind === "research-document" || kind === "ingestion-job" || kind === "research-source") return { kind, id: rest };
   if (kind === "proc-schedule" || kind === "proc-execution" || kind === "proc-run" || kind === "proc-run-window") return { kind, id: rest };
   if (kind === "work-item") return { kind, id: rest };
+  if (kind === "github-receiver" || kind === "github-delivery") return { kind, id: rest };
   return null;
 }

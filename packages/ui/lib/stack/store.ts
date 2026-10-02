@@ -16,6 +16,8 @@ import type { ProcRun, ProcScheduleListItem, ProcStatus } from "./types";
 import type { SettingsCatalog, SettingsView } from "./types";
 import { catalogRequest, readRequest, settingsKey, settingsPackage, type SettingsTarget } from "./settings";
 import { loadTree, type HudTree } from "./hud";
+import { initialLedger, SourceLedger, type LedgerState } from "./source";
+import type { GithubDelivery, GithubDeliveryPage, GithubEndpoint, GithubFilter, GithubSetup, GithubStatus } from "./types";
 import { continueCompletions, continueInventory, continueOccurrences, continueSubscriptions, loadCompletions, loadInventory, loadOccurrences, loadSubscriptions, type CompletionFilter, type CompletionList, type OccurrenceFilter, type OccurrenceList, type StateInventory, type StateSelection, type SubscriptionFilter, type SubscriptionList } from "./state";
 import { checkSettled, developerModeOn, type HarnessCheck } from "./developer";
 import type { HarnessCheckAdmission, HarnessReleases, ServeSettings } from "./types";
@@ -192,6 +194,19 @@ export type StackState = Snapshot & {
   hudResourceGeneration: number;
   /** Bumped on a watched item's scoped work_changed notices and (re)subscription, which include derived ancestors and dependents. */
   hudItemGenerations: Record<string, number>;
+  /** `github_status`: loopback intake, retained-payload capacity against its limits, and the newest local arrival sequence. */
+  sourceStatus: Resource<GithubStatus>;
+  sourceEndpoints: Resource<GithubEndpoint[]>;
+  /** `github_setup_read` for receivers a window has opened, by receiver ID. Never carries a secret. */
+  sourceSetups: Record<string, Resource<GithubSetup>>;
+  /** Delivery summaries any Source window has read, by local sequence, so a link to one outside the loaded page still resolves. */
+  sourceDeliveries: Record<string, Resource<GithubDelivery>>;
+  /** The Deliveries ledger's paging session. Its filter values exist only in this page's memory. */
+  sourceLedger: LedgerState;
+  /** The delivery the Delivery reader shows. */
+  sourceSelected: number | null;
+  /** Bumped on every deliveries notice and (re)connect; the reader re-reads what it holds on it, since a cleanup can change a held delivery. */
+  sourceGeneration: number;
 };
 
 export type BrainSubmission = { key: string; label: string; kind: "url" | "text"; at: number; pending: boolean; admission: BrainAdmission | null; error: CallError | null; share: BrainShareState | null };
@@ -230,7 +245,7 @@ export const contentDocumentLimit = 200;
 type ResourceKey = ContentKey | "access" | "server" | "codexTools" | "resources" | "accounts" | "workerAccounts" | "workerRuntimes" | "workerSessions" | "login" | "workerLogins" | "bots" | "botDefaults" | "voice" | "roleCatalog" | "role" | "rolePreview" | "roleLaunch" | "roleInternal" | "roleShims" | "catalog" | "usage" | "inferRequests" | "inferModels" | "notifications" | "notifyCounts" | "signalStatus" | "scrapeStatus" | "scrapePresets" | "scrapeCanaries" | "scrapeQueue"
   | "browserProfiles" | "browserControllers" | "browserHandoffs" | "browserToolchain"
   | "brainStatus" | "brainStats" | "brainTags" | "brainJobStats" | "brainJobs" | "brainSources"
-  | "procSchedules" | "procRuns" | "procStatus" | "hudTree";
+  | "procSchedules" | "procRuns" | "procStatus" | "hudTree" | "sourceStatus" | "sourceEndpoints";
 
 /** Which reads each browse write can change; each is re-read afterwards, since a lost acknowledgement may still have acted. */
 function browseReads(name: string): ResourceKey[] {
@@ -316,6 +331,10 @@ export class StackStore {
   private workerChannels = new Map<string, Channel>();
   private procRunWatchers = new Map<string, number>();
   private procChannels = new Map<string, Channel>();
+  private readonly sourceLedgerSession: SourceLedger = new SourceLedger(
+    (input) => this.call<GithubDeliveryPage>("source", "github_delivery_list", input),
+    (sequence) => this.call<GithubDelivery>("source", "github_delivery_get", { sequence }));
+  private sourceLedgerUnsubscribe: (() => void) | null = null;
   private workItemWatchers = new Map<string, number>();
   private workItemChannels = new Map<string, Channel>();
   private statusInflight = new Map<string, Promise<void>>();
@@ -374,7 +393,10 @@ export class StackStore {
       procStatus: { data: null, error: null, at: null }, procScheduleGeneration: 0, procRunGenerations: {},
       settingsViews: {}, settingsCatalogs: {},
       hudTree: { data: null, error: null, at: null }, hudTreeBudget: hudTreePage, hudGeneration: 0, hudResourceGeneration: 0, hudItemGenerations: {},
+      sourceStatus: { data: null, error: null, at: null }, sourceEndpoints: { data: null, error: null, at: null }, sourceSetups: {}, sourceDeliveries: {},
+      sourceLedger: initialLedger, sourceSelected: null, sourceGeneration: 0,
     };
+    this.sourceLedgerUnsubscribe = this.sourceLedgerSession.subscribe(() => this.set({ sourceLedger: this.sourceLedgerSession.getState() }));
     this.serverState = this.state;
     for (const account of snapshot.workerAccounts.data ?? []) if (this.catalogAccountAvailable(account.id)) this.catalogAvailable.add(account.id);
   }
@@ -503,6 +525,13 @@ export class StackStore {
     // hud_changed invalidates the whole shared view; (re)subscription resnapshots it, since notices are not replayed.
     // Item-scoped work_changed subscriptions belong to the views that watch one item (watchWorkItem).
     open("hud", () => this.invalidateHud(), () => this.invalidateHud(), ["hud_changed"]);
+    // Source notices are invalidations without payloads or secrets. An arrival publishes both topics, so a burst of them stays out of the
+    // activity log; notices are not replayed, so every (re)connect reads again: status, receivers, held setups and delivery summaries,
+    // and the ledger is revalidated at its watermark or started when it never had one.
+    open("source", () => this.sourceReconnected(), (topic) => {
+      if (topic === "github_endpoints_changed") this.sourceEndpointsChanged();
+      if (topic === "github_deliveries_changed") this.sourceDeliveriesChanged();
+    }, ["github_endpoints_changed", "github_deliveries_changed"], { silent: ["github_endpoints_changed", "github_deliveries_changed"] });
     // Xcom is local operator state with no change events: the channel carries its reads and controls only.
     if (!this.state.remote) open("xcom", () => this.set({ xcomGeneration: this.state.xcomGeneration + 1 }));
     this.reconcileScoped();
@@ -512,6 +541,7 @@ export class StackStore {
   }
 
   stop(): void {
+    this.sourceLedgerSession.dispose();
     this.forgetServeSettings();
     this.catalogDirty.clear();
     for (const id of this.catalogAvailable) this.catalogGeneration.set(id, (this.catalogGeneration.get(id) ?? 0) + 1);
@@ -1747,6 +1777,71 @@ export class StackStore {
       ...(pkg === "bots" && scope ? { botInvalidations: { ...this.state.botInvalidations, [scope]: (this.state.botInvalidations[scope] ?? 0) + 1 } } : {}) });
   }
 
+  /* ---------- Source ---------- */
+
+  private sourceReconnected(): void {
+    this.refresh("sourceStatus"); this.refresh("sourceEndpoints");
+    for (const id of Object.keys(this.state.sourceSetups)) void this.loadSourceSetup(id);
+    for (const sequence of Object.keys(this.state.sourceDeliveries)) void this.loadSourceDelivery(Number(sequence));
+    this.set({ sourceGeneration: this.state.sourceGeneration + 1 });
+    const ledger = this.sourceLedgerSession.getState();
+    if (ledger.through === null) void this.sourceLedgerSession.start(ledger.filter);
+    else this.sourceLedgerSession.invalidate(0);
+  }
+
+  private sourceEndpointsChanged(): void {
+    this.refresh("sourceStatus"); this.refresh("sourceEndpoints");
+    for (const id of Object.keys(this.state.sourceSetups)) void this.loadSourceSetup(id);
+  }
+
+  private sourceDeliveriesChanged(): void {
+    this.refresh("sourceStatus");
+    this.set({ sourceGeneration: this.state.sourceGeneration + 1 });
+    for (const sequence of Object.keys(this.state.sourceDeliveries)) void this.loadSourceDelivery(Number(sequence));
+    this.sourceLedgerSession.invalidate();
+  }
+
+  /** Read one receiver's setup contract. A held answer stays until the new one lands; at most 20 receivers are held. */
+  loadSourceSetup = async (id: string): Promise<void> => {
+    try {
+      const data = await this.call<GithubSetup>("source", "github_setup_read", { id });
+      const kept = Object.entries(this.state.sourceSetups).filter(([key]) => key !== id).slice(-19);
+      this.set({ sourceSetups: { ...Object.fromEntries(kept), [id]: { data, error: null, at: Date.now() } } });
+    } catch (error) {
+      const previous = this.state.sourceSetups[id];
+      this.set({ sourceSetups: { ...this.state.sourceSetups, [id]: { data: previous?.data ?? null, error: callMessage(error), at: Date.now() } } });
+    }
+  };
+
+  /** Read one delivery summary by local sequence, wherever the ledger is: a deep link never depends on the loaded page. At most 50 are held. */
+  loadSourceDelivery = async (sequence: number): Promise<void> => {
+    const key = String(sequence);
+    try {
+      const data = await this.call<GithubDelivery>("source", "github_delivery_get", { sequence });
+      const kept = Object.entries(this.state.sourceDeliveries).filter(([held]) => held !== key).slice(-49);
+      this.set({ sourceDeliveries: { ...Object.fromEntries(kept), [key]: { data, error: null, at: Date.now() } } });
+    } catch (error) {
+      const previous = this.state.sourceDeliveries[key];
+      this.set({ sourceDeliveries: { ...this.state.sourceDeliveries, [key]: { data: previous?.data ?? null, error: callMessage(error), at: Date.now() } } });
+    }
+  };
+
+  /** Show a delivery in the reader; its summary is read on its own and does not wait for the ledger. */
+  selectSourceDelivery = (sequence: number | null): void => {
+    this.set({ sourceSelected: sequence });
+    if (sequence !== null) void this.loadSourceDelivery(sequence);
+  };
+
+  /** Start a fresh paging session for a filter; a changed filter never continues the old one. */
+  applySourceFilter = (filter: GithubFilter): void => { void this.sourceLedgerSession.start(filter); };
+  sourceMore = (): void => { void this.sourceLedgerSession.more(); };
+  /** Continue past the snapshot's end to newer arrivals; only a finished snapshot offers it. */
+  sourceExtend = (): void => { void this.sourceLedgerSession.extend(); };
+  /** The status read gives capacity and the newest sequence; a window may ask for it again after a maintenance receipt. */
+  refreshSourceStatus = (): void => { this.refresh("sourceStatus"); this.refresh("sourceEndpoints"); };
+  /** After a cleanup receipt: summaries shown may carry a new cleared marker. */
+  refreshSourceDeliveries = (): void => { this.refresh("sourceStatus"); this.sourceLedgerSession.invalidate(0); this.set({ sourceGeneration: this.state.sourceGeneration + 1 }); };
+
   private invalidateBot(id: string): void {
     this.set({ botInvalidations: { ...this.state.botInvalidations, [id]: (this.state.botInvalidations[id] ?? 0) + 1 } });
   }
@@ -1868,6 +1963,8 @@ export class StackStore {
         call<{ installations: AgentBrowserInstallation[] }>("browse", "agent_browser_detect"),
         call<{ installations: HypemanInstallation[] }>("browse", "hypeman_detect"),
       ]).then(([status, agentBrowser, detected, hypeman]) => ({ status, agentBrowser, detected: detected.installations, hypeman: hypeman.installations }));
+      case "sourceStatus": return call<GithubStatus>("source", "github_status");
+      case "sourceEndpoints": return call<{ endpoints: GithubEndpoint[] }>("source", "github_endpoint_list").then((result) => result.endpoints);
       case "brainStatus": return call<BrainStatus>("brain", "brain_status");
       case "brainStats": return call<BrainStats>("brain", "stats", { "top-tags": 40, recent: 8 });
       case "brainTags": return call<{ tags: BrainTag[] }>("brain", "tags", { limit: 500 }).then((result) => result.tags);

@@ -162,7 +162,7 @@ export const ownerHomes: Record<string, { space: SpaceId; title: string }> = {
   bots: { space: "fleet", title: "Fleet" }, worker: { space: "workers", title: "Workers" }, signal: { space: "signal", title: "Signal" },
   infer: { space: "lab", title: "Lab" }, notify: { space: "inbox", title: "Inbox" }, content: { space: "content", title: "Content" },
   proc: { space: "proc", title: "Proc" }, usage: { space: "accounts", title: "Accounts" }, auth: { space: "accounts", title: "Accounts" },
-  hud: { space: "hud", title: "HUD" }, brain: { space: "brain", title: "Brain" }, browse: { space: "browse", title: "Browse" },
+  hud: { space: "hud", title: "HUD" }, brain: { space: "brain", title: "Brain" }, browse: { space: "browse", title: "Browse" }, source: { space: "source", title: "Source" },
   roles: { space: "roles", title: "Roles" }, scrape: { space: "scrape", title: "Scrape" }, access: { space: "system", title: "System" },
   serve: { space: "system", title: "System" }, xcom: { space: "system", title: "System" },
 };
@@ -177,6 +177,7 @@ export const ownerGaps: Record<string, string> = {
   auth: "Only Codex OpenCode cache/opencode/models.json is supported after disabled account, idle sign-in and verified drained runtime/catalog/teardown. Devin/Claude and other profile files are unsupported; credentials and native sessions remain.",
   access: "Only expired UI-session, pairing and invitation metadata can be cleared. Active/unexpired authority requires separate revocation. Audit has no manual prune; automatic cleanup can leave more than 1,000 observed rows. Device/browser copies remain independent.",
   hud: "Physical media and backup erasure, and other owners' copies such as Worker-captured Work context, are out of scope.",
+  source: "Only original signed payloads of up to 100 exact deliveries can be cleared, from the Source space. Receiver secrets and configuration, summaries, digests, duplicate fences, watch matches and remote request receipts stay, and clearing is neither secure erasure nor recovery of what GitHub did not deliver.",
   bots: "Native Codex queue and history copies and backups are out of scope. Queue entries without a recorded generation can be cleared by exact ID only.",
   signal: "Checkpoint rebaseline skips current upstream messages, not historical replay or transcript erase. Future sources are not included; captured evidence and independent Infer payloads remain.",
   infer: "Catalog eviction is memory-only and leaves no receipt. It never refreshes models or touches dispatched requests, traces or credentials.",

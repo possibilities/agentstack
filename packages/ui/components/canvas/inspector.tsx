@@ -37,6 +37,7 @@ import { workerLabel } from "@/lib/stack/workers";
 import { maskActionEnv, ownerOf, runTitle, scheduleTitle } from "@/lib/stack/proc";
 import { controllerKey, handoffOutcomes, handoffStates, heldBy, profileName } from "@/lib/stack/browse";
 import { HandoffWatch } from "./browse-handoffs";
+import { deliveryName, targetKinds } from "@/lib/stack/source";
 
 type View = {
   eyebrow: string;
@@ -556,6 +557,33 @@ function resolve(ref: NodeRef, state: StackState): View | null {
         events: state.events.filter((event) => event.pkg === "brain"),
       };
     }
+    case "github-receiver": {
+      const endpoint = state.sourceEndpoints.data?.find((item) => item.id === ref.id);
+      if (!endpoint) return null;
+      const list = fieldsOf(findOperation(catalog, "source", "github_endpoint_list")?.outputSchema).find((field) => field.name === "endpoints");
+      return {
+        eyebrow: `Source receiver · ${endpoint.enabled ? "enabled" : "disabled"}`, accent: "source", title: endpoint.label, record: { ...endpoint },
+        fields: new Map(list?.children.map((field) => [field.name, field])),
+        body: <SourceHandOff label="Show its deliveries" run={(store) => store.applySourceFilter({ endpointIds: [endpoint.id] })} target={{ kind: "github-receiver", id: endpoint.id }} />,
+        related: [{ ref: { kind: "package", id: "source" }, label: "source Package API" }],
+        operations: { pkg: "source", list: sourceOperations(catalog, ["github_endpoint_get", "github_setup_read"]) },
+        events: state.events.filter((event) => event.pkg === "source"),
+      };
+    }
+    case "github-delivery": {
+      const sequence = Number(ref.id);
+      const record = state.sourceDeliveries[ref.id]?.data ?? state.sourceLedger.entries.find((item) => item.sequence === sequence) ?? null;
+      const related: View["related"] = [];
+      if (record) related.push({ ref: { kind: "github-receiver", id: record.endpointId }, label: `${state.sourceEndpoints.data?.find((item) => item.id === record.endpointId)?.label ?? "Receiver"} · ${targetKinds[state.sourceEndpoints.data?.find((item) => item.id === record.endpointId)?.target.kind ?? "repository"]}` });
+      return {
+        eyebrow: record ? `Source delivery · ${record.payloadClearedAt ? "payload cleared" : "payload retained"}` : "Source delivery", accent: "source",
+        title: record ? `#${record.sequence} ${deliveryName(record)}` : `Delivery #${ref.id}`, record: record ? { ...record } : undefined,
+        fields: new Map(fieldsOf(findOperation(catalog, "source", "github_delivery_get")?.outputSchema).map((field) => [field.name, field])),
+        body: <SourceDeliveryBody sequence={sequence} target={ref} />, related,
+        operations: { pkg: "source", list: sourceOperations(catalog, ["github_delivery_get", "github_delivery_payload", "github_history_plan", "github_history_clear"]) },
+        events: state.events.filter((event) => event.pkg === "source"),
+      };
+    }
     case "proc-schedule": {
       const schedule = state.procSchedules.data?.find((item) => item.id === ref.id);
       if (!schedule) return null;
@@ -703,6 +731,40 @@ function brainFields(catalog: PackageDoc[] | null, operation: string): Map<strin
   return new Map(fieldsOf(findOperation(catalog, "brain", operation)?.outputSchema).map((field) => [field.name, field]));
 }
 
+function sourceOperations(catalog: PackageDoc[] | null, names: string[]): OperationDoc[] {
+  return catalog?.find((doc) => doc.name === "source")?.operations.filter((operation) => names.includes(operation.name)) ?? [];
+}
+
+/** A receiver's deliveries are read in the Deliveries window; the inspector hands over to it. */
+function SourceHandOff({ label, run, target }: { label: string; run(store: ReturnType<typeof useStore>): void; target: NodeRef }) {
+  const store = useStore();
+  const { goTo } = useWorkbench();
+  return (
+    <Button type="button" size="sm" variant="outline" className="self-start" onClick={() => { run(store); goTo(target); }}>
+      <ArrowRightIcon data-icon="inline-start" />{label}
+    </Button>
+  );
+}
+
+/**
+ * A delivery can be inspected by link before any ledger page holds it: its summary is read on its own, and the reader shows it
+ * on request. The payload text is never read here.
+ */
+function SourceDeliveryBody({ sequence, target }: { sequence: number; target: NodeRef }) {
+  const store = useStore();
+  const { sourceDeliveries, status } = useStack();
+  const held = sourceDeliveries[String(sequence)];
+  const open = status.source === "open";
+  useEffect(() => { if (open && Number.isSafeInteger(sequence) && sequence > 0) void store.loadSourceDelivery(sequence); }, [store, sequence, open]);
+  return (
+    <div className="flex flex-col gap-2">
+      {held?.error && !held.data ? <p role="alert" className="text-[0.78rem] text-destructive">{/not_found/i.test(held.error) ? `Delivery #${sequence} does not exist.` : `Could not read the delivery: ${held.error}`}</p> : null}
+      {!held ? <p className="text-[0.78rem] text-muted-foreground">Reading delivery #{sequence}…</p> : null}
+      <SourceHandOff label="Open in the Delivery reader" run={(next) => next.selectSourceDelivery(sequence)} target={target} />
+    </div>
+  );
+}
+
 /** Brain records are read and changed in their own windows; the inspector hands over to them. */
 function BrainHandOff({ label, run, target }: { label: string; run(store: ReturnType<typeof useStore>): void; target: NodeRef }) {
   const store = useStore();
@@ -835,6 +897,7 @@ function referencePackage(ref: NodeRef): string {
   if (ref.kind === "worker-catalog" || ref.kind === "worker" || ref.kind === "worker-runtime" || ref.kind === "worker-window") return "worker";
   if (ref.kind === "proc-schedule" || ref.kind === "proc-execution" || ref.kind === "proc-run" || ref.kind === "proc-run-window") return "proc";
   if (ref.kind === "work-item") return "hud";
+  if (ref.kind === "github-receiver" || ref.kind === "github-delivery") return "source";
   if (ref.kind === "usage" || ref.kind === "usage-account") return "usage";
   if (ref.kind === "preset" || ref.kind === "scrape-job") return "scrape";
   if (ref.kind === "browser-profile" || ref.kind === "browser-handoff" || ref.kind === "browser-controller" || ref.kind === "browser-viewer") return "browse";
