@@ -133,6 +133,14 @@ try {
   await page.locator('[data-remote-scope="control"]').waitFor();
   await page.waitForFunction(() => [...document.querySelectorAll('[data-window="content-documents"] button')].some(button => button.textContent?.includes("New document") && !button.disabled));
   assert.equal(await documents.getByRole("button", { name: "New document" }).isEnabled(), true);
+  const storage = page.locator('[data-window="content-storage"]');
+  await storage.getByText("Available only on the local UI", { exact: true }).waitFor();
+  assert.equal(await storage.locator("summary", { hasText: /Maintenance|Retained history/ }).count(), 0, "remote control has no publication or history disclosures");
+  await documents.getByRole("button", { name: "Remote note actions", exact: true }).focus(); await page.keyboard.press("Enter");
+  await page.getByRole("menuitem", { name: "Open in editor", exact: true }).click();
+  const remoteEditor = page.locator('[data-window="content-editor"]');
+  await remoteEditor.getByRole("form", { name: "Edit Remote note" }).waitFor();
+  assert.equal(await remoteEditor.locator("summary", { hasText: "Retained history" }).count(), 0, "remote Editor never offers local Vault history");
   // Local-only maintenance: with control scope the HUD item is editable, yet no Maintenance disclosure is offered, and the
   // gateway refuses the plan operations of the four maintenance controls this UI exposes locally.
   const workId = randomUUID();
@@ -146,7 +154,12 @@ try {
   const refused = await page.evaluate(() => new Promise((resolve, reject) => {
     const ws = new WebSocket(`${location.origin.replace(/^https:/, "wss:")}/websocket`);
     const calls = [["hud", "hud_history_plan", { items: ["00000000-0000-4000-8000-000000000001"], scope: "journal_bodies" }],
-      ["proc", "proc_history_plan", { kind: "schedule_definition", ids: ["00000000-0000-4000-8000-000000000001"] }]];
+      ["proc", "proc_history_plan", { kind: "schedule_definition", ids: ["00000000-0000-4000-8000-000000000001"] }],
+      ["content", "content_vault_history_plan", { slugs: ["remote-note"] }],
+      ["content", "content_publication_list", {}],
+      ["content", "content_publication_plan", { ids: ["00000000-0000-4000-8000-000000000001"] }],
+      ["content", "content_publication_clear", { planId: "00000000-0000-4000-8000-000000000001", expectedRevision: "fixture", requestId: "00000000-0000-4000-8000-000000000002" }],
+      ["content", "content_state_receipt_get", { requestId: "00000000-0000-4000-8000-000000000002" }]];
     const results = [];
     ws.onopen = () => calls.forEach(([pkg, name, args], index) => ws.send(JSON.stringify({ id: index + 1, method: "tools/call", params: { package: pkg, name, arguments: args } })));
     ws.onmessage = (event) => { results.push(JSON.parse(event.data)); if (results.length === calls.length) { resolve(results); ws.close(); } };
@@ -161,7 +174,7 @@ try {
   const afterRevoke = await context.request.get(`${origin}/content`);
   assert.equal(afterRevoke.status(), 401, "revoked browser cookie cannot load a new UI page");
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ ok: true, assertions: "plain-browser persisted-secret pairing and local approval, remote TLS session, UI hydration, read-only/control UI transitions, refused WebSocket mutation, HUD item with no Maintenance disclosure and refused history plans over control scope, revocation, document/item/immutable artifact one-use handoffs, opaque artifact origin", state: dir }));
+  console.log(JSON.stringify({ ok: true, assertions: "plain-browser persisted-secret pairing and local approval, remote TLS session, UI hydration, read-only/control UI transitions, refused WebSocket mutation, HUD item with no Maintenance disclosure and refused history plans over control scope, Content Storage and Editor hide local publication/history disclosures, all Content maintenance/disclosure operations refused over remote control scope, revocation, document/item/immutable artifact one-use handoffs, opaque artifact origin", state: dir }));
 } finally {
   await browser?.close();
   if (next) { next.kill("SIGTERM"); await new Promise(resolve => next.once("exit", resolve)); }

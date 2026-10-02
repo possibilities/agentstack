@@ -5,6 +5,7 @@
 // HUD dependencies are fixture sockets); Signal, Infer, Content and Xcom are fixture sockets whose plans, applies and
 // receipts go through the real StateJournal.
 // PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node test/domain-state-browser-check.mjs
+// DOMAIN_STATE_SLICE=content runs only the bounded Content publication/history rendered checks.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -17,7 +18,7 @@ import { authorizeBrowser, fixtureDoc, fixtureOperations, freePort as port, gate
 if (!process.env.PLAYWRIGHT_MODULE) throw new Error("Set PLAYWRIGHT_MODULE to an installed Playwright module");
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE);
 const require = createRequire(import.meta.url);
-const dir = await mkdtemp(join("/tmp", "as-domain-state-"));
+const dir = await mkdtemp(join(process.env.TMPDIR ?? "/tmp", "as-domain-state-"));
 const evidence = process.env.DOMAIN_STATE_EVIDENCE_DIR ?? join(dir, "evidence");
 await mkdir(evidence, { recursive: true });
 const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("STACK_"))), STACK_STATE_DIR: dir, NEXT_TELEMETRY_DISABLED: "1" };
@@ -229,7 +230,7 @@ const handlers = {
       remotes: [{ name: "backup-origin", fetch: true, push: true }], retained: ["Read-only retention disclosure, not an erasure plan", "Renamed different slugs, unreachable objects, clones, remotes, backups and device copies are unobservable"] };
   },
   list: () => ({ documents: [{ slug: "retained-note", title: "Retained note", tags: [] }], nextOffset: null }),
-  get: () => ({ slug: "retained-note", title: "Retained note", digest: "a".repeat(64), content: "# Retained note", tags: [], updated: null }),
+  get: () => ({ slug: "retained-note", title: "Retained note", digest: "a".repeat(64), content: "# Retained note", tags: [], updated: null, frontmatter: {} }),
   xcom_status: xcomStatus,
   xcom_control: ({ paused }) => { xcom.paused = paused; if (paused) xcom.finishAfter = 2; return { paused, running: xcom.running }; },
   xcom_list: () => ({ results: xcom.posts, next_offset: null }),
@@ -445,8 +446,23 @@ try {
     await history.getByText(/4 commits scanned/).waitFor();
     assert.ok(await storage.locator("[data-scroll]").evaluate((body) => body.scrollWidth <= body.clientWidth), "narrow history has no horizontal overflow");
     await shot("content-history-narrow", storage);
+    // Each live transport selection is independent; absence of any operation hides the flow.
+    const contentTransport = catalog.find((doc) => doc.name === "content").transports[0];
+    const selectedOperations = contentTransport.operations;
+    for (const missing of ["content_publication_list", "content_publication_plan", "content_publication_clear", "content_state_receipt_get"]) {
+      contentTransport.operations = selectedOperations.filter((name) => name !== missing);
+      await page.reload();
+      await storage.getByRole("list", { name: "Upload stages", exact: true }).waitFor();
+      assert.equal(await publications.count(), 0, `publication flow hidden without ${missing}`);
+      assert.equal(await history.locator("summary").count(), 1, "read-only history exposure is independent");
+    }
+    contentTransport.operations = selectedOperations.filter((name) => name !== "content_vault_history_plan");
+    await page.reload();
+    await storage.getByRole("list", { name: "Upload stages", exact: true }).waitFor();
+    assert.equal(await history.count(), 0, "history is hidden when its own read operation is unexposed");
+    contentTransport.operations = selectedOperations;
     assert.deepEqual(errors, [], "no uncaught application errors");
-    console.log(JSON.stringify({ ok: true, evidence, assertions: "Content publication blocked/unmeasured rows, paging, exact selection, blocked plan, retained-copy preview, completed collection, zero selection guard, read-only current/removed Vault history, paged revisions and stale restart, explicit missing/non-owned/over-budget failures, successful empty disclosure, durable unknown receipt recovery without replay/rearm, light/dark/narrow without horizontal overflow" }));
+    console.log(JSON.stringify({ ok: true, evidence, assertions: "Content publication blocked/unmeasured rows, paging, exact selection, blocked plan, retained-copy preview, completed collection, zero selection guard, read-only current/removed Vault history, paged revisions and stale restart, explicit missing/non-owned/over-budget failures, successful empty disclosure, durable unknown receipt recovery without replay/rearm, independent list/plan/apply/receipt and history exposure gates, light/dark/narrow without horizontal overflow" }));
   } else {
 
   // System State: unsupported coverage is stated, and each owner links to its controls.

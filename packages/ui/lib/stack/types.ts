@@ -756,6 +756,18 @@ export type ContentArtifact = { name: string; version: string; kind: string; url
   title?: string | null; tags?: string[]; created_at?: string | null; bytes?: number; files?: number; media_type?: string | null;
   latest?: boolean; deleted?: string | null; deleted_reason?: string | null; [key: string]: unknown };
 export type ContentStage = { id: string; bytes: number; received: number; digest: string; blob: string | null };
+/** Trusted-local Content maintenance observations; no bodies or remote URLs. */
+export type ContentPublication = {
+  id: string; scope: "artifact" | "bundle"; path: string; bytes: number | null;
+  createdAt: string; releasedAt: string | null; blockedBy: string[]; revision: string;
+};
+export type ContentPublicationPage = { entries: ContentPublication[]; revision: string; nextOffset: number | null; retained: string[] };
+export type ContentVaultHistoryEntry = { slug: string; path: string; commit: string; blob: string; mode: string };
+export type ContentVaultHistoryPage = {
+  entries: ContentVaultHistoryEntry[]; revision: string; nextOffset: number | null; commitsScanned: number;
+  paths: { slug: string; path: string; current: boolean }[];
+  remotes: { name: string; fetch: boolean; push: boolean }[]; retained: string[];
+};
 /** `collection_list` plus per-scope item totals from `item_list`. */
 export type ContentLibrary = { collections: ContentCollection[]; counts: { all: number; ungrouped: number; byCollection: Record<string, number> } };
 /** The Library's current item scope: undefined for all, null for ungrouped, or a collection slug. */
@@ -1151,15 +1163,3 @@ export function nodeKey(ref: NodeRef): string {
   if (ref.kind === "operation") return `operation:${ref.pkg}.${ref.id}`;
   return "id" in ref ? `${ref.kind}:${ref.id}` : ref.kind;
 }
-/** Trusted-local Content maintenance observations; no bodies or remote URLs. */
-export type ContentPublication = {
-  id: string; scope: "artifact" | "bundle"; path: string; bytes: number | null;
-  createdAt: string; releasedAt: string | null; blockedBy: string[]; revision: string;
-};
-export type ContentPublicationPage = { entries: ContentPublication[]; revision: string; nextOffset: number | null; retained: string[] };
-export type ContentVaultHistoryEntry = { slug: string; path: string; commit: string; blob: string; mode: string };
-export type ContentVaultHistoryPage = {
-  entries: ContentVaultHistoryEntry[]; revision: string; nextOffset: number | null; commitsScanned: number;
-  paths: { slug: string; path: string; current: boolean }[];
-  remotes: { name: string; fetch: boolean; push: boolean }[]; retained: string[];
-};
