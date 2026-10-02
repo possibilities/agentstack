@@ -40,11 +40,12 @@ export function PanelTitle({ id, description, aside, children }: { id: string; d
 }
 
 /** Label/value pairs. Values stay selectable and wrap at any width. */
-export function Facts({ items, className }: { items: Array<[ReactNode, ReactNode, { mono?: boolean; key?: string; selectable?: boolean }?]>; className?: string }) {
+export type Fact = [ReactNode, ReactNode, { mono?: boolean; key?: string; selectable?: boolean; selectableClassName?: string }?];
+export function Facts({ items, className }: { items: Fact[]; className?: string }) {
   return <dl className={cn("client-facts", className)}>
     {items.map(([term, value, options], index) => <div key={options?.key ?? index} className="contents">
       <dt>{term}</dt><dd className={options?.mono ? "font-mono text-[0.8125rem]" : undefined}>{options?.selectable && typeof value === "string"
-        ? <textarea readOnly rows={1} aria-label={typeof term === "string" ? term : "Recorded value"} className="client-selectable" value={value} /> : value}</dd>
+        ? <textarea readOnly rows={1} aria-label={typeof term === "string" ? term : "Recorded value"} className={cn("client-selectable", options.selectableClassName)} value={value} /> : value}</dd>
     </div>)}
   </dl>;
 }
@@ -83,21 +84,21 @@ export function useNow(interval = 30_000) {
   return now;
 }
 
-function ago(at: number, now: number) {
-  const seconds = Math.max(0, Math.round((now - at) / 1000));
-  if (seconds < 45) return "just now";
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} h ago`;
-  const days = Math.round(hours / 24);
-  if (days < 7) return `${days} d ago`;
-  return new Date(at).toLocaleDateString();
+/** Shared age/expiry units; future values round up, recorded ages round normally. */
+export function relativeTime(at: number, now: number) {
+  const delta = at - now, future = delta > 0, elapsed = Math.abs(delta);
+  if (!future && elapsed < 45_000) return "just now";
+  if (!future && elapsed >= 7 * 86_400_000) return new Date(at).toLocaleDateString();
+  const [unit, duration]: [string, number] = elapsed < 3_600_000 ? ["min", 60_000] : elapsed < 86_400_000 ? ["h", 3_600_000] : ["day", 86_400_000];
+  const count = Math.max(1, (future ? Math.ceil : Math.round)(elapsed / duration));
+  const label = unit === "day" ? (future ? (count === 1 ? "day" : "days") : "d") : unit;
+  const text = `${count} ${label}`;
+  return future ? `in ${text}` : `${text} ago`;
 }
 
 export function RelativeTime({ at, now, className }: { at: number; now: number | null; className?: string }) {
   const exact = new Date(at).toLocaleString();
-  return <time dateTime={new Date(at).toISOString()} title={exact} className={cn("tabular-nums", className)}>{now === null ? exact : ago(at, now)}</time>;
+  return <time dateTime={new Date(at).toISOString()} title={exact} className={cn("tabular-nums", className)}>{now === null ? exact : relativeTime(at, now)}</time>;
 }
 
 /** Live, polite observation freshness line. */

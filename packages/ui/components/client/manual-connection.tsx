@@ -64,7 +64,7 @@ export function ManualConnection({ scope, intent }: { scope: string; intent: str
     <div className="client-intro"><h1 className="text-2xl font-semibold tracking-tight">Connect manually</h1>
       <p className="text-muted-foreground">Inspect the exact device origin, confirm its destinations, then ask trusted-local Access on that platform to approve this desktop.</p>
       <ObservationStatus loading={loading} at={observation?.at ?? null} /></div>
-    {error || action.error ? <Alert variant="destructive"><AlertTitle>Connection not confirmed</AlertTitle><AlertDescription>{action.error ?? error}</AlertDescription></Alert> : null}
+    {error || action.error ? <Alert variant="destructive"><AlertTitle>{action.error ? action.errorTitle : "Observation interrupted"}</AlertTitle><AlertDescription>{action.error ?? error}</AlertDescription></Alert> : null}
     <Panel labelledBy="manual-title" className="client-panel-lead"><PanelBody>
       <PanelTitle id="manual-title" aside={<StatusChip tone={connectionId ? "success" : expired ? "danger" : frozen ? "attention" : "neutral"}>{connectionId ? "Connection saved" : expired ? "Approval expired" : frozen ? "Saved pairing" : "Not connected"}</StatusChip>}>A deliberate connection</PanelTitle>
       {connectionId ? <><p role="status">Connection saved. It is not a live viewer session; choose Open on its detail page.</p>

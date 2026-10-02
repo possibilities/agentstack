@@ -256,6 +256,8 @@
 .client-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.375rem 1rem; min-width: 0; font-size: 0.875rem; }
 .client-facts dt { color: var(--muted-foreground); }
 .client-facts dd { min-width: 0; overflow-wrap: anywhere; }
+.client-peer .client-facts { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.client-peer .client-facts > div:not(:first-child) > dt { margin-top: 0.5rem; }
 @media (max-width: 30rem) {
   .client-facts { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .client-facts > div:not(:first-child) > dt { margin-top: 0.5rem; }
@@ -329,6 +331,9 @@
 .client-approval-code:focus-visible, .client-selectable:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .client-selectable { display: block; field-sizing: content; width: 100%; min-width: 0; min-height: 1.5em; resize: none; background: transparent;
   border: 0; border-radius: 0.125rem; padding: 0; font: inherit; color: inherit; line-height: inherit; overflow-wrap: anywhere; }
+.client-selectable.client-fingerprint { width: 16ch; max-width: 100%; word-break: break-all; }
+.client-home [data-slot="button"][data-tone="danger"] { color: var(--destructive); border-color: color-mix(in oklch, var(--destructive) 40%, var(--border)); }
+.client-home [data-slot="button"][data-tone="danger"]:hover { background: color-mix(in oklch, var(--destructive) 6%, var(--background)); }
 .client-qr-layout { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1.25rem; }
 .client-qr-layout > div { flex: 1 1 14rem; }
 .client-request-qr { display: block; flex: none; width: 18rem; max-width: 100%; height: auto; background: #fff; }

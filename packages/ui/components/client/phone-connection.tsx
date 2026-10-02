@@ -66,7 +66,7 @@ export function PhoneConnection({ scope, intent }: { scope: string; intent: stri
   return <ClientShell page="Connect through phone">
     <div className="client-intro"><h1 className="text-2xl font-semibold tracking-tight">Connect through phone</h1><p className="text-muted-foreground">Create an offline desktop request. An already paired phone explicitly approves it at its own pinned platform, then returns a credential-free receipt.</p>
       <ObservationStatus loading={loading} at={observation?.at ?? null} /></div>
-    {error || action.error ? <Alert variant="destructive"><AlertTitle>Connection not confirmed</AlertTitle><AlertDescription>{action.error ?? error}</AlertDescription></Alert> : null}
+    {error || action.error ? <Alert variant="destructive"><AlertTitle>{action.error ? action.errorTitle : "Observation interrupted"}</AlertTitle><AlertDescription>{action.error ?? error}</AlertDescription></Alert> : null}
     <Panel labelledBy="phone-title" className="client-panel-lead"><PanelBody>
       <PanelTitle id="phone-title" aside={<StatusChip tone={connectionId ? "success" : expired || receiptExpired ? "danger" : frozen ? "attention" : "neutral"}>{connectionId ? "Connection saved" : expired ? "Request expired" : receiptExpired ? "Receipt expired" : frozen ? "Saved request" : "Offline setup"}</StatusChip>}>A phone-mediated connection</PanelTitle>
       {connectionId ? <><p role="status">Connection saved with its own desktop credential. The phone&apos;s credential was never copied.</p><a className={buttonVariants()} href={`/client/connections/${connectionId}`}>View saved connection</a></>
@@ -88,7 +88,7 @@ export function PhoneConnection({ scope, intent }: { scope: string; intent: stri
           </FlowStep>
           <FlowStep number={2} title="Approve on your phone" description="The phone needs access:enroll and every permission it approves. Scanning is not approval.">
             {request && qr && !expired ? <><div className="client-qr-layout"><RequestQr qr={qr} /><div className="flex min-w-0 flex-col gap-3">
-              <Facts items={[["Full fingerprint", request.fingerprint, { mono: true, selectable: true }], ["Requested permissions", (frozen?.scopes ?? scopes).join(", ")], ["Expiry", <Expiry key="expiry" at={request.expiresAt} now={now} />]]} />
+              <Facts items={[["Full fingerprint", request.fingerprint, { mono: true, selectable: true, selectableClassName: "client-fingerprint" }], ["Requested permissions", (frozen?.scopes ?? scopes).join(", ")], ["Expiry", <Expiry key="expiry" at={request.expiresAt} now={now} />]]} />
               <p className="text-sm text-muted-foreground">Compare the full fingerprint on the phone. This QR has no server address, redemption secret or private key. It is encoded locally, black on white with a four-module quiet zone.</p></div></div>
               <details className="client-disclosure"><summary>Selectable offline request text</summary><pre tabIndex={0} className="client-json">{request.text}</pre></details></>
               : expired ? <Alert><AlertTitle>Request expired</AlertTitle><AlertDescription>The QR is no longer usable. It is not refreshed or renewed automatically. Forget this local intent, then make a new explicit request.</AlertDescription></Alert>

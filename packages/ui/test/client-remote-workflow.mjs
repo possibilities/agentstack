@@ -88,6 +88,23 @@ async function capture(page, evidence, name, checkHeader) {
     assert.deepEqual(unreadable, [], `${name}: controls not clipped`);
     const clippedValues = await page.locator("main textarea[readonly], main input[readonly]").evaluateAll(inputs => inputs.filter(input => input.clientWidth === 0 || input.scrollWidth > input.clientWidth + 2 || input.scrollHeight > input.clientHeight + 2).map(input => input.getAttribute("aria-label")));
     assert.deepEqual(clippedValues, [], `${name}: exact selectable values readable without clipping`);
+    const forgetWidths = await page.getByRole("button", { name: /^Forget (connection|pending intent)…$/ }).evaluateAll(buttons => buttons.map(button => ({ button: button.getBoundingClientRect().width, available: button.parentElement.getBoundingClientRect().width })));
+    assert.ok(forgetWidths.every(({ button, available }) => button < available - 16), `${name}: Forget controls stay inline`);
+    if (name === "connection-detail") {
+      const valueLefts = await Promise.all(["Installation ID", "Connection ID"].map(label => page.getByLabel(label, { exact: true }).evaluate(input => input.getBoundingClientRect().left)));
+      assert.ok(Math.abs(valueLefts[0] - valueLefts[1]) < 1, "descriptor and saved-connection values share one aligned column");
+    }
+    if (name === "phone-request-qr" || name === "phone-receipt-preview") {
+      const fingerprintLines = await page.getByLabel("Full fingerprint", { exact: true }).evaluate(input => input.clientHeight / parseFloat(getComputedStyle(input).lineHeight));
+      assert.ok(Math.abs(fingerprintLines - 4) < 0.1, "full fingerprint reads as four even lines");
+    }
+    if (name === "connections-two-destinations" && width === 1200) {
+      const origins = await page.locator(".client-peer dd").evaluateAll(values => values.filter(value => value.textContent.startsWith("https://")).map(value => {
+        const range = document.createRange(); range.selectNodeContents(value);
+        return { lines: new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size, stacked: value.getBoundingClientRect().top >= value.previousElementSibling.getBoundingClientRect().bottom };
+      }));
+      assert.ok(origins.length >= 4 && origins.every(origin => origin.lines === 1 && origin.stacked), "desktop card origins sit below labels on a single line");
+    }
     assert.deepEqual(await page.evaluate(() => window.remoteCsp), [], `${name}: no CSP violations`);
   }
   await captureVariants(page, evidence, name);
@@ -190,10 +207,19 @@ export async function checkRemoteWorkflow({ browser, base, evidence, pass, check
     await owner(a.context, "pairing_decide", { id: manual.receipt.id, code: manual.receipt.code, approve: true, scopes: ["ui:view"] });
     await page.getByRole("button", { name: "Approved? Connect", exact: true }).click();
     await page.getByRole("link", { name: "View saved connection" }).waitFor();
+    // Own timers before navigating to detail so expiry units can be checked
+    // without changing the real credential, dispatching, or waiting thirty days.
+    await page.clock.install({ time: Date.now() });
     await page.getByRole("link", { name: "View saved connection" }).click();
     await page.getByRole("button", { name: "Open platform", exact: true }).waitFor();
     const manualConnection = (await client.host.call("client_connection_list", {})).connections[0];
+    await page.getByText("Expires in 30 days", { exact: true }).waitFor();
     await capture(page, evidence, "connection-detail", checkHeader);
+    await page.clock.setSystemTime(manualConnection.expiresAt - 2 * 3_600_000); await page.clock.runFor(1001);
+    await page.getByText("Expires in 2 h", { exact: true }).waitFor();
+    await page.clock.setSystemTime(manualConnection.expiresAt - 59 * 60_000); await page.clock.runFor(1001);
+    await page.getByText("Expires in 59 min", { exact: true }).waitFor();
+    await page.clock.setSystemTime(Date.now()); await page.clock.runFor(1001);
     pass("manual exact-origin refusal, descriptor confirmation, full selectable approval code, trusted-local owner approval and deliberate redemption");
 
     // A completed real refresh with its answer lost: owner pendingOpen stays, and
@@ -202,6 +228,8 @@ export async function checkRemoteWorkflow({ browser, base, evidence, pass, check
     const lostOpenAnswer = page.waitForResponse(response => response.url().endsWith("/api/client/rpc") && response.request().postDataJSON()?.operation === "client_connection_open");
     await page.getByRole("button", { name: "Open platform", exact: true }).click();
     assert.equal((await lostOpenAnswer).status(), 502);
+    await page.getByRole("alert").getByText("Not confirmed", { exact: true }).waitFor();
+    assert.ok(!/^Action not confirmed|^Not confirmed/.test(await page.getByRole("alert").locator('[data-slot="alert-description"]').innerText()), "uncertain alert body does not repeat its title");
     await page.getByRole("heading", { name: "Saved Open recovery" }).waitFor();
     const pendingOpen = (await client.host.call("client_connection_list", {})).connections.find(row => row.id === manualConnection.id).pendingOpen;
     assert.ok(pendingOpen); assert.equal(lostReplies, 1);
@@ -257,6 +285,10 @@ export async function checkRemoteWorkflow({ browser, base, evidence, pass, check
     const requestCall = calls.filter(call => call.operation === "client_enrollment_begin").at(-1);
     const request = await client.host.call("client_enrollment_begin", requestCall.input);
     assert.equal(request.id, enrollment.id);
+    const fullFingerprint = page.getByLabel("Full fingerprint", { exact: true });
+    assert.equal(await fullFingerprint.inputValue(), request.fingerprint);
+    await fullFingerprint.focus(); await page.keyboard.press("ControlOrMeta+A");
+    assert.equal(await fullFingerprint.evaluate(input => input.value.slice(input.selectionStart, input.selectionEnd)), request.fingerprint, "selected fingerprint is the exact original string, without inserted spaces");
     await capture(page, evidence, "phone-request-qr", checkHeader);
     await page.emulateMedia({ colorScheme: "dark" });
     const rendered = await page.getByRole("img", { name: "Offline desktop request QR" }).evaluate(svg => {
@@ -365,6 +397,7 @@ export async function checkRemoteWorkflow({ browser, base, evidence, pass, check
     await page.goto(`${client.origin}/client/connections/${phoneConnection.id}`); await page.getByRole("button", { name: "Open platform", exact: true }).waitFor();
     await page.getByRole("button", { name: "Open platform", exact: true }).click();
     await page.getByText("Access refused this credential:", { exact: false }).waitFor();
+    await page.getByRole("alert").getByText("Refused by Access", { exact: true }).waitFor();
     await capture(page, evidence, "grant-revoked", checkHeader);
     pass("trusted-local real Access grant revocation is surfaced truthfully; saved connection stays distinct from live permission");
 
@@ -377,8 +410,7 @@ export async function checkRemoteWorkflow({ browser, base, evidence, pass, check
     await page.evaluate(() => { Storage.prototype.setItem = window.originalStorageSet; });
     pass("browser persistence failure prevents requestId-bearing dispatch; journals are root/destination qualified and verified before every dispatch");
 
-    // Install the clock before navigation so the screen's interval is owned by it.
-    await page.clock.install({ time: Date.now() });
+    // The installed clock owns the expiry interval across page navigations.
     await page.goto(`${client.origin}/client/phone`); await page.getByLabel("Connection label").fill("Expired phone request"); await page.getByRole("button", { name: "Make offline request" }).click();
     await page.getByRole("img", { name: "Offline desktop request QR" }).waitFor();
     const expiryCall = calls.filter(call => call.operation === "client_enrollment_begin").at(-1), expiredRequest = await client.host.call("client_enrollment_begin", expiryCall.input);

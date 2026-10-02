@@ -74,14 +74,13 @@ export function ConnectionDetail({ scope, id }: { scope: string; id: string }) {
   return <ClientShell page="Saved connection">
     <div className="client-intro"><h1 className="text-2xl font-semibold tracking-tight">{connection?.label ?? "Saved connection"}</h1>
       <p className="text-muted-foreground">A retained remote destination, independent of the local installation and other saved connections.</p><ObservationStatus loading={loading} at={observation?.at ?? null} /></div>
-    {error || action.error ? <Alert variant="destructive"><AlertTitle>Action not confirmed</AlertTitle><AlertDescription>{action.error ?? error}</AlertDescription></Alert> : null}
+    {error || action.error ? <Alert variant="destructive"><AlertTitle>{action.error ? action.errorTitle : "Observation interrupted"}</AlertTitle><AlertDescription>{action.error ?? error}</AlertDescription></Alert> : null}
     {forgotten ? <Panel labelledBy="forgotten-title"><PanelBody><PanelTitle id="forgotten-title">Connection forgotten locally</PanelTitle>
       <p role="status">Access was not revoked and already opened viewers were not guaranteed to sign out.</p><a className={buttonVariants({ variant: "outline" })} href="/client">Back to Connections</a></PanelBody></Panel>
       : connection ? <>
         <Panel labelledBy="connection-title" className="client-machine"><PanelBody>
           <PanelTitle id="connection-title" aside={<StatusChip tone={pending ? "attention" : "neutral"}>{pending ? "Open unresolved" : "Saved — not a live connection"}</StatusChip>}>Selected platform</PanelTitle>
-          <DescriptorFacts connection={connection.connection} />
-          <Facts items={[["Connection ID", connection.id, { mono: true, selectable: true }], ["Record revision", connection.revision], ["Access client ID", connection.clientId, { mono: true, selectable: true }],
+          <DescriptorFacts connection={connection.connection} items={[["Connection ID", connection.id, { mono: true, selectable: true }], ["Record revision", connection.revision], ["Access client ID", connection.clientId, { mono: true, selectable: true }],
             ["Credential ID", connection.credentialId, { mono: true, selectable: true }], ["Native credential expiry", <Expiry key="expiry" at={connection.expiresAt} now={now} />]]} />
           <p className="text-sm text-muted-foreground">Live Access governs permissions. Saved metadata does not expose current grant scopes or prove that the grant is active. View-only and trusted-local restrictions remain enforced on the target platform.</p>
           {opened ? <p role="status" className="text-sm">Handoff navigation requested in a separate browser tab. This is not proof of a viewer session. If the handoff was consumed or expired, choose a new deliberate Open; no re-pairing is needed for that alone.</p> : null}

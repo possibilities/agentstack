@@ -5,29 +5,30 @@ import type { ClientInput, ClientOutput } from "@stack/client/contract";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { remoteError } from "@/lib/client/remote-errors";
-import { Facts, Hint, StatusChip } from "./parts";
+import { remoteError, remoteErrorTitle } from "@/lib/client/remote-errors";
+import { Facts, Hint, StatusChip, relativeTime, type Fact } from "./parts";
 
 export type Descriptor = ClientOutput<"client_connection_inspect">;
 export type Scopes = ClientInput<"client_pair_begin">["scopes"];
 
 export function useRemoteAction(refresh: () => Promise<void>) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false), [error, setErrorMessage] = useState<string | null>(null), [errorTitle, setErrorTitle] = useState("Not confirmed");
+  const setError = (message: string | null) => { setErrorMessage(message); setErrorTitle("Not confirmed"); };
   const lock = useRef(false);
   const run = async <T,>(action: () => Promise<T>): Promise<T | undefined> => {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError(null);
     try { return await action(); }
-    catch (error) { setError(remoteError(error)); }
+    catch (error) { setErrorMessage(remoteError(error)); setErrorTitle(remoteErrorTitle(error)); }
     finally { await refresh(); lock.current = false; setBusy(false); }
   };
-  return { busy, error, setError, run };
+  return { busy, error, errorTitle, setError, run };
 }
 
-export function DescriptorFacts({ connection }: { connection: Descriptor }) {
+export function DescriptorFacts({ connection, items = [] }: { connection: Descriptor; items?: Fact[] }) {
   return <Facts items={[["Installation ID", connection.serverId, { mono: true, selectable: true }], ["Device origin", connection.deviceOrigin, { mono: true, selectable: true }],
     ["Documents origin", connection.documentOrigin, { mono: true, selectable: true }], ["Artifacts origin", connection.artifactOrigin, { mono: true, selectable: true }],
-    ["Platform UI origin", connection.uiOrigin ?? "Not advertised", { mono: !!connection.uiOrigin, selectable: !!connection.uiOrigin }]]} />;
+    ["Platform UI origin", connection.uiOrigin ?? "Not advertised", { mono: !!connection.uiOrigin, selectable: !!connection.uiOrigin }], ...items]} />;
 }
 
 export function PermissionFields({ label, setLabel, scopes, setScopes, disabled }: {
@@ -53,7 +54,7 @@ export function PermissionFields({ label, setLabel, scopes, setScopes, disabled 
 export function Expiry({ at, now }: { at: number; now: number | null }) {
   const expired = now !== null && at <= now;
   return <span className="flex flex-wrap items-center gap-2"><time dateTime={new Date(at).toISOString()} className="tabular-nums"><textarea readOnly rows={1} aria-label="Exact expiry" className="client-selectable" value={new Date(at).toLocaleString()} /></time>
-    <StatusChip tone={expired ? "danger" : "neutral"}>{expired ? "Expired" : now === null ? "Expiry recorded" : `Expires in ${Math.max(1, Math.ceil((at - now) / 60_000))} min`}</StatusChip></span>;
+    <StatusChip tone={expired ? "danger" : "neutral"}>{expired ? "Expired" : now === null ? "Expiry recorded" : `Expires ${relativeTime(at, now)}`}</StatusChip></span>;
 }
 
 export function FlowStep({ number, title, description, done, children }: { number: number; title: string; description: string; done?: boolean; children: ReactNode }) {
@@ -67,7 +68,7 @@ export function ForgetControl({ kind, revision, disabled, onConfirm }: { kind: "
   const text = kind === "connection" ? "This removes only the saved connection and its native credential from this Client. It does not revoke Access, securely erase retained bytes, or guarantee sign-out of an already opened viewer."
     : "This abandons only this Client's pending intent and private material. It does not cancel server approval or revoke a credential already issued by Access. This request UUID cannot be reused for a new intent.";
   return <div className="flex flex-col gap-2">
-    {reviewed === null ? <Button variant="outline" disabled={disabled} onClick={() => setReviewed(revision)}>Forget {kind === "connection" ? "connection" : "pending intent"}…</Button>
+    {reviewed === null ? <div><Button variant="outline" data-tone="danger" disabled={disabled} onClick={() => setReviewed(revision)}>Forget {kind === "connection" ? "connection" : "pending intent"}…</Button></div>
       : <div className="client-plan" role="group" aria-label="Confirm local removal">
         <h3 className="text-sm font-semibold">Forget locally?</h3><p className="text-sm">{text}</p>
         <Facts items={[["Reviewed revision", reviewed]]} />

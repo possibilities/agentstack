@@ -1,7 +1,7 @@
 import { ClientCallError } from "./channel";
 
 export function remoteError(error: unknown): string {
-  if (!(error instanceof ClientCallError)) return error instanceof Error ? error.message : "Action not confirmed. Inspect the retained request before any deliberate retry.";
+  if (!(error instanceof ClientCallError)) return error instanceof Error ? error.message : "Inspect the retained request before any deliberate retry.";
   const messages: Record<string, string> = {
     unauthorized: "Access did not authorize this request. The refusal does not identify why. For an unfinished Open beyond the five-minute refresh retry window, there is no pending-open reset API: inspect trusted-local Access, then deliberately re-enroll and forget a stranded local connection. Nothing retries or cycles credentials automatically.",
     approval_pending: "Approval is still pending. Approve in trusted-local Access on the target server, then deliberately choose Approved? Connect. Nothing polls approval here.",
@@ -29,5 +29,13 @@ export function remoteError(error: unknown): string {
     revision_conflict: "The record changed since you reviewed it. The latest records were reread; review the current revision and confirm again. Nothing was silently retried.",
     client_session_required: error.message,
   };
-  return messages[error.code] ?? "Action not confirmed. The exact request is retained. Inspect current connections before any deliberate identical retry; an unknown answer is not permission to dispatch automatically.";
+  return messages[error.code] ?? "The exact request is retained. Inspect current connections before any deliberate identical retry; an unknown answer is not permission to dispatch automatically.";
+}
+
+/** Presentation only: a known refusal does not undo preceding writes or relax recovery. */
+export function remoteErrorTitle(error: unknown): string {
+  if (!(error instanceof ClientCallError)) return "Not confirmed";
+  if (["unauthorized", "pairing_denied", "pairing_expired_or_invalid", "connection_host_refused", "credential_revoked", "credential_expired", "insufficient_scope",
+    "grant_changed", "refresh_reused_repair_required", "refresh_superseded", "enrollment_authority_changed", "enrollment_invalid"].includes(error.code)) return "Refused by Access";
+  return error.uncertain ? "Not confirmed" : "Request refused";
 }
