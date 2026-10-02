@@ -29,7 +29,7 @@ const catalog = [doc("serve", "serve_status"), doc("bots", "bot_status"), doc("a
 if (process.env.REFERENCE_ONLY) {
   const snapshot = await docsSnapshot.call({ root, env }, {});
   // Discovery imports declarations only. No Brain/Worker contexts or real server connections.
-  catalog.push(...snapshot.packages.filter((doc) => ["brain", "worker"].includes(doc.name)).map((doc) => ({ ...doc,
+  catalog.push(...snapshot.packages.filter((doc) => ["brain", "source", "worker"].includes(doc.name)).map((doc) => ({ ...doc,
     transports: doc.transports.map((transport) => transport.type === "websocket" ? { ...transport, endpoint: null } : transport) })));
 }
 const resourcesFixture = {
@@ -153,8 +153,41 @@ try {
         element.scrollTop += details.getBoundingClientRect().top - element.getBoundingClientRect().top;
       });
       await shot(`lifecycle-${appearance}`);
+      await open("source", "github_watch_events");
+      const occurrence = reference.getByRole("region", { name: "Occurrence source" });
+      await showTop(occurrence);
+      await shot(`occurrence-${appearance}`);
+      await showTop(occurrence.getByText("Poll semantics", { exact: true }));
+      await shot(`occurrence-semantics-${appearance}`);
+      assert.equal(await occurrence.getByRole("link", { name: "github_watch_acknowledge" }).count(), 1);
+      await occurrence.getByText("Draft MCP Events poll protocol", { exact: true }).click();
+      const listed = occurrence.getByLabel("MCP events/list template", { exact: true });
+      const poll = occurrence.getByLabel("MCP events/poll template", { exact: true });
+      assert.deepEqual(JSON.parse(await listed.innerText()), { jsonrpc: "2.0", id: 1, method: "events/list", params: {} });
+      assert.deepEqual(JSON.parse(await poll.innerText()), { jsonrpc: "2.0", id: 2, method: "events/poll",
+        params: { name: "github_delivery", arguments: { id: "<replace: string>" }, cursor: null, maxEvents: 25 } });
+      await poll.scrollIntoViewIfNeeded();
+      await shot(`occurrence-protocol-${appearance}`);
+      await occurrence.getByText("Stack managed tool: events_listen", { exact: true }).click();
+      assert.deepEqual(JSON.parse(await occurrence.getByLabel("events_listen tool call template", { exact: true }).innerText()),
+        { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "events_listen", arguments: { name: "github_delivery", arguments: { id: "<replace: string>" }, policy: "native" } } });
+      await occurrence.getByLabel("events_listen tool call template", { exact: true }).scrollIntoViewIfNeeded();
+      await shot(`occurrence-listen-${appearance}`);
+      assert.equal(await occurrence.getByRole("switch").count(), 0, "the reference does not offer a subscribe toggle");
       assert.ok(await scroller.evaluate((element) => element.scrollWidth <= element.clientWidth), `${appearance}: no reference overflow`);
     }
+    await page.goto(`${origin}/fleet?reference=package%3Asource`);
+    const occurrenceGroup = reference.getByRole("group", { name: "Typed occurrence sources" });
+    await occurrenceGroup.waitFor();
+    const occurrenceLink = occurrenceGroup.getByRole("link", { name: "github_watch_events" });
+    assert.equal(await occurrenceLink.count(), 1);
+    await shot("package-occurrences-narrow");
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await occurrenceGroup.waitFor();
+    await shot("package-occurrences-light");
+    await occurrenceLink.click();
+    await reference.getByRole("heading", { name: "Request templates" }).waitFor();
+    assert.equal(new URL(page.url()).searchParams.get("reference"), "operation:source.github_watch_events");
     await page.goto(`${origin}/fleet?reference=package%3Abrain`);
     await reference.getByRole("heading", { name: "Operations", exact: true }).waitFor();
     // Use the operation's stable name instead of its optional owner title.
@@ -163,7 +196,7 @@ try {
     await standaloneRow.scrollIntoViewIfNeeded();
     await shot("package-capability-narrow");
     assert.deepEqual(issues, [], "reference has no uncaught page errors");
-    console.log(`PASS: reference capability, exact watch templates, keyboard lifecycle disclosure, light/dark/narrow wrapping; screenshots: ${evidence}`);
+    console.log(`PASS: reference capability, exact watch templates, typed occurrence source protocol and events_listen templates, keyboard lifecycle disclosure, light/dark/narrow wrapping; screenshots: ${evidence}`);
   } else {
   await page.goto(`${origin}/fleet`);
   await page.getByRole("main", { name: "Open bench" }).waitFor();
