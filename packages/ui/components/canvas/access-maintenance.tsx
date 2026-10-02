@@ -7,18 +7,18 @@ import { useNow, useStack, useStore } from "./provider";
 import { MaintenanceDisclosure, StateFlowView, useStateFlow } from "./state-flow";
 import { Section } from "./window";
 
-const kinds: [AccessHistoryKind, string][] = [["ui_sessions", "Expired UI sessions"], ["expired_pairings", "Expired pairings"], ["expired_invitations", "Expired invitations"]];
+const kinds: [AccessHistoryKind, string, string][] = [["ui_sessions", "Expired UI sessions", "expired UI sessions"], ["expired_pairings", "Expired pairings", "expired pairings"], ["expired_invitations", "Expired invitations", "expired invitations"]];
 
 export function AccessHistory() {
   const state = useStack();
   if (state.remote || !state.access.data || !localOperations(state, "access", ["access_history_plan", "access_history_clear", "access_state_receipt_get"]).available) return null;
   return <Section title="Expired history">
     <p className="text-xs text-pretty text-muted-foreground">Clears exact expired metadata, not authority. Revocation stays separate. Server, client, grant and credential identity, revocations, enrollment/Share receipts and minimal retired replay digests remain. Browser/device cookies, outboxes and backups are independent copies.</p>
-    {kinds.map(([kind, title]) => <HistoryKind key={kind} kind={kind} title={title} />)}
+    {kinds.map(([kind, title, noun]) => <HistoryKind key={kind} kind={kind} title={title} noun={noun} />)}
   </Section>;
 }
 
-function HistoryKind({ kind, title }: { kind: AccessHistoryKind; title: string }) {
+function HistoryKind({ kind, title, noun }: { kind: AccessHistoryKind; title: string; noun: string }) {
   const state = useStack();
   const store = useStore();
   const now = useNow();
@@ -43,6 +43,6 @@ function HistoryKind({ kind, title }: { kind: AccessHistoryKind; title: string }
       </li>)}
     </ul>
     {!rows.length ? <p className="text-xs text-muted-foreground">No expired entries in the observed snapshot.</p> : null}
-    <StateFlowView controls={controls} label={`Prepare clearing ${selected.length} ${title.toLowerCase()}`} applyLabel={`Clear these ${title.toLowerCase()}`} unavailable={unavailable} />
+    <StateFlowView controls={controls} label={`Prepare clearing ${selected.length} ${noun}`} applyLabel={`Clear these ${noun}`} unavailable={unavailable} />
   </MaintenanceDisclosure>;
 }
