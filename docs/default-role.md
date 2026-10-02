@@ -69,4 +69,4 @@ guarantee cleanup of generated files.
 
 The design and OpenCode's pre-boot configuration boundary are recorded in
 [ADR 0123](adr/0123-role-injection-for-native-clis.md); on-demand initialization is
-recorded in [ADR 0160](adr/0160-on-demand-role-initialization.md).
+recorded in [ADR 0161](adr/0161-on-demand-role-initialization.md).

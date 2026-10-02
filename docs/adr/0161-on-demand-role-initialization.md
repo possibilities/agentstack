@@ -1,4 +1,4 @@
-# 160. Initialize missing Roles on demand without a Server
+# 161. Initialize missing Roles on demand without a Server
 
 Status: accepted, 2026-10-01. Supersedes only the existing-store prerequisite for
 Role injection in [ADR 0146](0146-server-independent-internal-mcp.md). Extends

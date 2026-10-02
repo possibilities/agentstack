@@ -2,7 +2,7 @@
 
 Status: accepted, 2026-09-29. Revises the shared-default decision in [ADR 0118](0118-multiple-roles-and-default.md) and the capability-only Worker rule in [ADR 0122](0122-worker-role-selection-without-instructions.md). Their selected-Role and immutable recovery contracts remain.
 
-[ADR 0160](0160-on-demand-role-initialization.md) makes fresh initialization available
+[ADR 0161](0161-on-demand-role-initialization.md) makes fresh initialization available
 to Role injection as well as Server startup, without changing existing Roles.
 
 ## Decision

@@ -7,7 +7,7 @@ Role injection in [ADR 0123](0123-role-injection-for-native-clis.md).
 Preserves explicit exposure, caller authority, external HTTP and WebSocket
 admission, and the sole durable Bot subscription owner.
 
-[ADR 0160](0160-on-demand-role-initialization.md) supersedes only the existing-store
+[ADR 0161](0161-on-demand-role-initialization.md) supersedes only the existing-store
 prerequisite for Role injection: a missing store can now be initialized on demand.
 
 ## Decision

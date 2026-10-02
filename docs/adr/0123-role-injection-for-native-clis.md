@@ -11,7 +11,7 @@ Internal MCP transport is now native stdio under [ADR 0140](0140-internal-mcp-ov
 
 [ADR 0146](0146-server-independent-internal-mcp.md) replaces the launcher's socket
 prerequisite with a consistent read-only snapshot of the existing local Role store.
-[ADR 0160](0160-on-demand-role-initialization.md) additionally permits initialization
+[ADR 0161](0161-on-demand-role-initialization.md) additionally permits initialization
 of a missing store without a running Server; existing stores remain read-only.
 
 The Roles package owns `stack roles inject [default|role-name] --
